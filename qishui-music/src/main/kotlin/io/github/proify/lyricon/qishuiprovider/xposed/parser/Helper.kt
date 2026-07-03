@@ -8,12 +8,12 @@ import io.github.proify.lyricon.lyric.model.extensions.normalize
 import java.util.Locale
 
 fun NetResponseCache.toRichLyric(): List<RichLyricLine> {
-    val lines = parserTypeLyric(lyric?.type, lyric?.content)?.normalize()
+    val lines = parserTypeLyric(lyric?.type, lyric?.resolvedContent)?.normalize()
     if (lines.isNullOrEmpty()) return emptyList()
 
     val langKey = lyric?.lang_translations?.keys?.let { getLangKeyForTranslations(it) }
     val translation = lyric?.lang_translations?.get(langKey.orEmpty())
-    val translationLines = parserTypeLyric(translation?.type, translation?.content)?.normalize()
+    val translationLines = parserTypeLyric(translation?.type, translation?.resolvedContent)?.normalize()
 
     return lines.map { line ->
         val translation = translationLines?.findClosest(line.begin, 50)?.text
