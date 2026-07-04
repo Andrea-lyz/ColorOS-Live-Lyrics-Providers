@@ -11,11 +11,11 @@ import com.highcapable.yukihookapi.hook.factory.configs
 import com.highcapable.yukihookapi.hook.factory.encase
 import com.highcapable.yukihookapi.hook.xposed.proxy.IYukiHookXposedInit
 
-@InjectYukiHookWithXposed
+@InjectYukiHookWithXposed(modulePackageName = Constants.PROVIDER_PACKAGE_NAME)
 class HookEntry : IYukiHookXposedInit {
 
     override fun onHook() = encase {
-        loadApp(name = "com.maxmpz.audioplayer", PowerAmp)
+        loadApp(name = Constants.POWERAMP_PACKAGE_NAME, PowerAmp)
     }
 
     override fun onInit() = configs {

@@ -9,6 +9,7 @@ object Constants {
 
     // 插件自身的 Provider 包名，用于 Lyricon 识别
     const val PROVIDER_PACKAGE_NAME = "io.github.proify.lyricon.paprovider"
+    const val POWERAMP_PACKAGE_NAME = "com.maxmpz.audioplayer"
 
     // PowerAmp 的 SVG 图标
     const val ICON = """
