@@ -10,10 +10,16 @@ class MetadataData(
     val title: String,
     val artist: String,
     val album: String,
-    val duration: Long
+    val duration: Long,
+    val mediaId: String,
+    val mediaUri: String
 ) {
     val generateId by lazy {
         "$title-$artist-$album-$duration".hashCode()
             .toString()
+    }
+
+    val identityId by lazy {
+        mediaId.ifBlank { generateId }
     }
 }

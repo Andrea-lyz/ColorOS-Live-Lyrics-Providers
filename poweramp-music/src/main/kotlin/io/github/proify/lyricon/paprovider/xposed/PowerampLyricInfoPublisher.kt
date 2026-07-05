@@ -10,7 +10,6 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import com.highcapable.yukihookapi.hook.log.YLog
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import org.json.JSONObject
@@ -152,9 +151,9 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
                     }
                 }
         }.onSuccess {
-            YLog.info(tag = TAG, msg = "Hooked MediaSession.setMetadata for lyricInfo publishing")
+            PowerampLog.info(tag = TAG, msg = "Hooked MediaSession.setMetadata for lyricInfo publishing")
         }.onFailure {
-            YLog.error(tag = TAG, msg = "Failed to hook MediaSession.setMetadata for lyricInfo publishing", e = it)
+            PowerampLog.error(tag = TAG, msg = "Failed to hook MediaSession.setMetadata for lyricInfo publishing", e = it)
         }
     }
 
@@ -193,7 +192,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
             val metadata = lastMetadata ?: return
             val song = latestSong ?: return
             if (!matchesCurrentTrack(metadata, song)) {
-                YLog.debug(
+                PowerampLog.debug(
                     tag = TAG,
                     msg = "Wait to publish lyricInfo: metadata/song mismatch, reason=$reason, " +
                         "mediaId=${metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID).orEmpty()}, " +
@@ -204,7 +203,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
 
             val payload = buildLyricInfo(song, latestSongGeneration)
             if (payload.isNullOrBlank()) {
-                YLog.debug(
+                PowerampLog.debug(
                     tag = TAG,
                     msg = "Skip lyricInfo publish without timed lyric, reason=$reason, id=${song.id.orEmpty()}"
                 )
@@ -235,14 +234,14 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
             synchronized(lock) {
                 lastPublishedFingerprint = request.fingerprint
             }
-            YLog.info(
+            PowerampLog.info(
                 tag = TAG,
                 msg = "Published Poweramp lyricInfo, reason=${request.reason}, " +
                     "mediaId=${request.mediaId}, title=${shortenForLog(request.title)}, " +
                     "chars=${request.lyricInfoChars}, artworkBitmap=false"
             )
         }.onFailure {
-            YLog.error(tag = TAG, msg = "Failed to publish Poweramp lyricInfo", e = it)
+            PowerampLog.error(tag = TAG, msg = "Failed to publish Poweramp lyricInfo", e = it)
         }.also {
             selfPublishing = false
         }

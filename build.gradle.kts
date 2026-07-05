@@ -7,12 +7,6 @@
 import com.android.build.api.artifact.SingleArtifact
 import com.android.build.api.variant.ApplicationAndroidComponentsExtension
 
-/*
- * Copyright 2026 Proify, Tomakino
- * Licensed under the Apache License, Version 2.0
- * http://www.apache.org/licenses/LICENSE-2.0
- */
-
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
     alias(libs.plugins.android.application) apply false
@@ -29,14 +23,11 @@ extra["targetSdkVersion"] = 37
 /**
  * 1. 注册清理任务
  */
-val cleanApks: TaskProvider<Task> = tasks.register("cleanAllApks") {
+val cleanApks: TaskProvider<Delete> = tasks.register<Delete>("cleanAllApks") {
     group = "build"
+    delete(layout.buildDirectory.dir("all-apks"))
     doFirst {
-        val outputDir = project.layout.buildDirectory.dir("all-apks").get().asFile
-        if (outputDir.exists()) {
-            outputDir.deleteRecursively()
-            println("--- [Clean] 已清理旧的 APK 导出目录 ---")
-        }
+        println("--- [Clean] 已清理旧的 APK 导出目录 ---")
     }
 }
 
@@ -47,9 +38,6 @@ val copyApksAll: TaskProvider<Task> = tasks.register("copyApks") {
     group = "build"
     description = "收集所有 APK 并按 BuildType 分开打包 ZIP"
 }
-
-// 建立一个 Set 来记录我们已经创建过哪些 buildType 的 Zip 任务
-val buildTypeZipTasks = mutableSetOf<String>()
 
 subprojects {
     plugins.withId("com.android.application") {
@@ -67,7 +55,7 @@ subprojects {
             val zipTaskName = "zip${buildType.replaceFirstChar { it.uppercase() }}Apks"
             val typeZipTask = rootProject.tasks.maybeCreate(zipTaskName, Zip::class.java).apply {
                 group = "build"
-                archiveFileName.set("${rootProject.name}-all-$buildType.zip")
+                archiveFileName.set("${rootProject.name}-$buildType.zip")
                 destinationDirectory.set(rootProject.layout.buildDirectory.dir("distributions"))
 
                 // 只压缩对应的子目录：build/all-apks/{buildType}

@@ -15,7 +15,6 @@ import android.net.Uri
 import androidx.core.content.ContextCompat
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import com.highcapable.yukihookapi.hook.log.YLog
 import com.kyant.taglib.TagLib
 import io.github.proify.cloudlyric.ProviderLyrics
 import io.github.proify.lrckit.EnhanceLrcParser
@@ -63,7 +62,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
 
     private fun initDataChannel() {
         dataChannel.wait(key = BridgeConstants.ACTION_SETTING_CHANGED) {
-            YLog.info(tag = TAG, msg = "Settings changed signal received")
+            PowerampLog.info(tag = TAG, msg = "Settings changed signal received")
             applyProviderSettings()
         }
     }
@@ -86,7 +85,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
     private fun applyProviderSettings() {
         val isTranslationEnabled = prefs.get(Configs.ENABLE_TRANSLATION)
         provider?.player?.setDisplayTranslation(isTranslationEnabled)
-        YLog.debug(tag = TAG, msg = "Settings applied: translationEnabled=$isTranslationEnabled")
+        PowerampLog.debug(tag = TAG, msg = "Settings applied: translationEnabled=$isTranslationEnabled")
     }
 
     private fun setupBroadcastReceiver(context: Context) {
@@ -117,7 +116,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
                             args[0] = patched
                             if (!translationActionInjectionLogged) {
                                 translationActionInjectionLogged = true
-                                YLog.info(
+                                PowerampLog.info(
                                     tag = TAG,
                                     msg = "Injected translation toggle action into Poweramp PlaybackState"
                                 )
@@ -187,13 +186,13 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
         if (!hasLocalLyric) {
             val isNetSearchEnabled = prefs.get(Configs.ENABLE_NET_SEARCH)
             if (isNetSearchEnabled) {
-                YLog.debug(
+                PowerampLog.debug(
                     tag = TAG,
                     msg = "Local lyric not found, triggering net search for: ${metadata.title}"
                 )
                 searchLyricsOnline(metadata, generation)
             } else {
-                YLog.debug(tag = TAG, msg = "Local lyric not found and net search is disabled")
+                PowerampLog.debug(tag = TAG, msg = "Local lyric not found and net search is disabled")
             }
         }
     }
@@ -217,7 +216,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             artist = metadata.artist,
             duration = metadata.duration
         )
-        YLog.debug(
+        PowerampLog.debug(
             tag = TAG,
             msg = "Updating track: generation=$generation, id=${metadata.id}, title=${metadata.title}"
         )
@@ -248,7 +247,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
         )
 
         updateSong(song, generation)
-        YLog.info(tag = TAG, msg = "Local lyric loaded for: ${data.title}")
+        PowerampLog.info(tag = TAG, msg = "Local lyric loaded for: ${data.title}")
         return true
     }
 
@@ -264,7 +263,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             }
         }
     } catch (e: Exception) {
-        YLog.error(tag = TAG, msg = "Failed to fetch lyric tag from $uri", e = e)
+        PowerampLog.error(tag = TAG, msg = "Failed to fetch lyric tag from $uri", e = e)
         null
     }
 
@@ -302,13 +301,13 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
     private fun updateSong(song: Song?, generation: Long) {
         val currentSong = song ?: return
         if (!isCurrentTrack(currentSong, generation)) {
-            YLog.debug(
+            PowerampLog.debug(
                 tag = TAG,
                 msg = "Skip stale lyric update: generation=$generation, id=${currentSong.id}, title=${currentSong.name}"
             )
             return
         }
-        YLog.debug(
+        PowerampLog.debug(
             tag = TAG,
             msg = "Updating song lyric: generation=$generation, id=${currentSong.id}, title=${currentSong.name}"
         )
@@ -334,7 +333,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             pendingOnlineGenerations.remove(metadata.id)
         } ?: return
         if (!isCurrentTrack(metadata, generation)) {
-            YLog.debug(
+            PowerampLog.debug(
                 tag = TAG,
                 msg = "Skip stale online lyric: generation=$generation, title=${metadata.title}"
             )
@@ -350,14 +349,14 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             lyrics = richLyrics
         )
         updateSong(song, generation)
-        YLog.info(tag = TAG, msg = "Online lyric applied for: ${metadata.title}")
+        PowerampLog.info(tag = TAG, msg = "Online lyric applied for: ${metadata.title}")
     }
 
     override fun onDownloadFailed(metadata: TrackMetadata, e: Exception) {
         synchronized(pendingOnlineGenerations) {
             pendingOnlineGenerations.remove(metadata.id)
         }
-        YLog.error(tag = TAG, msg = "Online lyric download failed for: ${metadata.title}", e = e)
+        PowerampLog.error(tag = TAG, msg = "Online lyric download failed for: ${metadata.title}", e = e)
     }
 
     private fun TrackMetadata.identityKey(): String = trackIdentity(id, title, artist)
@@ -371,6 +370,6 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
     private fun release() {
         trackReceiver?.let { appContext?.unregisterReceiver(it) }
         trackReceiver = null
-        YLog.info(tag = TAG, msg = "PowerAmp provider released")
+        PowerampLog.info(tag = TAG, msg = "PowerAmp provider released")
     }
 }

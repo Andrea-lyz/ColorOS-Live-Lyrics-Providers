@@ -26,7 +26,7 @@
 | 🐧 **QQ 音乐**       | `qq-music`          | 支持逐字歌词、翻译歌词          |
 | 🐧 **QQ 音乐 HD**    | `qq-music-hd`       | 支持逐字歌词、翻译歌词          |
 | 🧊 **LX 音乐**       | `lx-music`          | 支持翻译歌词显示             |
-| 🐶 **酷狗音乐/概念版**    | `kugou-music`       | **需在 App 内开启车载歌词模式** |
+| 🐶 **酷狗音乐/概念版**    | `kugou-music`       | 支持逐字歌词、翻译歌词，可转发 Bridge |
 | 📻 **酷我音乐**        | `kuwo-music`        | **需在 App 内开启车载歌词模式** |
 | 🎧 **Spotify**     | `spotify-music`     | 目前仅支持标准歌词            |
 | ⚡ **Poweramp**     | `poweramp-music`    | 支持网络匹配及本地内嵌歌词        |
@@ -59,8 +59,7 @@
 
 ## 📥 快速安装
 
-1. **下载**：前往 [Releases 页面](https://github.com/tomakino/LyricProvider/releases) 获取最新的 APK
-   安装包。
+1. **下载**：前往 [Releases 页面](https://github.com/tomakino/LyricProvider/releases) 获取目标播放器对应的 APK；需要一次安装全部 Provider 时可下载 `LyricProvider-release.zip` 整合包。
 2. **激活**：安装后进入 **LSPosed 管理器**，勾选启用 **对应提供者**。
 3. **配置作用域**：在 LSPosed 中勾选你需要获取歌词的音乐 App（如 Apple Music、网易云等）。
 4. **生效**：强行停止并重新打开对应的音乐 App 即可体验。

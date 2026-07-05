@@ -64,17 +64,35 @@ jobs:
         run: |
           mkdir -p collected-apks
 
-          # 复制所有 APK 文件
           find . -name "*.apk" -path "*/build/outputs/apk/${{ env.BUILD_TYPE }}/*" -exec cp {} collected-apks/ \;
 
           echo "Collected files:"
           ls -lh collected-apks/
 
+      - name: Create LyricProvider bundle
+        run: |
+          mkdir -p bundled-apks
+          if ! compgen -G "collected-apks/*.apk" > /dev/null; then
+            echo "No APK files found for LyricProvider bundle" >&2
+            exit 1
+          fi
+          (cd collected-apks && zip -qr "../bundled-apks/LyricProvider-${BUILD_TYPE}.zip" ./*.apk)
+          echo "Bundled files:"
+          ls -lh bundled-apks/
+
       - name: Upload APKs to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BUILD_TYPE }}-apks
-          path: collected-apks/
+          path: collected-apks/*.apk
+          if-no-files-found: error
+          archive: false
+
+      - name: Upload LyricProvider bundle to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: LyricProvider-${{ env.BUILD_TYPE }}-bundle
+          path: bundled-apks/*.zip
           if-no-files-found: error
           archive: false
 
@@ -83,3 +101,4 @@ jobs:
         run: |
           rm -f release.jks || true
           rm -rf collected-apks || true
+          rm -rf bundled-apks || true

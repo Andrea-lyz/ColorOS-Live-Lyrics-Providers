@@ -19,9 +19,10 @@ class HookEntry : IYukiHookXposedInit {
     }
 
     override fun onInit() = configs {
-        isDebug = true
+        isDebug = false
         debugLog {
             tag = Constants.LOG_TAG
+            isEnable = false
         }
     }
 }

@@ -46,6 +46,7 @@ abstract class KuGouBase : YukiBaseHooker() {
     protected var provider: LyriconProvider? = null
 
     protected var currentSongId: String? = null
+    private var currentTrackGeneration = 0L
     private var lastEmittedSong: Song? = null
     private var isInitialized = false
     protected lateinit var dexKitBridge: DexKitBridge
@@ -132,6 +133,10 @@ abstract class KuGouBase : YukiBaseHooker() {
 //        }
 
         val method = findLoadLyricMethodFromDexKit()
+        if (method == null) {
+            YLog.error(tag = TAG, msg = "Failed to find KuGou LyricManager load method")
+            return
+        }
 
         XposedBridge.hookMethod(method, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam?) {
@@ -147,41 +152,48 @@ abstract class KuGouBase : YukiBaseHooker() {
      * @param path KRC 文件绝对路径
      */
     private fun processLyricFileAsync(path: String) {
+        val capturedSongId = currentSongId
+        val capturedGeneration = currentTrackGeneration
         scope.launch {
             try {
                 val file = File(path)
                 if (!file.exists()) return@launch
-                when (file.extension) {
-                    "krc" -> {
-                        val raw = file.readBytes()
-                        val decrypted = KrcDecryptor.decrypt(raw)
-                        val document = KrcParser.parse(decrypted)
-                        val lyrics = document.richLyricLines
-
-                        if (lyrics.isNotEmpty()) {
-                            currentSongId?.let { LyricsCache.put(it, lyrics) }
-                            onReceiveLyrics(lyrics)
-                        }
+                val lyrics = parseLyricFile(file)
+                if (lyrics.isNotEmpty()) {
+                    if (!capturedSongId.isNullOrBlank()) {
+                        LyricsCache.put(capturedSongId, lyrics)
                     }
-
-                    "lrc" -> {
-                        val raw = file.readText()
-                        val document = LrcParser.parse(raw)
-                        val lyrics = document.lines.toRichLyricLines()
-
-                        if (lyrics.isNotEmpty()) {
-                            currentSongId?.let { LyricsCache.put(it, lyrics) }
-                            onReceiveLyrics(lyrics)
-                        }
-                    }
-
-                    else -> return@launch
+                    onReceiveLyrics(lyrics, capturedSongId, capturedGeneration)
                 }
-
             } catch (e: Exception) {
                 YLog.error(tag = TAG, msg = "Lyric parsing failed: ${e.message}")
             }
         }
+    }
+
+    private fun parseLyricFile(file: File): List<RichLyricLine> {
+        return when (file.extension.lowercase()) {
+            "krc" -> parseKrcBytes(file.readBytes())
+            "lyc" -> parseKrcBytes(file.readBytes()).ifEmpty {
+                parseLrcText(runCatching { file.readText() }.getOrDefault(""))
+            }
+            "lrc", "txt" -> parseLrcText(file.readText())
+            else -> emptyList()
+        }
+    }
+
+    private fun parseKrcBytes(raw: ByteArray): List<RichLyricLine> {
+        return runCatching {
+            val decrypted = KrcDecryptor.decrypt(raw)
+            KrcParser.parse(decrypted).richLyricLines
+        }.getOrDefault(emptyList())
+    }
+
+    private fun parseLrcText(raw: String): List<RichLyricLine> {
+        if (raw.isBlank()) return emptyList()
+        return runCatching {
+            LrcParser.parse(raw).lines.toRichLyricLines()
+        }.getOrDefault(emptyList())
     }
 
     private fun hookMediaSession() {
@@ -194,6 +206,7 @@ abstract class KuGouBase : YukiBaseHooker() {
                     after {
                         val state = args[0] as? PlaybackState
                         provider?.player?.setPlaybackState(state)
+                        SaltLyricBridge.sendPlaybackState(appContext, state)
                     }
                 }
 
@@ -213,36 +226,70 @@ abstract class KuGouBase : YukiBaseHooker() {
      * 处理元数据变更
      */
     private fun handleMetadataChange(metadata: MediaMetadata) {
-        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE) ?: return
-        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: ""
+        val title = firstNonBlank(
+            metadata.getString(MediaMetadata.METADATA_KEY_TITLE),
+            metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE),
+            metadata.description.title?.toString()
+        ) ?: return
+        val artist = firstNonBlank(
+            metadata.getString(MediaMetadata.METADATA_KEY_ARTIST),
+            metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST),
+            metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE),
+            metadata.description.subtitle?.toString()
+        ).orEmpty()
         val album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: ""
         val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
+        val mediaId = firstNonBlank(
+            metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+            metadata.description.mediaId
+        ).orEmpty()
+        val mediaUri = firstNonBlank(
+            metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_URI),
+            metadata.description.mediaUri?.toString()
+        ).orEmpty()
 
-        val meta = MetadataData(title, artist, album, duration)
-        val songId = meta.generateId
+        val meta = MetadataData(title, artist, album, duration, mediaId, mediaUri)
+        val songId = meta.identityId
+        MetadataDataManager.put(meta)
 
         if (songId == currentSongId) return
         currentSongId = songId
+        currentTrackGeneration++
+        SaltLyricBridge.sendTrackChanged(appContext, meta, currentTrackGeneration)
 
-        MetadataDataManager.put(meta)
         //YLog.info(tag = TAG, msg = "Track Changed: $title - $artist")
 
         // 尝试从缓存获取歌词
         LyricsCache.get(songId)?.let {
-            sendLyrics(it)
+            sendLyrics(it, songId, currentTrackGeneration)
         }
     }
 
     /**
      * 接收到解析完成的歌词
      */
-    private fun onReceiveLyrics(lyrics: List<RichLyricLine>) {
-        if (currentSongId.isNullOrBlank()) return
-        sendLyrics(lyrics)
+    private fun onReceiveLyrics(
+        lyrics: List<RichLyricLine>,
+        expectedSongId: String?,
+        expectedGeneration: Long
+    ) {
+        if (expectedSongId.isNullOrBlank()) {
+            debug("Skip unbound lyric file result, current=$currentSongId")
+            return
+        }
+        if (currentSongId != expectedSongId || currentTrackGeneration != expectedGeneration) {
+            debug("Skip stale lyric file result, expected=$expectedSongId, current=$currentSongId")
+            return
+        }
+        sendLyrics(lyrics, expectedSongId, expectedGeneration)
     }
 
-    private fun sendLyrics(lyrics: List<RichLyricLine>) {
-        val id = currentSongId ?: return
+    private fun sendLyrics(
+        lyrics: List<RichLyricLine>,
+        songId: String,
+        trackGeneration: Long
+    ) {
+        val id = songId.ifBlank { return }
         val meta = MetadataDataManager.get(id) ?: return
 
         val finalDuration = if (meta.duration <= 0) {
@@ -257,16 +304,27 @@ abstract class KuGouBase : YukiBaseHooker() {
             lyrics = lyrics
         )
 
-        emitSong(song)
+        emitSong(song, meta, trackGeneration)
     }
 
     /**
      * 最终提交歌曲变更，包含去重校验
      */
-    private fun emitSong(song: Song) {
+    private fun emitSong(song: Song, meta: MetadataData, trackGeneration: Long) {
         if (lastEmittedSong == song) return
         lastEmittedSong = song
         provider?.player?.setSong(song)
-        YLog.info(tag = TAG, msg = "Successfully pushed song to Provider: ${song.name}")
+        SaltLyricBridge.send(appContext, song, meta.mediaUri, trackGeneration)
+        debug("Successfully pushed song to Provider: ${song.name}")
+    }
+
+    private fun firstNonBlank(vararg values: String?): String? {
+        return values.firstOrNull { !it.isNullOrBlank() }
+    }
+
+    private fun debug(message: String) {
+        if (android.util.Log.isLoggable(TAG, android.util.Log.DEBUG)) {
+            YLog.debug(tag = TAG, msg = message)
+        }
     }
 }

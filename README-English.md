@@ -24,7 +24,7 @@
 | 🐧 **QQ Music**                      | `qq-music`          | Supports dynamic lyrics, translated lyrics         |
 | 🐧 **QQ Music HD**                   | `qq-music-hd`       | Supports dynamic lyrics, translated lyrics         |
 | 🧊 **LX Music**                      | `lx-music`          | Supports translated lyrics display                 |
-| 🐶 **Kugou Music / Concept Edition** | `kugou-music`       | **Requires enabling car lyrics mode in the app**   |
+| 🐶 **Kugou Music / Concept Edition** | `kugou-music`       | Supports word-timed and translated lyrics; can relay to Bridge |
 | 📻 **Kuwo Music**                    | `kuwo-music`        | **Requires enabling car lyrics mode in the app**   |
 | 🎧 **Spotify**                       | `spotify-music`     | Currently only supports standard lyrics            |
 | ⚡ **Poweramp**                       | `poweramp-music`    | Supports online matching and embedded local lyrics |
@@ -56,7 +56,7 @@ The following players have natively integrated this protocol and can be used dir
 *[LyriconCore](https://github.com/tomakino/lyricon/releases/tag/core)** main application.
 
 1. **Download**: Go to the [Releases page](https://github.com/tomakino/LyricProvider/releases) and
-   get the latest APK.
+   get the APK for your target player, or `LyricProvider-release.zip` if you want every provider APK together.
 2. **Activate**: After installation, open **LSPosed Manager** and enable the **corresponding
    provider**.
 3. **Configure Scope**: In LSPosed, check the music apps you want to fetch lyrics for (e.g., Apple

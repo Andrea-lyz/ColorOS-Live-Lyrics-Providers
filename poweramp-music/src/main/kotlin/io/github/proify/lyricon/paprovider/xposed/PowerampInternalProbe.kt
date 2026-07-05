@@ -10,7 +10,6 @@ import android.content.Context
 import android.media.MediaMetadata
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import com.highcapable.yukihookapi.hook.log.YLog
 import java.lang.reflect.Field
 import kotlin.math.max
 
@@ -27,7 +26,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
     fun install(loader: ClassLoader?) {
         hookMediaMetadata()
         if (loader == null) {
-            YLog.debug(tag = TAG, msg = "Skip Poweramp internal probe: appClassLoader is null")
+            PowerampLog.debug(tag = TAG, msg = "Skip Poweramp internal probe: appClassLoader is null")
             return
         }
         hookLyricsChain(loader)
@@ -49,9 +48,9 @@ object PowerampInternalProbe : YukiBaseHooker() {
                     }
                 }
         }.onSuccess {
-            YLog.info(tag = TAG, msg = "Hooked MediaSession.setMetadata probe")
+            PowerampLog.info(tag = TAG, msg = "Hooked MediaSession.setMetadata probe")
         }.onFailure {
-            YLog.error(tag = TAG, msg = "Failed to hook MediaSession.setMetadata probe", e = it)
+            PowerampLog.error(tag = TAG, msg = "Failed to hook MediaSession.setMetadata probe", e = it)
         }
     }
 
@@ -67,16 +66,16 @@ object PowerampInternalProbe : YukiBaseHooker() {
                 }.hook {
                     after {
                         val chainArgs = args.getOrNull(0) ?: return@after
-                        YLog.info(
+                        PowerampLog.debug(
                             tag = TAG,
                             msg = "LyricsChain.K finished: ${describeChainArgs(chainArgs)}"
                         )
                     }
                 }
         }.onSuccess {
-            YLog.info(tag = TAG, msg = "Hooked Poweramp LyricsChain.K probe")
+            PowerampLog.info(tag = TAG, msg = "Hooked Poweramp LyricsChain.K probe")
         }.onFailure {
-            YLog.error(
+            PowerampLog.error(
                 tag = TAG,
                 msg = "Failed to hook Poweramp LyricsChain.K probe, candidates=${classCandidates("o70")}",
                 e = it
@@ -96,7 +95,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
                     after {
                         val chainArgs = args.getOrNull(1)
                         val resolveCtx = args.getOrNull(2)
-                        YLog.info(
+                        PowerampLog.debug(
                             tag = TAG,
                             msg = "LyricsResolver result=${this.result}, " +
                                 "args=${describeChainArgs(chainArgs)}, ctx=${describeResolveCtx(resolveCtx)}"
@@ -104,9 +103,9 @@ object PowerampInternalProbe : YukiBaseHooker() {
                     }
                 }
         }.onSuccess {
-            YLog.info(tag = TAG, msg = "Hooked Poweramp LyricsResolver steps probe")
+            PowerampLog.info(tag = TAG, msg = "Hooked Poweramp LyricsResolver steps probe")
         }.onFailure {
-            YLog.error(
+            PowerampLog.error(
                 tag = TAG,
                 msg = "Failed to hook Poweramp LyricsResolver steps probe, candidates=${classCandidates("n70")}",
                 e = it
@@ -133,16 +132,16 @@ object PowerampInternalProbe : YukiBaseHooker() {
                 }.hook {
                     after {
                         val path = args.getOrNull(2) as? String
-                        YLog.info(
+                        PowerampLog.debug(
                             tag = TAG,
                             msg = "LrcParser.B path=${shorten(path.orEmpty())}, result=${describeLyrics(this.result)}"
                         )
                     }
                 }
         }.onSuccess {
-            YLog.info(tag = TAG, msg = "Hooked Poweramp LRC parser probe")
+            PowerampLog.info(tag = TAG, msg = "Hooked Poweramp LRC parser probe")
         }.onFailure {
-            YLog.error(
+            PowerampLog.error(
                 tag = TAG,
                 msg = "Failed to hook Poweramp LRC parser probe, candidates=${classCandidates("h70")}",
                 e = it
@@ -174,7 +173,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
         if (fingerprint == lastMetadataFingerprint) return
         lastMetadataFingerprint = fingerprint
 
-        YLog.info(
+        PowerampLog.debug(
             tag = TAG,
             msg = "MediaSession metadata: mediaId=${mediaId.orEmpty()}, title=${shorten(title.orEmpty())}, " +
                 "artist=${shorten(artist.orEmpty())}, album=${shorten(album.orEmpty())}, duration=$duration, " +

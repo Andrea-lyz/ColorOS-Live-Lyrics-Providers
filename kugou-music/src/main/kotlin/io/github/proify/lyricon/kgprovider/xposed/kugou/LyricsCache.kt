@@ -24,16 +24,16 @@ object LyricsCache {
     
     fun put(songId: String, lyrics: List<RichLyricLine>) {
         cache[songId] = CachedLyrics(lyrics, songId)
-        Log.d(TAG, "Cached lyrics for: $songId (${lyrics.size} lines)")
+        debug("Cached lyrics for: $songId (${lyrics.size} lines)")
     }
     
     fun get(songId: String): List<RichLyricLine>? {
         val cached = cache[songId]
         if (cached != null) {
-            Log.d(TAG, "Cache hit for: $songId")
+            debug("Cache hit for: $songId")
             return cached.lyrics
         }
-        Log.d(TAG, "Cache miss for: $songId")
+        debug("Cache miss for: $songId")
         return null
     }
     
@@ -41,13 +41,19 @@ object LyricsCache {
     
     fun remove(songId: String) {
         cache.remove(songId)
-        Log.d(TAG, "Removed cache for: $songId")
+        debug("Removed cache for: $songId")
     }
     
     fun clear() {
         cache.clear()
-        Log.d(TAG, "Cache cleared")
+        debug("Cache cleared")
     }
     
     fun size(): Int = cache.size
+
+    private fun debug(message: String) {
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, message)
+        }
+    }
 }

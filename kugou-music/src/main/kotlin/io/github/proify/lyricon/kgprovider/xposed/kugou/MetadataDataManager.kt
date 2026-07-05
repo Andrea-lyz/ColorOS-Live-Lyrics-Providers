@@ -16,7 +16,7 @@ object MetadataDataManager {
     }
 
     fun put(metadataData: MetadataData) {
-        metadataDataMap[metadataData.generateId] = metadataData
+        metadataDataMap[metadataData.identityId] = metadataData
     }
 
     fun remove(songId: String) {
