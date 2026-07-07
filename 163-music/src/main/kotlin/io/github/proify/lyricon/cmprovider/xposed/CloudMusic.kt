@@ -71,6 +71,7 @@ object CloudMusic : YukiBaseHooker() {
                     YLog.debug("type=$type")
                     lyricProvider?.player?.setDisplayTranslation(type == 0)
                     lyricProvider?.player?.setDisplayRoma(type == 1)
+                    SaltLyricBridge.send(appContext, lastSetSong, translationType)
                 }
             })
 
@@ -256,7 +257,7 @@ object CloudMusic : YukiBaseHooker() {
             if (lastSetSong == song) return
             lastSetSong = song
             lyricProvider?.player?.setSong(song)
-            SaltLyricBridge.send(appContext, song)
+            SaltLyricBridge.send(appContext, song, translationType)
         }
     }
 }

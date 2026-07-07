@@ -21,8 +21,8 @@ object SaltLyricBridge {
     private const val SYSTEMUI_PACKAGE = "com.android.systemui"
     private const val SOURCE_NETEASE_MUSIC = "lyricprovider/netease-cloud-music"
     private const val EARLY_METADATA_WINDOW_MS = 30_000L
-    private const val SYNTHETIC_WORD_MIN_SPAN_MS = 1_500L
-    private const val SYNTHETIC_WORD_MAX_SPAN_MS = 15_000L
+    private const val LYRIC_MODE_TRANSLATION = 0
+    private const val LYRIC_MODE_ROMA = 1
 
     private val creditRoleKeywords = arrayOf(
         "lyrics",
@@ -124,17 +124,21 @@ object SaltLyricBridge {
         "\u5f26\u6a02"
     )
 
-    fun send(context: Context?, song: Song?) {
+    fun send(context: Context?, song: Song?, lyricMode: Int = -1) {
         if (context == null || song == null) return
 
         val lyricLines = filteredLyricLines(song)
-        val rawLyric = toEnhancedLrc(song, lyricLines)
-        if (!containsTimedLrc(rawLyric)) {
+        val lyric = toPlainLrc(song, lyricLines)
+        if (!containsTimedLrc(lyric)) {
             Log.d(TAG, "Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
             return
         }
 
-        val lyric = toPlainLrc(song, lyricLines)
+        val rawLyric = if (shouldSendEnhancedRawLyric(lyricMode)) {
+            toEnhancedLrc(song, lyricLines)
+        } else {
+            lyric
+        }
         val translationLyric = toTranslationLrc(song, lyricLines)
         val requestId = buildRequestId(song, rawLyric, translationLyric)
         val trackKey = buildTrackKey(song.name, song.artist)
@@ -161,12 +165,17 @@ object SaltLyricBridge {
                 TAG,
                 "Sent Netease bridge payload, id=${song.id.orEmpty()}, " +
                     "lines=${lyricLines.size}/${song.lyrics?.size ?: 0}, " +
+                    "mode=$lyricMode, rawMode=${if (rawLyric == lyric) "plain" else "enhanced"}, " +
                     "rawChars=${rawLyric.length}, transChars=${translationLyric.length}, " +
                     "first=${shortenForLog(lyricLines.firstOrNull()?.text.orEmpty())}"
             )
         }.onFailure { e ->
             Log.w(TAG, "Failed to send Netease bridge payload, id=${song.id.orEmpty()}", e)
         }
+    }
+
+    private fun shouldSendEnhancedRawLyric(lyricMode: Int): Boolean {
+        return lyricMode == LYRIC_MODE_TRANSLATION || lyricMode == LYRIC_MODE_ROMA
     }
 
     private fun toEnhancedLrc(song: Song, lines: List<RichLyricLine>): String {
@@ -176,9 +185,7 @@ object SaltLyricBridge {
             val words = timedWordsInTextOrder(line)
 
             if (words.isEmpty()) {
-                if (!appendSyntheticEnhancedLine(builder, line)) {
-                    appendTimedLine(builder, line.begin, line.text.orEmpty())
-                }
+                appendTimedLine(builder, line.begin, line.text.orEmpty())
                 return@forEach
             }
 
@@ -215,45 +222,6 @@ object SaltLyricBridge {
         val text: String,
         val begin: Long
     )
-
-    private fun appendSyntheticEnhancedLine(builder: StringBuilder, line: RichLyricLine): Boolean {
-        val text = cleanPlainText(line.text.orEmpty())
-        val span = max(line.duration, line.end - line.begin)
-        if (text.isBlank() ||
-            span !in SYNTHETIC_WORD_MIN_SPAN_MS..SYNTHETIC_WORD_MAX_SPAN_MS ||
-            !containsLatinLetter(text)
-        ) {
-            return false
-        }
-
-        val segments = splitSyntheticLatinSegments(text)
-        if (segments.size <= 1) return false
-
-        val step = max(120L, span / segments.size)
-        builder.append('[')
-            .append(formatLrcTime(line.begin))
-            .append(']')
-        segments.forEachIndexed { index, segment ->
-            val time = minOf(line.begin + step * index, line.begin + span - 120L)
-            builder.append('<')
-                .append(formatLrcTime(time))
-                .append('>')
-                .append(segment)
-        }
-        builder.append('<')
-            .append(formatLrcTime(line.begin + span))
-            .append('>')
-            .append('\n')
-        return true
-    }
-
-    private fun splitSyntheticLatinSegments(text: String): List<String> {
-        return Regex("""\S+\s*""")
-            .findAll(text)
-            .map { it.value }
-            .filter { it.isNotBlank() }
-            .toList()
-    }
 
     private fun timedWordsInTextOrder(line: RichLyricLine): List<TimedWord> {
         val words = line.words.orEmpty()
@@ -563,10 +531,6 @@ object SaltLyricBridge {
             index += Character.charCount(codePoint)
         }
         return false
-    }
-
-    private fun containsLatinLetter(value: String): Boolean {
-        return value.any { it in 'A'..'Z' || it in 'a'..'z' }
     }
 
     private fun endsLikeSentence(value: String): Boolean {

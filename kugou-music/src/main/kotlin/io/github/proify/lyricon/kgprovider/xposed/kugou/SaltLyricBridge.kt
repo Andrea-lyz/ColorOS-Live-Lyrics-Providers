@@ -12,6 +12,7 @@ import android.media.session.PlaybackState
 import android.util.Log
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
+import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.max
 
@@ -20,11 +21,19 @@ object SaltLyricBridge {
     private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
         "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
     private const val SYSTEMUI_PACKAGE = "com.android.systemui"
+    private const val BRIDGE_PROTOCOL_VERSION = 2
     private const val KUGOU_PACKAGE = "com.kugou.android"
     private const val KUGOU_CONCEPT_PACKAGE = "com.kugou.android.lite"
     private const val SOURCE_KUGOU = "lyricprovider/kugou-music"
     private const val SOURCE_KUGOU_CONCEPT = "lyricprovider/kugou-concept-music"
+    private const val BRIDGE_CAPABILITIES =
+        "playbackState,trackGeneration,currentTrackAuthority,translationToggle"
+    private const val BRIDGE_MATCH_POLICY = "mediaId,mediaUri,trackKey,titleArtist"
+    private const val BRIDGE_IDENTITY_CONFIDENCE = "currentTrack"
     private const val MAX_REASONABLE_DURATION_MS = 24L * 60L * 60L * 1000L
+    private val TIMED_LRC_REGEX =
+        Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
+    private val WHITESPACE_REGEX = Regex("\\s+")
 
     fun sendTrackChanged(
         context: Context?,
@@ -35,6 +44,7 @@ object SaltLyricBridge {
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
             putExtra("source", sourceForPackage(context.packageName))
             putExtra("eventType", "trackChanged")
             putExtra("mediaId", metadata.identityId)
@@ -76,6 +86,7 @@ object SaltLyricBridge {
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
             putExtra("source", source)
             putExtra("eventType", "lyricReady")
             putExtra("requestId", requestId)
@@ -105,11 +116,43 @@ object SaltLyricBridge {
         }
     }
 
+    fun buildLyricInfo(
+        context: Context?,
+        song: Song?,
+        trackGeneration: Long = 0L
+    ): String? = buildLyricInfoForPackage(context?.packageName, song, trackGeneration)
+
+    fun buildLyricInfoForPackage(
+        packageName: String?,
+        song: Song?,
+        trackGeneration: Long = 0L
+    ): String? {
+        if (song == null) return null
+        val lyricLines = filteredLyricLines(song)
+        val rawLyric = toEnhancedLrc(song, lyricLines)
+        if (!containsTimedLrc(rawLyric)) return null
+
+        val lyric = toPlainLrc(song, lyricLines)
+        val translationLyric = toTranslationLrc(song, lyricLines)
+        return JSONObject()
+            .put("songName", song.name.orEmpty())
+            .put("artist", song.artist.orEmpty())
+            .put("songId", song.id.orEmpty())
+            .put("lyric", lyric)
+            .put("rawLyric", rawLyric)
+            .put("translationLyric", translationLyric)
+            .put("provider", sourceForPackage(packageName))
+            .put("trackKey", buildTrackKey(song.name, song.artist))
+            .put("sessionGeneration", trackGeneration)
+            .toString()
+    }
+
     fun sendPlaybackState(context: Context?, state: PlaybackState?) {
         if (context == null || state == null) return
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
             putExtra("source", sourceForPackage(context.packageName))
             putExtra("playbackState", state.state)
             putExtra("playbackPosition", state.position)
@@ -131,6 +174,22 @@ object SaltLyricBridge {
             KUGOU_PACKAGE -> SOURCE_KUGOU
             else -> SOURCE_KUGOU
         }
+    }
+
+    private fun playerPackageForPackage(packageName: String?): String {
+        return when (packageName) {
+            KUGOU_CONCEPT_PACKAGE -> KUGOU_CONCEPT_PACKAGE
+            KUGOU_PACKAGE -> KUGOU_PACKAGE
+            else -> KUGOU_PACKAGE
+        }
+    }
+
+    private fun Intent.putBridgeDeclaration(context: Context) {
+        putExtra("protocolVersion", BRIDGE_PROTOCOL_VERSION)
+        putExtra("playerPackage", playerPackageForPackage(context.packageName))
+        putExtra("capabilities", BRIDGE_CAPABILITIES)
+        putExtra("matchPolicy", BRIDGE_MATCH_POLICY)
+        putExtra("identityConfidence", BRIDGE_IDENTITY_CONFIDENCE)
     }
 
     private fun toEnhancedLrc(song: Song, lines: List<RichLyricLine>): String {
@@ -338,13 +397,12 @@ object SaltLyricBridge {
     private fun cleanPlainText(text: String): String {
         return text.replace('\r', ' ')
             .replace('\n', ' ')
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_REGEX, " ")
             .trim()
     }
 
     private fun containsTimedLrc(value: String): Boolean {
-        return Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
-            .containsMatchIn(value)
+        return TIMED_LRC_REGEX.containsMatchIn(value)
     }
 
     private fun debug(message: String) {
@@ -358,6 +416,20 @@ object SaltLyricBridge {
         val minutes = safeTime / 60_000L
         val seconds = (safeTime % 60_000L) / 1_000L
         val millis = safeTime % 1_000L
-        return String.format(Locale.ROOT, "%02d:%02d.%03d", minutes, seconds, millis)
+        return buildString(9) {
+            appendPadded(minutes, 2)
+            append(':')
+            appendPadded(seconds, 2)
+            append('.')
+            appendPadded(millis, 3)
+        }
+    }
+
+    private fun StringBuilder.appendPadded(value: Long, width: Int) {
+        val text = value.toString()
+        repeat(max(0, width - text.length)) {
+            append('0')
+        }
+        append(text)
     }
 }
