@@ -26,6 +26,7 @@ object KuGouLyricInfoPublisher {
     private var selfPublishing = false
     private var lastSession: MediaSession? = null
     private var lastMetadata: MediaMetadata? = null
+    private var lastArtworkMetadata: MediaMetadata? = null
     private var latestMeta: MetadataData? = null
     private var latestSong: Song? = null
     private var latestGeneration = 0L
@@ -39,6 +40,9 @@ object KuGouLyricInfoPublisher {
         synchronized(lock) {
             lastSession = session
             lastMetadata = metadata
+            if (metadata.hasKuGouArtwork()) {
+                lastArtworkMetadata = metadata
+            }
         }
         tryPublish("metadata")
     }
@@ -136,7 +140,7 @@ object KuGouLyricInfoPublisher {
         meta: MetadataData,
         lyricInfo: String
     ): MediaMetadata {
-        return MediaMetadata.Builder(source)
+        val builder = MediaMetadata.Builder(source)
             .putString(MediaMetadata.METADATA_KEY_TITLE, meta.title)
             .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, meta.title)
             .putString(MediaMetadata.METADATA_KEY_ARTIST, meta.artist)
@@ -147,7 +151,18 @@ object KuGouLyricInfoPublisher {
             .putString(MediaMetadata.METADATA_KEY_MEDIA_URI, meta.mediaUri)
             .putLong(MediaMetadata.METADATA_KEY_DURATION, meta.duration)
             .putString(METADATA_KEY_LYRIC_INFO, lyricInfo)
-            .build()
+        copyCachedArtwork(builder, source)
+        return builder.build()
+    }
+
+    private fun copyCachedArtwork(builder: MediaMetadata.Builder, source: MediaMetadata) {
+        // If the source metadata already has artwork, no need to copy from cache.
+        if (source.hasKuGouArtwork()) return
+        val artwork = synchronized(lock) { lastArtworkMetadata } ?: return
+        diagnose(
+            "KG_DIAG publisher copy cached artwork to patched metadata"
+        )
+        builder.copyKuGouArtworkFrom(artwork)
     }
 
     private fun buildFingerprint(meta: MetadataData, lyricInfo: String): String {
@@ -162,7 +177,7 @@ object KuGouLyricInfoPublisher {
     }
 
     private fun diagnose(message: String) {
-        if (KUGOU_DIAGNOSTICS_ENABLED || Log.isLoggable(TAG, Log.DEBUG)) {
+        if (KUGOU_DIAGNOSTICS_ENABLED || Log.isLoggable(TAG, Log.VERBOSE)) {
             YLog.debug(tag = TAG, msg = message)
         }
     }

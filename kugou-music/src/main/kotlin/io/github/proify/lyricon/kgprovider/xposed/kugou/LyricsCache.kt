@@ -14,6 +14,7 @@ import io.github.proify.lyricon.lyric.model.RichLyricLine
 object LyricsCache {
 
     private const val TAG = "LyricsCache"
+    private const val KUGOU_DIAGNOSTICS_ENABLED = false
     private const val MAX_CACHE_KEYS = 384
 
     private val cacheLock = Any()
@@ -88,7 +89,7 @@ object LyricsCache {
     fun size(): Int = synchronized(cacheLock) { cache.size }
 
     private fun debug(message: String) {
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
+        if (KUGOU_DIAGNOSTICS_ENABLED || Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.d(TAG, message)
         }
     }

@@ -26,8 +26,10 @@ object SaltLyricBridge {
     private const val KUGOU_CONCEPT_PACKAGE = "com.kugou.android.lite"
     private const val SOURCE_KUGOU = "lyricprovider/kugou-music"
     private const val SOURCE_KUGOU_CONCEPT = "lyricprovider/kugou-concept-music"
-    private const val BRIDGE_CAPABILITIES =
+    private const val BRIDGE_CAPABILITIES_WITH_PLAYBACK =
         "playbackState,trackGeneration,currentTrackAuthority,translationToggle"
+    private const val BRIDGE_CAPABILITIES_TRACK_ONLY =
+        "trackGeneration,currentTrackAuthority,translationToggle"
     private const val BRIDGE_MATCH_POLICY = "mediaId,mediaUri,trackKey,titleArtist"
     private const val BRIDGE_IDENTITY_CONFIDENCE = "currentTrack"
     private const val MAX_REASONABLE_DURATION_MS = 24L * 60L * 60L * 1000L
@@ -72,22 +74,23 @@ object SaltLyricBridge {
     ) {
         if (context == null || song == null) return
 
-        val lyricLines = filteredLyricLines(song)
-        val rawLyric = toEnhancedLrc(song, lyricLines)
-        if (!containsTimedLrc(rawLyric)) {
+        val payload = buildLyricPayload(context.packageName, song)
+        if (payload == null) {
             debug("Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
             return
         }
 
-        val lyric = toPlainLrc(song, lyricLines)
-        val translationLyric = toTranslationLrc(song, lyricLines)
-        val source = sourceForPackage(context.packageName)
-        val requestId = buildRequestId(source, song, rawLyric, translationLyric)
+        val requestId = buildRequestId(
+            payload.source,
+            song,
+            payload.rawLyric,
+            payload.translationLyric
+        )
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
             putBridgeDeclaration(context)
-            putExtra("source", source)
+            putExtra("source", payload.source)
             putExtra("eventType", "lyricReady")
             putExtra("requestId", requestId)
             putExtra("mediaId", song.id.orEmpty())
@@ -96,9 +99,9 @@ object SaltLyricBridge {
             putExtra("songName", song.name.orEmpty())
             putExtra("artist", song.artist.orEmpty())
             putExtra("duration", validDuration(song.duration))
-            putExtra("lyric", lyric)
-            putExtra("rawLyric", rawLyric)
-            putExtra("translationLyric", translationLyric)
+            putExtra("lyric", payload.lyric)
+            putExtra("rawLyric", payload.rawLyric)
+            putExtra("translationLyric", payload.translationLyric)
             putExtra("trackGeneration", trackGeneration)
             putExtra("capturedAt", System.currentTimeMillis())
         }
@@ -107,9 +110,9 @@ object SaltLyricBridge {
             context.sendBroadcast(intent)
         }.onSuccess {
             debug(
-                "Sent KuGou bridge payload, source=$source, id=${song.id.orEmpty()}, " +
-                    "lines=${lyricLines.size}/${song.lyrics?.size ?: 0}, " +
-                    "rawChars=${rawLyric.length}, transChars=${translationLyric.length}"
+                "Sent KuGou bridge payload, source=${payload.source}, id=${song.id.orEmpty()}, " +
+                    "lines=${payload.lyricLines.size}/${song.lyrics?.size ?: 0}, " +
+                    "rawChars=${payload.rawLyric.length}, transChars=${payload.translationLyric.length}"
             )
         }.onFailure { e ->
             Log.w(TAG, "Failed to send KuGou bridge payload, id=${song.id.orEmpty()}", e)
@@ -128,20 +131,15 @@ object SaltLyricBridge {
         trackGeneration: Long = 0L
     ): String? {
         if (song == null) return null
-        val lyricLines = filteredLyricLines(song)
-        val rawLyric = toEnhancedLrc(song, lyricLines)
-        if (!containsTimedLrc(rawLyric)) return null
-
-        val lyric = toPlainLrc(song, lyricLines)
-        val translationLyric = toTranslationLrc(song, lyricLines)
+        val payload = buildLyricPayload(packageName, song) ?: return null
         return JSONObject()
             .put("songName", song.name.orEmpty())
             .put("artist", song.artist.orEmpty())
             .put("songId", song.id.orEmpty())
-            .put("lyric", lyric)
-            .put("rawLyric", rawLyric)
-            .put("translationLyric", translationLyric)
-            .put("provider", sourceForPackage(packageName))
+            .put("lyric", payload.lyric)
+            .put("rawLyric", payload.rawLyric)
+            .put("translationLyric", payload.translationLyric)
+            .put("provider", payload.source)
             .put("trackKey", buildTrackKey(song.name, song.artist))
             .put("sessionGeneration", trackGeneration)
             .toString()
@@ -149,6 +147,7 @@ object SaltLyricBridge {
 
     fun sendPlaybackState(context: Context?, state: PlaybackState?) {
         if (context == null || state == null) return
+        if (!supportsBridgePlaybackStateForPackage(context.packageName)) return
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
@@ -184,12 +183,46 @@ object SaltLyricBridge {
         }
     }
 
+    private fun capabilitiesForPackage(packageName: String?): String {
+        return when (packageName) {
+            KUGOU_CONCEPT_PACKAGE -> BRIDGE_CAPABILITIES_WITH_PLAYBACK
+            KUGOU_PACKAGE -> BRIDGE_CAPABILITIES_TRACK_ONLY
+            else -> BRIDGE_CAPABILITIES_TRACK_ONLY
+        }
+    }
+
+    private fun supportsBridgePlaybackStateForPackage(packageName: String?): Boolean {
+        return packageName == KUGOU_CONCEPT_PACKAGE
+    }
+
     private fun Intent.putBridgeDeclaration(context: Context) {
         putExtra("protocolVersion", BRIDGE_PROTOCOL_VERSION)
         putExtra("playerPackage", playerPackageForPackage(context.packageName))
-        putExtra("capabilities", BRIDGE_CAPABILITIES)
+        putExtra("capabilities", capabilitiesForPackage(context.packageName))
         putExtra("matchPolicy", BRIDGE_MATCH_POLICY)
         putExtra("identityConfidence", BRIDGE_IDENTITY_CONFIDENCE)
+    }
+
+    private data class BridgeLyricPayload(
+        val source: String,
+        val lyricLines: List<RichLyricLine>,
+        val lyric: String,
+        val rawLyric: String,
+        val translationLyric: String
+    )
+
+    private fun buildLyricPayload(packageName: String?, song: Song): BridgeLyricPayload? {
+        val lyricLines = filteredLyricLines(song)
+        val rawLyric = toEnhancedLrc(song, lyricLines)
+        if (!containsTimedLrc(rawLyric)) return null
+
+        return BridgeLyricPayload(
+            source = sourceForPackage(packageName),
+            lyricLines = lyricLines,
+            lyric = toPlainLrc(song, lyricLines),
+            rawLyric = rawLyric,
+            translationLyric = toTranslationLrc(song, lyricLines)
+        )
     }
 
     private fun toEnhancedLrc(song: Song, lines: List<RichLyricLine>): String {
@@ -406,7 +439,7 @@ object SaltLyricBridge {
     }
 
     private fun debug(message: String) {
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.d(TAG, message)
         }
     }

@@ -23,6 +23,11 @@ object SaltLyricBridge {
     private const val EARLY_METADATA_WINDOW_MS = 30_000L
     private const val LYRIC_MODE_TRANSLATION = 0
     private const val LYRIC_MODE_ROMA = 1
+    private const val MIN_SYNTHETIC_WORD_STEP_MS = 120L
+    private const val MAX_SYNTHETIC_WORD_STEP_MS = 620L
+    private val TIMED_LRC_REGEX =
+        Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
+    private val WHITESPACE_REGEX = Regex("\\s+")
 
     private val creditRoleKeywords = arrayOf(
         "lyrics",
@@ -130,7 +135,7 @@ object SaltLyricBridge {
         val lyricLines = filteredLyricLines(song)
         val lyric = toPlainLrc(song, lyricLines)
         if (!containsTimedLrc(lyric)) {
-            Log.d(TAG, "Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
+            debug("Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
             return
         }
 
@@ -161,8 +166,7 @@ object SaltLyricBridge {
         runCatching {
             context.sendBroadcast(intent)
         }.onSuccess {
-            Log.d(
-                TAG,
+            debug(
                 "Sent Netease bridge payload, id=${song.id.orEmpty()}, " +
                     "lines=${lyricLines.size}/${song.lyrics?.size ?: 0}, " +
                     "mode=$lyricMode, rawMode=${if (rawLyric == lyric) "plain" else "enhanced"}, " +
@@ -181,8 +185,9 @@ object SaltLyricBridge {
     private fun toEnhancedLrc(song: Song, lines: List<RichLyricLine>): String {
         val builder = StringBuilder()
         appendMetadata(builder, song)
+        val hasWordTimedSource = lines.any { hasUsableSourceWords(it) }
         lines.forEach { line ->
-            val words = timedWordsInTextOrder(line)
+            val words = timedWordsInTextOrder(line, hasWordTimedSource)
 
             if (words.isEmpty()) {
                 appendTimedLine(builder, line.begin, line.text.orEmpty())
@@ -223,7 +228,10 @@ object SaltLyricBridge {
         val begin: Long
     )
 
-    private fun timedWordsInTextOrder(line: RichLyricLine): List<TimedWord> {
+    private fun timedWordsInTextOrder(
+        line: RichLyricLine,
+        synthesizeMissingWordTiming: Boolean
+    ): List<TimedWord> {
         val words = line.words.orEmpty()
             .filter { !it.text.isNullOrEmpty() }
             .map { word ->
@@ -232,8 +240,18 @@ object SaltLyricBridge {
                     begin = normalizeWordTime(line, word.begin)
                 )
             }
-        if (words.isEmpty()) return emptyList()
-        val orderedWords = if (hasMeaningfulTimeInversion(words)) {
+        if (words.isEmpty()) {
+            return if (synthesizeMissingWordTiming) {
+                synthesizeWordsFromLineText(line)
+            } else {
+                emptyList()
+            }
+        }
+        if (synthesizeMissingWordTiming && shouldSplitSingleWholeLineWord(line, words)) {
+            val synthesized = synthesizeWordsFromLineText(line)
+            if (synthesized.isNotEmpty()) return synthesized
+        }
+        val orderedWords = if (hasUnusableWordTiming(line, words)) {
             synthesizeWordTimes(line, words)
         } else {
             words
@@ -241,15 +259,77 @@ object SaltLyricBridge {
         return clampEarlyLineWordPace(line, orderedWords)
     }
 
-    private fun hasMeaningfulTimeInversion(words: List<TimedWord>): Boolean {
+    private fun hasUsableSourceWords(line: RichLyricLine): Boolean {
+        return line.words.orEmpty().any { !it.text.isNullOrEmpty() }
+    }
+
+    private fun hasUnusableWordTiming(line: RichLyricLine, words: List<TimedWord>): Boolean {
+        if (words.size <= 1) return false
         var previous = Long.MIN_VALUE
         words.forEach { word ->
-            if (word.begin + 80L < previous) {
+            if (word.begin <= previous) {
                 return true
             }
             previous = max(previous, word.begin)
         }
-        return false
+        val span = words.last().begin - words.first().begin
+        val declaredSpan = max(line.duration, line.end - line.begin)
+        return declaredSpan >= 1_000L && span < minSyntheticWordSpan(words.size)
+    }
+
+    private fun shouldSplitSingleWholeLineWord(
+        line: RichLyricLine,
+        words: List<TimedWord>
+    ): Boolean {
+        if (words.size != 1) return false
+        val text = cleanPlainText(line.text.orEmpty())
+        val wordText = cleanPlainText(words.first().text)
+        return text.isNotBlank()
+            && text == wordText
+            && text.any { it.isWhitespace() }
+    }
+
+    private fun synthesizeWordsFromLineText(line: RichLyricLine): List<TimedWord> {
+        val tokens = splitSyntheticWordSegments(line.text.orEmpty())
+        if (tokens.size <= 1) return emptyList()
+        val span = syntheticWordSpan(line, tokens.size)
+        val step = syntheticWordStep(span, tokens.size)
+        return tokens.mapIndexed { index, token ->
+            TimedWord(
+                text = token,
+                begin = line.begin + step * index
+            )
+        }
+    }
+
+    private fun splitSyntheticWordSegments(text: String): List<String> {
+        val clean = cleanPlainText(text)
+        if (clean.isBlank()) return emptyList()
+        return Regex("""\S+\s*""").findAll(clean)
+            .map { it.value }
+            .filter { it.isNotBlank() }
+            .toList()
+    }
+
+    private fun syntheticWordSpan(line: RichLyricLine, wordCount: Int): Long {
+        val declaredSpan = max(line.duration, line.end - line.begin)
+        val fallbackSpan = max(wordCount * 300L, 720L)
+        return when {
+            declaredSpan in 360L..12_000L -> declaredSpan
+            else -> fallbackSpan
+        }
+    }
+
+    private fun syntheticWordStep(span: Long, wordCount: Int): Long {
+        val count = max(wordCount, 1)
+        return minOf(
+            MAX_SYNTHETIC_WORD_STEP_MS,
+            max(MIN_SYNTHETIC_WORD_STEP_MS, span / count)
+        )
+    }
+
+    private fun minSyntheticWordSpan(wordCount: Int): Long {
+        return max(240L, minOf(900L, wordCount * 80L))
     }
 
     private fun synthesizeWordTimes(line: RichLyricLine, words: List<TimedWord>): List<TimedWord> {
@@ -260,7 +340,7 @@ object SaltLyricBridge {
             declaredSpan in 360L..12_000L -> declaredSpan
             else -> fallbackSpan
         }
-        val step = max(80L, span / count)
+        val step = syntheticWordStep(span, count)
         return words.mapIndexed { index, word ->
             word.copy(begin = line.begin + step * index)
         }
@@ -410,7 +490,7 @@ object SaltLyricBridge {
     }
 
     private fun normalizeSpaces(value: String): String {
-        return cleanPlainText(value).replace(Regex("\\s+"), " ").trim()
+        return cleanPlainText(value).replace(WHITESPACE_REGEX, " ").trim()
     }
 
     private fun creditSeparatorIndex(value: String): Int {
@@ -634,13 +714,18 @@ object SaltLyricBridge {
     private fun cleanPlainText(text: String): String {
         return text.replace('\r', ' ')
             .replace('\n', ' ')
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_REGEX, " ")
             .trim()
     }
 
     private fun containsTimedLrc(value: String): Boolean {
-        return Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
-            .containsMatchIn(value)
+        return TIMED_LRC_REGEX.containsMatchIn(value)
+    }
+
+    private fun debug(message: String) {
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, message)
+        }
     }
 
     private fun formatLrcTime(timeMillis: Long): String {
