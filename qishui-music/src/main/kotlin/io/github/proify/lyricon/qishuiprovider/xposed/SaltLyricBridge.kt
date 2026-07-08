@@ -25,6 +25,7 @@ object SaltLyricBridge {
     private const val BRIDGE_CAPABILITIES =
         "playbackState,trackGeneration,translationToggle"
     private const val BRIDGE_MATCH_POLICY = "mediaId,trackKey,titleArtist"
+    private const val PAYLOAD_DIAGNOSTIC_LOGS = false
     private const val EXTRA_PLAYBACK_STATE = "playbackState"
     private const val EXTRA_PLAYBACK_POSITION = "playbackPosition"
     private const val EXTRA_PLAYBACK_SPEED = "playbackSpeed"
@@ -94,7 +95,7 @@ object SaltLyricBridge {
         val lyricLines = filteredLyricLines(song)
         val rawLyric = toEnhancedLrc(song, lyricLines)
         if (!containsTimedLrc(rawLyric)) {
-            if (shouldLogSkippedTimedLyric(song)) {
+            if (PAYLOAD_DIAGNOSTIC_LOGS && shouldLogSkippedTimedLyric(song)) {
                 Log.d(TAG, "Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
             }
             return
@@ -126,6 +127,9 @@ object SaltLyricBridge {
         runCatching {
             context.sendBroadcast(intent)
         }.onSuccess {
+            if (!PAYLOAD_DIAGNOSTIC_LOGS) {
+                return@onSuccess
+            }
             Log.d(
                 TAG,
                 "Sent QiShui bridge payload, id=${song.id.orEmpty()}, " +

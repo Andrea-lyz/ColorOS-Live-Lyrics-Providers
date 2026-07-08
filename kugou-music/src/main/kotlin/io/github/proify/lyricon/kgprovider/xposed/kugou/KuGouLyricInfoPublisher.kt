@@ -26,7 +26,6 @@ object KuGouLyricInfoPublisher {
     private var selfPublishing = false
     private var lastSession: MediaSession? = null
     private var lastMetadata: MediaMetadata? = null
-    private var lastArtworkMetadata: MediaMetadata? = null
     private var latestMeta: MetadataData? = null
     private var latestSong: Song? = null
     private var latestGeneration = 0L
@@ -40,9 +39,6 @@ object KuGouLyricInfoPublisher {
         synchronized(lock) {
             lastSession = session
             lastMetadata = metadata
-            if (metadata.hasKuGouArtwork()) {
-                lastArtworkMetadata = metadata
-            }
         }
         tryPublish("metadata")
     }
@@ -54,6 +50,10 @@ object KuGouLyricInfoPublisher {
             latestGeneration = generation
             lastPublishedFingerprint = ""
         }
+        diagnose(
+            "KG_DIAG publisher trackChanged gen=$generation " +
+                "id=${meta.identityId.take(48)} title=${meta.title.take(64)}"
+        )
     }
 
     fun onLyricReady(
@@ -68,6 +68,10 @@ object KuGouLyricInfoPublisher {
             latestGeneration = generation
             latestPackageName = context?.packageName
         }
+        diagnose(
+            "KG_DIAG publisher lyricReady gen=$generation id=${meta.identityId.take(48)} " +
+                "title=${meta.title.take(64)} lines=${song.lyrics?.size ?: 0}"
+        )
         tryPublish("lyric-ready", context)
     }
 
@@ -88,11 +92,19 @@ object KuGouLyricInfoPublisher {
                 latestGeneration
             ) ?: return
             val fingerprint = buildFingerprint(meta, lyricInfo)
-            if (fingerprint == lastPublishedFingerprint) return
+            if (fingerprint == lastPublishedFingerprint) {
+                diagnose(
+                    "KG_DIAG publisher skip duplicate lyricInfo reason=$reason " +
+                        "fp=${fingerprint.takeLast(12)} title=${meta.title.take(64)}"
+                )
+                return
+            }
 
+            val patchedMetadata = buildPatchedMetadata(metadata, meta, lyricInfo)
+            lastPublishedFingerprint = fingerprint
             PublishRequest(
                 session = session,
-                metadata = buildPatchedMetadata(metadata, meta, lyricInfo),
+                metadata = patchedMetadata,
                 fingerprint = fingerprint,
                 lyricInfoChars = lyricInfo.length,
                 title = meta.title,
@@ -104,14 +116,17 @@ object KuGouLyricInfoPublisher {
             selfPublishing = true
             request.session.setMetadata(request.metadata)
         }.onSuccess {
-            synchronized(lock) {
-                lastPublishedFingerprint = request.fingerprint
-            }
             diagnose(
                 "KG_DIAG published MediaSession lyricInfo reason=${request.reason} " +
-                    "title=${request.title.take(64)} chars=${request.lyricInfoChars}"
+                    "title=${request.title.take(64)} chars=${request.lyricInfoChars} " +
+                    "fp=${request.fingerprint.takeLast(12)}"
             )
         }.onFailure {
+            synchronized(lock) {
+                if (lastPublishedFingerprint == request.fingerprint) {
+                    lastPublishedFingerprint = ""
+                }
+            }
             YLog.error(tag = TAG, msg = "Failed to publish KuGou lyricInfo: ${it.message}")
         }.also {
             selfPublishing = false
@@ -129,8 +144,8 @@ object KuGouLyricInfoPublisher {
         val mediaUri = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_URI).orEmpty()
         if (mediaUri.isNotBlank() && meta.identityKeys.contains(mediaUri)) return true
 
-        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
-        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
+        val title = metadataTitle(metadata)
+        val artist = metadataArtist(metadata)
         return normalizeTrackComponent(title) == normalizeTrackComponent(song.name) &&
             normalizeTrackComponent(artist) == normalizeTrackComponent(song.artist)
     }
@@ -140,7 +155,7 @@ object KuGouLyricInfoPublisher {
         meta: MetadataData,
         lyricInfo: String
     ): MediaMetadata {
-        val builder = MediaMetadata.Builder(source)
+        return MediaMetadata.Builder(source)
             .putString(MediaMetadata.METADATA_KEY_TITLE, meta.title)
             .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, meta.title)
             .putString(MediaMetadata.METADATA_KEY_ARTIST, meta.artist)
@@ -151,18 +166,7 @@ object KuGouLyricInfoPublisher {
             .putString(MediaMetadata.METADATA_KEY_MEDIA_URI, meta.mediaUri)
             .putLong(MediaMetadata.METADATA_KEY_DURATION, meta.duration)
             .putString(METADATA_KEY_LYRIC_INFO, lyricInfo)
-        copyCachedArtwork(builder, source)
-        return builder.build()
-    }
-
-    private fun copyCachedArtwork(builder: MediaMetadata.Builder, source: MediaMetadata) {
-        // If the source metadata already has artwork, no need to copy from cache.
-        if (source.hasKuGouArtwork()) return
-        val artwork = synchronized(lock) { lastArtworkMetadata } ?: return
-        diagnose(
-            "KG_DIAG publisher copy cached artwork to patched metadata"
-        )
-        builder.copyKuGouArtworkFrom(artwork)
+            .build()
     }
 
     private fun buildFingerprint(meta: MetadataData, lyricInfo: String): String {
@@ -174,6 +178,25 @@ object KuGouLyricInfoPublisher {
             .trim()
             .lowercase(Locale.ROOT)
             .replace(WHITESPACE_REGEX, " ")
+    }
+
+    private fun metadataTitle(metadata: MediaMetadata): String? {
+        return firstNonBlank(
+            metadata.getString(MediaMetadata.METADATA_KEY_TITLE),
+            metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+        )
+    }
+
+    private fun metadataArtist(metadata: MediaMetadata): String? {
+        return firstNonBlank(
+            metadata.getString(MediaMetadata.METADATA_KEY_ARTIST),
+            metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST),
+            metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
+        )
+    }
+
+    private fun firstNonBlank(vararg values: String?): String? {
+        return values.firstOrNull { !it.isNullOrBlank() }
     }
 
     private fun diagnose(message: String) {

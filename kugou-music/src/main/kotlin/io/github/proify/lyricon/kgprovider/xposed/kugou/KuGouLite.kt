@@ -8,7 +8,7 @@ package io.github.proify.lyricon.kgprovider.xposed.kugou
 
 class KuGouLite : KuGou() {
     override fun shouldStabilizeNoisyMetadataIdentity(): Boolean = false
-    override fun shouldPublishMediaSessionLyricInfo(): Boolean = true
+    override fun shouldPublishMediaSessionLyricInfo(): Boolean = false
     override fun shouldUseCarLyricFallback(): Boolean = true
     override fun useOriginalApkLyricPipeline(): Boolean = false
     override fun shouldThrottleBridgePlaybackState(): Boolean = false

@@ -4,6 +4,7 @@ import android.media.MediaMetadata
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import com.highcapable.yukihookapi.hook.log.YLog
@@ -24,6 +25,7 @@ object QiShui : YukiBaseHooker() {
 
     private const val TAG = "QiShui"
     private const val SONG_CACHE_MAX_ENTRIES = 32
+    private const val OFFICIAL_SONG_CACHE_MAX_ENTRIES = 32
     private const val MISSING_SONG_CACHE_MAX_ENTRIES = 32
     private const val MISSING_SONG_CACHE_TTL_MS = 1_000L
     private const val RESOLUTION_LOG_THROTTLE_MS = 10_000L
@@ -31,6 +33,8 @@ object QiShui : YukiBaseHooker() {
         "io.github.andrealtb.lockscreenlyrics.action.TOGGLE_TRANSLATION"
     private const val TRANSLATION_ACTION_NAME = "\u7ffb\u8bd1"
     private const val LYRIC_RETRY_MAX_ATTEMPTS = 24
+    private const val NET_CACHE_DIAG_THROTTLE_MS = 10_000L
+    private const val NET_CACHE_RECURSIVE_MAX_FILES = 1_000
     private var provider: LyriconProvider? = null
 
     private var curMediaId: String? = null
@@ -62,6 +66,15 @@ object QiShui : YukiBaseHooker() {
             return size > SONG_CACHE_MAX_ENTRIES
         }
     }
+    private val officialSongCache = object : LinkedHashMap<String, Song>(
+        OFFICIAL_SONG_CACHE_MAX_ENTRIES,
+        0.75f,
+        true
+    ) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Song>?): Boolean {
+            return size > OFFICIAL_SONG_CACHE_MAX_ENTRIES
+        }
+    }
     private val missingSongCache = object : LinkedHashMap<String, MissingSong>(
         MISSING_SONG_CACHE_MAX_ENTRIES,
         0.75f,
@@ -76,6 +89,11 @@ object QiShui : YukiBaseHooker() {
     private val resolutionLogAtByKey = object : LinkedHashMap<String, Long>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
             return size > 64
+        }
+    }
+    private val netCacheDiagnosticLogAtById = object : LinkedHashMap<String, Long>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+            return size > 32
         }
     }
 
@@ -99,6 +117,7 @@ object QiShui : YukiBaseHooker() {
 
         initProvider()
         hookMediaSession()
+        QiShuiOfficialLyrics.install(appClassLoader, ::acceptOfficialSong)
     }
 
     private fun initProvider() {
@@ -179,7 +198,7 @@ object QiShui : YukiBaseHooker() {
                         cancelPendingLyricResolution()
                         curMediaId = id
                         currentTrackGeneration++
-                        YLog.info(
+                        YLog.debug(
                             tag = TAG,
                             msg = "metadata id=${id.orEmpty()}, " +
                                 "title=${metadata?.title.orEmpty()}, " +
@@ -267,6 +286,15 @@ object QiShui : YukiBaseHooker() {
             clearPendingLyricResolution(id)
             return
         }
+        getCachedOfficialSong(id)?.let { cached ->
+            YLog.debug(
+                tag = TAG,
+                msg = "official runtime cache hit, mediaId=$id, lyrics=${cached.lyrics?.size ?: 0}"
+            )
+            setSong(cached, trackGeneration = trackGeneration)
+            clearPendingLyricResolution(id)
+            return
+        }
         getCachedMissingSong(id)?.let { missing ->
             logResolutionOnce(
                 "missing-cache:$id",
@@ -281,7 +309,7 @@ object QiShui : YukiBaseHooker() {
         val cache = runCatching {
             val file = getNetLyricCacheFile(id)
             if (file != null && file.exists()) {
-                YLog.info(tag = TAG, msg = "cache hit, mediaId=$id, file=${file.name}")
+                YLog.debug(tag = TAG, msg = "cache hit, mediaId=$id, file=${file.name}")
                 file.inputStream().use {
                     json.decodeFromStream<NetResponseCache>(it)
                 }
@@ -298,7 +326,7 @@ object QiShui : YukiBaseHooker() {
                 clearPendingLyricResolution(id)
                 return
             }
-            YLog.info(tag = TAG, msg = "cache lyric empty, mediaId=$id")
+            YLog.debug(tag = TAG, msg = "cache lyric empty, mediaId=$id")
         } else {
             logResolutionOnce(
                 "cache-miss:$id",
@@ -308,7 +336,7 @@ object QiShui : YukiBaseHooker() {
 
         val dbHit = PlayableDbCache.findSong(appContext, id, metadata)
         if (dbHit != null) {
-            YLog.info(
+            YLog.debug(
                 tag = TAG,
                 msg = "db hit, mediaId=$id, db=${dbHit.databaseName}, " +
                     "table=${dbHit.tableName}, lyrics=${dbHit.song.lyrics?.size ?: 0}"
@@ -417,7 +445,7 @@ object QiShui : YukiBaseHooker() {
         if (song == lastSong) return
         provider?.player?.setSong(song)
         SaltLyricBridge.send(appContext, song, trackGeneration)
-        YLog.info(
+        YLog.debug(
             tag = TAG,
             msg = "song updated, id=${song.id.orEmpty()}, " +
                 "title=${song.name.orEmpty()}, lyrics=${song.lyrics?.size ?: 0}"
@@ -430,9 +458,59 @@ object QiShui : YukiBaseHooker() {
         }
     }
 
+    private fun acceptOfficialSong(song: Song, source: String) {
+        val id = song.id?.takeIf { it.isNotBlank() } ?: return
+        if (song.lyrics.isNullOrEmpty()) return
+        rememberOfficialSong(song)
+
+        val existing = lastSong
+        if (existing?.id == id && !existing.lyrics.isNullOrEmpty()) {
+            clearPendingLyricResolution(id)
+            return
+        }
+
+        if (curMediaId != id) {
+            cancelPendingLyricResolution()
+            curMediaId = id
+            currentTrackGeneration++
+            SaltLyricBridge.sendTrackChanged(
+                context = appContext,
+                mediaId = id,
+                title = song.name,
+                artist = song.artist,
+                duration = song.duration,
+                trackGeneration = currentTrackGeneration
+            )
+        }
+
+        YLog.debug(
+            tag = TAG,
+            msg = "official lyric accepted, source=$source, mediaId=$id, " +
+                "title=${song.name.orEmpty()}, lyrics=${song.lyrics?.size ?: 0}"
+        )
+        setSong(song, trackGeneration = currentTrackGeneration)
+        clearPendingLyricResolution(id)
+    }
+
     private fun getCachedSong(id: String): Song? {
         synchronized(songCache) {
             return songCache[id]
+        }
+    }
+
+    private fun getCachedOfficialSong(id: String): Song? {
+        synchronized(officialSongCache) {
+            return officialSongCache[id]
+        }
+    }
+
+    private fun rememberOfficialSong(song: Song) {
+        val id = song.id?.takeIf { it.isNotBlank() } ?: return
+        synchronized(officialSongCache) {
+            officialSongCache[id] = song
+        }
+        synchronized(missingSongCache) {
+            missingSongCache.remove(id)
         }
     }
 
@@ -477,7 +555,7 @@ object QiShui : YukiBaseHooker() {
             }
             resolutionLogAtByKey[key] = now
         }
-        YLog.info(tag = TAG, msg = message)
+        YLog.debug(tag = TAG, msg = message)
     }
 
     fun NetResponseCache.buildSong(id: String): Song {
@@ -508,10 +586,103 @@ object QiShui : YukiBaseHooker() {
                 }
                 if (targetFile != null) return@forEach
             }
-            targetFile
+            targetFile ?: findNetLyricCacheFileRecursively(id, fileName)
         }.onFailure {
             YLog.error(tag = TAG, msg = "getNetLyricCacheFile failed, mediaId=$id, error=$it")
         }.getOrNull()
+    }
+
+    private fun findNetLyricCacheFileRecursively(id: String, fileName: String): File? {
+        val start = SystemClock.elapsedRealtime()
+        var scannedDirs = 0
+        var scannedFiles = 0
+        var found: File? = null
+        val root = netCacheLoaderDir
+        if (!root.exists() || !root.isDirectory) {
+            logNetCacheDiagnostic(
+                id = id,
+                fileName = fileName,
+                scannedDirs = scannedDirs,
+                scannedFiles = scannedFiles,
+                found = null,
+                elapsedMs = SystemClock.elapsedRealtime() - start
+            )
+            return null
+        }
+
+        val stack = ArrayDeque<File>()
+        stack.add(root)
+        while (stack.isNotEmpty() && scannedFiles < NET_CACHE_RECURSIVE_MAX_FILES) {
+            val dir = stack.removeLast()
+            scannedDirs++
+            dir.listFiles().orEmpty().forEach { child ->
+                if (child.isDirectory) {
+                    stack.add(child)
+                } else if (child.isFile) {
+                    scannedFiles++
+                    if (child.name == fileName) {
+                        found = child
+                        return@forEach
+                    }
+                }
+            }
+            if (found != null) break
+        }
+
+        logNetCacheDiagnostic(
+            id = id,
+            fileName = fileName,
+            scannedDirs = scannedDirs,
+            scannedFiles = scannedFiles,
+            found = found,
+            elapsedMs = SystemClock.elapsedRealtime() - start
+        )
+        if (found != null) {
+            YLog.debug(
+                tag = TAG,
+                msg = "cache recursive hit, mediaId=$id, file=${found.name}, " +
+                    "relative=${found.relativeToOrNull(root)?.path.orEmpty()}"
+            )
+        }
+        return found
+    }
+
+    private fun logNetCacheDiagnostic(
+        id: String,
+        fileName: String,
+        scannedDirs: Int,
+        scannedFiles: Int,
+        found: File?,
+        elapsedMs: Long
+    ) {
+        val now = System.currentTimeMillis()
+        synchronized(netCacheDiagnosticLogAtById) {
+            val lastLoggedAt = netCacheDiagnosticLogAtById[id]
+            if (lastLoggedAt != null && now - lastLoggedAt < NET_CACHE_DIAG_THROTTLE_MS) {
+                return
+            }
+            netCacheDiagnosticLogAtById[id] = now
+        }
+
+        val root = netCacheLoaderDir
+        val children = root.listFiles().orEmpty()
+        val sampleDirs = children
+            .filter { it.isDirectory }
+            .take(6)
+            .joinToString("|") { it.name }
+        val sampleFiles = children
+            .filter { it.isFile }
+            .take(6)
+            .joinToString("|") { it.name }
+        YLog.debug(
+            tag = TAG,
+            msg = "net cache diag, mediaId=$id, file=$fileName, root=${root.absolutePath}, " +
+                "rootExists=${root.exists()}, rootDir=${root.isDirectory}, " +
+                "immediateDirs=${children.count { it.isDirectory }}, " +
+                "immediateFiles=${children.count { it.isFile }}, scannedDirs=$scannedDirs, " +
+                "scannedFiles=$scannedFiles, found=${found != null}, elapsedMs=$elapsedMs, " +
+                "sampleDirs=$sampleDirs, sampleFiles=$sampleFiles"
+        )
     }
 
     fun calculateLyricCacheFileName(id: String): String =

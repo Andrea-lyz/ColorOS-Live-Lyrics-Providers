@@ -95,6 +95,7 @@ abstract class KuGouBase : YukiBaseHooker() {
 
     private var lastEmittedSong: Song? = null
     private var lastEmittedSongGeneration = 0L
+    private var lastEmittedSongSignature = ""
     private var lastLyricReadyGeneration = 0L
     private var pendingTrackChangedJob: Job? = null
     private var pendingMetadataIdentityJob: Job? = null
@@ -488,7 +489,13 @@ abstract class KuGouBase : YukiBaseHooker() {
                         if (shouldThrottleBridgePlaybackState()) {
                             throttledSendPlaybackState(state)
                         } else {
-                            SaltLyricBridge.sendPlaybackState(appContext, state)
+                            val snapshot = currentTrackSnapshot()
+                            SaltLyricBridge.sendPlaybackState(
+                                appContext,
+                                state,
+                                snapshot.metadata,
+                                snapshot.generation
+                            )
                         }
                     }
                 }
@@ -602,7 +609,13 @@ abstract class KuGouBase : YukiBaseHooker() {
             lastForwardedPlaybackStateCode = stateCode
             lastForwardedPlaybackStateElapsed = now
         }
-        SaltLyricBridge.sendPlaybackState(appContext, state)
+        val snapshot = currentTrackSnapshot()
+        SaltLyricBridge.sendPlaybackState(
+            appContext,
+            state,
+            snapshot.metadata,
+            snapshot.generation
+        )
     }
 
     private fun handleMetadataChange(metadata: MediaMetadata) {
@@ -798,6 +811,9 @@ abstract class KuGouBase : YukiBaseHooker() {
         val now = SystemClock.elapsedRealtime()
         val generation: Long
         val trackChanged: Boolean
+        var effectiveMeta = meta
+        var lyricAlreadyReadyForGeneration = false
+        var retainedStableRefresh = false
         synchronized(stateLock) {
             trackChanged = songId != currentSongId
             if (trackChanged) {
@@ -806,42 +822,92 @@ abstract class KuGouBase : YukiBaseHooker() {
                 currentTrackChangedAtElapsed = now
                 lastEmittedSong = null
                 lastEmittedSongGeneration = 0L
+                lastEmittedSongSignature = ""
                 trackChangeSuppressUntilElapsed =
                     now + PLAYBACK_STATE_TRACK_CHANGE_SUPPRESS_MS
                 lastArtworkMetadata = null
                 lastArtworkIdentityId = ""
+                currentMetadata = meta
+            } else {
+                val currentGeneration = currentTrackGeneration
+                lyricAlreadyReadyForGeneration =
+                    currentGeneration > 0L && lastLyricReadyGeneration >= currentGeneration
+                val current = currentMetadata
+                if (shouldRetainStableMetadataRefresh(
+                        current,
+                        meta,
+                        lyricAlreadyReadyForGeneration
+                    )
+                ) {
+                    effectiveMeta = current!!
+                    retainedStableRefresh = true
+                } else {
+                    currentMetadata = meta
+                }
             }
-            currentMetadata = meta
             generation = currentTrackGeneration
         }
 
         if (trackChanged) {
             diagnose(
                 "KG_DIAG metadata changed gen=$generation id=${songId.take(48)} " +
-                    "key=${meta.trackKey.take(80)} duration=${meta.duration}"
+                    "key=${effectiveMeta.trackKey.take(80)} duration=${effectiveMeta.duration}"
             )
             if (shouldPublishMediaSessionLyricInfo()) {
-                KuGouLyricInfoPublisher.onTrackChanged(meta, generation)
+                KuGouLyricInfoPublisher.onTrackChanged(effectiveMeta, generation)
             }
-            scheduleTrackChanged(meta, generation)
+            scheduleTrackChanged(effectiveMeta, generation)
+        } else if (retainedStableRefresh) {
+            diagnoseDebug(
+                "KG_DIAG keep stable metadata refresh gen=$generation " +
+                    "current=${effectiveMeta.trackKey.take(80)} incoming=${meta.trackKey.take(80)}"
+            )
         } else {
             diagnoseDebug(
                 "KG_DIAG metadata refreshed gen=$generation id=${songId.take(48)} " +
-                    "key=${meta.trackKey.take(80)}"
+                    "key=${effectiveMeta.trackKey.take(80)}"
             )
         }
 
         if (!resolveLyrics) {
             return generation
         }
-        if (trySendCachedLyrics(meta, generation)) {
+        if (!trackChanged && lyricAlreadyReadyForGeneration) {
+            return generation
+        }
+        if (trySendCachedLyrics(effectiveMeta, generation)) {
             return generation
         }
         if (tryBindPendingLyricsToCurrent("metadata")) {
             return generation
         }
-        scheduleLocalLyricFileProbe(meta, generation)
+        scheduleLocalLyricFileProbe(effectiveMeta, generation)
         return generation
+    }
+
+    private fun shouldRetainStableMetadataRefresh(
+        current: MetadataData?,
+        incoming: MetadataData,
+        lyricAlreadyReadyForGeneration: Boolean
+    ): Boolean {
+        if (!shouldUseCarLyricFallback() ||
+            !lyricAlreadyReadyForGeneration ||
+            current == null
+        ) {
+            return false
+        }
+
+        val currentTitle = normalizeLocalLyricFileText(current.title)
+        val incomingTitle = normalizeLocalLyricFileText(incoming.title)
+        val currentArtist = normalizeLocalLyricFileText(current.artist)
+        val incomingArtist = normalizeLocalLyricFileText(incoming.artist)
+        if (currentTitle == incomingTitle && currentArtist == incomingArtist) {
+            return false
+        }
+
+        return sameStableMedia(current, incoming) ||
+            looksLikeSameTrackMetadataChurn(current, incoming, currentTitle, incomingTitle) ||
+            looksLikeMetadataForTrack(incoming, current)
     }
 
     private fun scheduleStableMetadataIdentity(meta: MetadataData) {
@@ -922,9 +988,6 @@ abstract class KuGouBase : YukiBaseHooker() {
         }
 
         if (hasLyricReadyForGeneration(snapshot.generation)) {
-            if (!shouldStabilizeNoisyMetadataIdentity() && !useOriginalApkLyricPipeline()) {
-                return false
-            }
             diagnoseDebug(
                 "KG_DIAG ignore car lyric metadata after lyricReady gen=${snapshot.generation} " +
                     "stable=$stableMedia churn=$sameTrackChurn text=${meta.title.take(64)}"
@@ -1623,12 +1686,16 @@ abstract class KuGouBase : YukiBaseHooker() {
         reason: String
     ): Boolean {
         markLyricReady(trackGeneration)
-        if (lastEmittedSong == song && lastEmittedSongGeneration == trackGeneration) {
+        val songSignature = buildSongSignature(song)
+        if (lastEmittedSongGeneration == trackGeneration &&
+            lastEmittedSongSignature == songSignature
+        ) {
             diagnoseDebug("KG_DIAG skip duplicate lyricReady gen=$trackGeneration reason=$reason")
             return true
         }
         lastEmittedSong = song
         lastEmittedSongGeneration = trackGeneration
+        lastEmittedSongSignature = songSignature
         provider?.player?.setSong(song)
         SaltLyricBridge.send(appContext, song, meta.mediaUri, trackGeneration)
         if (shouldPublishMediaSessionLyricInfo()) {
@@ -1640,6 +1707,25 @@ abstract class KuGouBase : YukiBaseHooker() {
                 "lines=${song.lyrics?.size ?: 0}"
         )
         return true
+    }
+
+    private fun buildSongSignature(song: Song): String {
+        val lyrics = song.lyrics.orEmpty()
+        val first = lyrics.firstOrNull()
+        val last = lyrics.lastOrNull()
+        return listOf(
+            song.id.orEmpty(),
+            song.name.orEmpty(),
+            song.artist.orEmpty(),
+            song.duration.toString(),
+            lyrics.size.toString(),
+            first?.begin?.toString().orEmpty(),
+            first?.end?.toString().orEmpty(),
+            first?.text.orEmpty(),
+            last?.begin?.toString().orEmpty(),
+            last?.end?.toString().orEmpty(),
+            last?.text.orEmpty()
+        ).joinToString("|").hashCode().toString()
     }
 
     private fun markLyricReady(trackGeneration: Long) {

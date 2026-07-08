@@ -21,8 +21,8 @@ configure<ApplicationExtension> {
         applicationId = "io.github.proify.lyricon.kgprovider"
         minSdk = 27
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
-        versionCode = 6
-        versionName = "1.1.1"
+        versionCode = 7
+        versionName = "1.1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

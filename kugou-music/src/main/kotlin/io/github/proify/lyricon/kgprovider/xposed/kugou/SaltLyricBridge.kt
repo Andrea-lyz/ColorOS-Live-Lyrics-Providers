@@ -18,6 +18,7 @@ import kotlin.math.max
 
 object SaltLyricBridge {
     private const val TAG = "Lyricon_KuGouBridge"
+    private const val BRIDGE_DIAGNOSTICS_ENABLED = false
     private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
         "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
     private const val SYSTEMUI_PACKAGE = "com.android.systemui"
@@ -61,6 +62,12 @@ object SaltLyricBridge {
 
         runCatching {
             context.sendBroadcast(intent)
+        }.onSuccess {
+            debug(
+                "KG_ALIGN provider trackChanged gen=$trackGeneration " +
+                    "key=${buildTrackKey(metadata.title, metadata.artist).take(96)} " +
+                    "title=${metadata.title.take(64)} artist=${metadata.artist.take(64)}"
+            )
         }.onFailure { e ->
             Log.w(TAG, "Failed to send KuGou track change, generation=$trackGeneration", e)
         }
@@ -110,6 +117,15 @@ object SaltLyricBridge {
             context.sendBroadcast(intent)
         }.onSuccess {
             debug(
+                "KG_ALIGN provider lyricReady gen=$trackGeneration " +
+                    "key=${buildTrackKey(song.name, song.artist).take(96)} " +
+                    "title=${song.name.orEmpty().take(64)} " +
+                    "artist=${song.artist.orEmpty().take(64)} " +
+                    "rawChars=${payload.rawLyric.length} " +
+                    "transChars=${payload.translationLyric.length} " +
+                    "lines=${payload.lyricLines.size}/${song.lyrics?.size ?: 0}"
+            )
+            debug(
                 "Sent KuGou bridge payload, source=${payload.source}, id=${song.id.orEmpty()}, " +
                     "lines=${payload.lyricLines.size}/${song.lyrics?.size ?: 0}, " +
                     "rawChars=${payload.rawLyric.length}, transChars=${payload.translationLyric.length}"
@@ -145,7 +161,12 @@ object SaltLyricBridge {
             .toString()
     }
 
-    fun sendPlaybackState(context: Context?, state: PlaybackState?) {
+    fun sendPlaybackState(
+        context: Context?,
+        state: PlaybackState?,
+        metadata: MetadataData? = null,
+        trackGeneration: Long = 0L
+    ) {
         if (context == null || state == null) return
         if (!supportsBridgePlaybackStateForPackage(context.packageName)) return
 
@@ -157,11 +178,28 @@ object SaltLyricBridge {
             putExtra("playbackPosition", state.position)
             putExtra("playbackSpeed", state.playbackSpeed)
             putExtra("playbackLastPositionUpdateTime", state.lastPositionUpdateTime)
+            putExtra("trackGeneration", trackGeneration)
+            if (metadata != null) {
+                putExtra("mediaId", metadata.identityId)
+                putExtra("mediaUri", metadata.mediaUri)
+                putExtra("trackKey", buildTrackKey(metadata.title, metadata.artist))
+                putExtra("songName", metadata.title)
+                putExtra("artist", metadata.artist)
+                putExtra("duration", validDuration(metadata.duration))
+            }
             putExtra("capturedAt", System.currentTimeMillis())
         }
 
         runCatching {
             context.sendBroadcast(intent)
+        }.onSuccess {
+            debug(
+                "KG_ALIGN provider playback gen=$trackGeneration " +
+                    "state=${state.state} pos=${state.position} speed=${state.playbackSpeed} " +
+                    "key=${metadata?.let { buildTrackKey(it.title, it.artist).take(96) }.orEmpty()} " +
+                    "title=${metadata?.title.orEmpty().take(64)} " +
+                    "artist=${metadata?.artist.orEmpty().take(64)}"
+            )
         }.onFailure { e ->
             Log.w(TAG, "Failed to send KuGou playback state, state=${state.state}", e)
         }
@@ -439,7 +477,7 @@ object SaltLyricBridge {
     }
 
     private fun debug(message: String) {
-        if (Log.isLoggable(TAG, Log.VERBOSE)) {
+        if (BRIDGE_DIAGNOSTICS_ENABLED || Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.d(TAG, message)
         }
     }

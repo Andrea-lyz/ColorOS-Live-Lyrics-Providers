@@ -6,6 +6,6 @@
 
 <resources>
     <string name="app_name">QiShui Lyric Provider</string>
-    <string name="xposed_description">Provides QiShui Music lyrics for Lyricon and ColorOS Live Lyrics Bridge</string>
+    <string name="xposed_description">为 Lyricon 和 ColorOS Live Lyrics Bridge 提供汽水音乐歌词。请在 LSP 管理器 - 设置 - 还原内联钩子 中勾选汽水音乐，否则歌词获取可能不稳定。</string>
     <string name="lyricon_module_description">Provides QiShui Music lyrics for Lyricon and ColorOS Live Lyrics Bridge</string>
 </resources>

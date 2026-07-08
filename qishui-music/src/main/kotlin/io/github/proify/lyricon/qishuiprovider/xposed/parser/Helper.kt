@@ -63,4 +63,15 @@ private fun getLangKeyForTranslations(availableKeys: Set<String>): String? {
 
     // 模糊匹配语言部分
     return availableKeys.firstOrNull { it.startsWith(locale.language, ignoreCase = true) }
+        ?: availableKeys.firstOrNull { isPreferredChineseTranslationKey(it) }
+        ?: availableKeys.firstOrNull { it.startsWith("ZH", ignoreCase = true) }
+        ?: availableKeys.firstOrNull()
+}
+
+private fun isPreferredChineseTranslationKey(key: String): Boolean {
+    val normalized = key.uppercase()
+    return normalized == "ZH-HANS"
+        || normalized == "ZH-HANS-CN"
+        || normalized == "ZH-CN"
+        || normalized == "ZH"
 }
