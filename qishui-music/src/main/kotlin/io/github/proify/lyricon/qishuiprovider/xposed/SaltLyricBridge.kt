@@ -20,7 +20,11 @@ object SaltLyricBridge {
     private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
         "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
     private const val SYSTEMUI_PACKAGE = "com.android.systemui"
+    private const val BRIDGE_PROTOCOL_VERSION = 2
     private const val SOURCE_QISHUI = "lyricprovider/qishui-music"
+    private const val BRIDGE_CAPABILITIES =
+        "playbackState,trackGeneration,translationToggle"
+    private const val BRIDGE_MATCH_POLICY = "mediaId,trackKey,titleArtist"
     private const val EXTRA_PLAYBACK_STATE = "playbackState"
     private const val EXTRA_PLAYBACK_POSITION = "playbackPosition"
     private const val EXTRA_PLAYBACK_SPEED = "playbackSpeed"
@@ -30,6 +34,37 @@ object SaltLyricBridge {
     private const val SKIP_TIMED_LYRIC_LOG_THROTTLE_MS = 10_000L
     private var lastSkippedTimedLyricKey = ""
     private var lastSkippedTimedLyricLogAt = 0L
+
+    fun sendTrackChanged(
+        context: Context?,
+        mediaId: String?,
+        title: String?,
+        artist: String?,
+        duration: Long,
+        trackGeneration: Long
+    ) {
+        if (context == null || mediaId.isNullOrBlank() || trackGeneration <= 0L) return
+
+        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
+            setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
+            putExtra("source", SOURCE_QISHUI)
+            putExtra("eventType", "trackChanged")
+            putExtra("mediaId", mediaId)
+            putExtra("trackKey", buildTrackKey(title, artist))
+            putExtra("songName", title.orEmpty())
+            putExtra("artist", artist.orEmpty())
+            putExtra("duration", validDuration(duration))
+            putExtra("trackGeneration", trackGeneration)
+            putExtra("capturedAt", System.currentTimeMillis())
+        }
+
+        runCatching {
+            context.sendBroadcast(intent)
+        }.onFailure { e ->
+            Log.w(TAG, "Failed to send QiShui track change, generation=$trackGeneration", e)
+        }
+    }
 
     private val creditRoleKeywords = arrayOf(
         "lyrics",
@@ -53,7 +88,7 @@ object SaltLyricBridge {
         "\u51fa\u54c1"
     )
 
-    fun send(context: Context?, song: Song?) {
+    fun send(context: Context?, song: Song?, trackGeneration: Long = 0L) {
         if (context == null || song == null) return
 
         val lyricLines = filteredLyricLines(song)
@@ -72,6 +107,7 @@ object SaltLyricBridge {
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
             putExtra("source", SOURCE_QISHUI)
             putExtra("eventType", "lyricReady")
             putExtra("requestId", requestId)
@@ -83,6 +119,7 @@ object SaltLyricBridge {
             putExtra("lyric", lyric)
             putExtra("rawLyric", rawLyric)
             putExtra("translationLyric", translationLyric)
+            putExtra("trackGeneration", trackGeneration)
             putExtra("capturedAt", System.currentTimeMillis())
         }
 
@@ -106,6 +143,7 @@ object SaltLyricBridge {
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
             putExtra("source", SOURCE_QISHUI)
             putExtra(EXTRA_PLAYBACK_STATE, state.state)
             putExtra(EXTRA_PLAYBACK_POSITION, state.position)
@@ -119,6 +157,13 @@ object SaltLyricBridge {
         }.onFailure { e ->
             Log.w(TAG, "Failed to send QiShui playback state, state=${state.state}", e)
         }
+    }
+
+    private fun Intent.putBridgeDeclaration(context: Context) {
+        putExtra("protocolVersion", BRIDGE_PROTOCOL_VERSION)
+        putExtra("playerPackage", context.packageName)
+        putExtra("capabilities", BRIDGE_CAPABILITIES)
+        putExtra("matchPolicy", BRIDGE_MATCH_POLICY)
     }
 
     private fun toEnhancedLrc(song: Song, lines: List<RichLyricLine>): String {
