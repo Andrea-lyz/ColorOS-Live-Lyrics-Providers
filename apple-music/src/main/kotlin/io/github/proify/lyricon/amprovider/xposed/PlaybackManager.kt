@@ -23,6 +23,8 @@ object PlaybackManager {
     private var currentSongId: String? = null
     private var currentPlaybackItem: Any? = null
     private var lastLyricRequestKey: String? = null
+    @Volatile
+    private var authoritativeBridgeMediaId: String? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val playbackItemsById = object : LinkedHashMap<String, Any>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Any>?): Boolean =
@@ -71,6 +73,7 @@ object PlaybackManager {
             currentSongId = null
             currentPlaybackItem = null
             lastLyricRequestKey = null
+            authoritativeBridgeMediaId = null
             bridgeTrack = BridgeTrack()
             lyricRequestGeneration = 0L
             lyricRequestAttempts = 0
@@ -85,13 +88,16 @@ object PlaybackManager {
             }
             return
         }
+        currentSongId = newId
         val metadata = MediaMetadataCache.getMetadataById(newId)
-        beginBridgeTrack(
-            mediaId = newId,
-            title = metadata?.title,
-            artist = metadata?.artist,
-            duration = metadata?.duration ?: 0L
-        )
+        if (appleBridgeMayFollowObservedSong(authoritativeBridgeMediaId, newId)) {
+            beginBridgeTrack(
+                mediaId = newId,
+                title = metadata?.title,
+                artist = metadata?.artist,
+                duration = metadata?.duration ?: 0L
+            )
+        }
 
         val song = SongRepository.getSong(newId)
         setSong(song)
@@ -101,20 +107,48 @@ object PlaybackManager {
         }
     }
 
+    fun onBridgeMediaSessionMetadataChanged(metadata: MediaMetadataCache.Metadata) {
+        authoritativeBridgeMediaId = metadata.id
+        beginBridgeTrack(
+            mediaId = metadata.id,
+            title = metadata.title,
+            artist = metadata.artist,
+            duration = metadata.duration
+        )
+
+        // Keep the original provider flow intact, then make sure a cached lyric that was
+        // observed before MediaSession caught up is emitted for this new Bridge generation.
+        onSongChanged(metadata.id)
+        val bridgeSong = lastSong
+            ?.takeIf { it.id == metadata.id }
+            ?: SongRepository.getSong(metadata.id)
+        sendCurrentBridgeSong(bridgeSong)
+        if (bridgeSong.lyrics.isNullOrEmpty()) {
+            requestLyrics(metadata.id)
+        }
+    }
+
     fun onLyricsBuilt(nativeSongObj: Any) {
         val song = SongRepository.saveSong(nativeSongObj) ?: return
         val id = song.id?.takeIf { it.isNotBlank() } ?: return
         if (currentSongId == null) {
-            beginBridgeTrack(
-                mediaId = id,
-                title = song.name,
-                artist = song.artist,
-                duration = song.duration
-            )
+            currentSongId = id
+            if (appleBridgeMayFollowObservedSong(authoritativeBridgeMediaId, id)) {
+                beginBridgeTrack(
+                    mediaId = id,
+                    title = song.name,
+                    artist = song.artist,
+                    duration = song.duration
+                )
+            }
         }
 
         if (id == currentSongId && lastSong != song) {
             setSong(song)
+        } else {
+            // Queue preloading may move the original provider's currentSongId ahead.
+            // Bridge delivery remains pinned to the authoritative MediaSession track.
+            sendCurrentBridgeSong(song)
         }
     }
 
@@ -149,7 +183,7 @@ object PlaybackManager {
         duration: Long
     ) {
         val nextTrack = synchronized(this) {
-            if (currentSongId == mediaId && bridgeTrack.generation > 0L) {
+            if (bridgeTrack.mediaId == mediaId && bridgeTrack.generation > 0L) {
                 null
             } else {
                 val nextGeneration = maxOf(
@@ -163,7 +197,6 @@ object PlaybackManager {
                     duration = duration,
                     generation = nextGeneration
                 ).also {
-                    currentSongId = mediaId
                     currentPlaybackItem = synchronized(playbackItemsById) {
                         playbackItemsById[mediaId]
                     }
@@ -262,3 +295,8 @@ object PlaybackManager {
         }, delayMs)
     }
 }
+
+internal fun appleBridgeMayFollowObservedSong(
+    authoritativeMediaId: String?,
+    observedMediaId: String
+): Boolean = authoritativeMediaId == null || authoritativeMediaId == observedMediaId

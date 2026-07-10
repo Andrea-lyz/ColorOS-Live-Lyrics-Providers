@@ -108,7 +108,9 @@ object Apple : YukiBaseHooker() {
     private fun startHooks() {
         hookPlaybackItemLoadMethod()
         hookPlaybackItemConvertMethod()
-        hookMediaMetadataChange()
+        if (!hookBridgeMediaSessionMetadata()) {
+            hookMediaMetadataChange()
+        }
         hookLyricBuildMethod()
         hookBridgeMediaSessionPlaybackState()
         runCatching {
@@ -186,13 +188,28 @@ object Apple : YukiBaseHooker() {
                 after {
                     val mediaMetadata = args[0] as? MediaMetadata ?: return@after
                     val metadata = MediaMetadataCache.putAndGet(mediaMetadata) ?: return@after
-                    PlaybackManager.onSongChanged(metadata.id)
+                    PlaybackManager.onBridgeMediaSessionMetadataChanged(metadata)
                 }
             }
         }.onFailure {
             YLog.error("hookMediaMetadataChange failed", it)
         }
     }
+
+    private fun hookBridgeMediaSessionMetadata(): Boolean = runCatching {
+        MediaSession::class.java
+            .getDeclaredMethod("setMetadata", MediaMetadata::class.java)
+            .hook {
+                after {
+                    val mediaMetadata = args.getOrNull(0) as? MediaMetadata ?: return@after
+                    val metadata = MediaMetadataCache.putAndGet(mediaMetadata) ?: return@after
+                    PlaybackManager.onBridgeMediaSessionMetadataChanged(metadata)
+                }
+            }
+        true
+    }.onFailure {
+        YLog.error("hookBridgeMediaSessionMetadata failed", it)
+    }.getOrDefault(false)
 
     private fun hookLyricBuildMethod() {
         runCatching {
