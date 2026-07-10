@@ -13,13 +13,15 @@ object TrackMetadataCache {
     private val map = mutableMapOf<String, TrackMetadata>()
 
     fun save(metadata: Bundle): TrackMetadata? {
-        val id = metadata.getLong("id", -1)
+        val id = metadata.longValue("id", -1L)
         if (id == -1L) return null
 
         val title = metadata.getString("title")
         val artist = metadata.getString("artist")
         val album = metadata.getString("album")
-        val duration = metadata.getLong("durMs")
+        // Poweramp sends durMs as an Int on some builds. Bundle#getLong logs a
+        // ClassCastException and silently returns zero for that valid payload.
+        val duration = metadata.longValue("durMs", 0L)
         val path = metadata.getString("path")
 
         val data = TrackMetadata(
@@ -37,6 +39,18 @@ object TrackMetadataCache {
 
     fun get(id: String): TrackMetadata? = map[id]
 }
+
+internal fun bundleLong(value: Any?, fallback: Long): Long = when (value) {
+    is Number -> value.toLong()
+    is String -> value.toLongOrNull() ?: fallback
+    else -> fallback
+}
+
+private fun Bundle.longValue(key: String, fallback: Long): Long =
+    bundleLong(rawValue(key), fallback)
+
+@Suppress("DEPRECATION")
+private fun Bundle.rawValue(key: String): Any? = get(key)
 
 @Serializable
 data class TrackMetadata(
