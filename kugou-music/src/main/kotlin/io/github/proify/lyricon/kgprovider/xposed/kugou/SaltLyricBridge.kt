@@ -9,7 +9,10 @@ package io.github.proify.lyricon.kgprovider.xposed.kugou
 import android.content.Context
 import android.content.Intent
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import android.util.Log
+import io.github.proify.extensions.bridge.BridgePayloadGate
+import io.github.proify.extensions.bridge.BridgePlaybackStateGate
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import org.json.JSONObject
@@ -37,6 +40,8 @@ object SaltLyricBridge {
     private val TIMED_LRC_REGEX =
         Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
     private val WHITESPACE_REGEX = Regex("\\s+")
+    private val payloadGate = BridgePayloadGate()
+    private val playbackStateGate = BridgePlaybackStateGate()
 
     fun sendTrackChanged(
         context: Context?,
@@ -93,6 +98,8 @@ object SaltLyricBridge {
             payload.rawLyric,
             payload.translationLyric
         )
+        val payloadKey = "${payload.source}:$trackGeneration:$requestId"
+        if (!payloadGate.shouldSend(payloadKey, SystemClock.elapsedRealtime())) return
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
@@ -131,6 +138,7 @@ object SaltLyricBridge {
                     "rawChars=${payload.rawLyric.length}, transChars=${payload.translationLyric.length}"
             )
         }.onFailure { e ->
+            payloadGate.forget(payloadKey)
             Log.w(TAG, "Failed to send KuGou bridge payload, id=${song.id.orEmpty()}", e)
         }
     }
@@ -169,6 +177,19 @@ object SaltLyricBridge {
     ) {
         if (context == null || state == null) return
         if (!supportsBridgePlaybackStateForPackage(context.packageName)) return
+        if (trackGeneration <= 0L && metadata == null) return
+        if (!playbackStateGate.shouldSend(
+                state = state.state,
+                position = state.position,
+                speed = state.playbackSpeed,
+                lastPositionUpdateTime = state.lastPositionUpdateTime,
+                moving = isPlaybackInMotion(state.state),
+                generation = trackGeneration,
+                nowElapsedMillis = SystemClock.elapsedRealtime()
+            )
+        ) {
+            return
+        }
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
@@ -201,8 +222,15 @@ object SaltLyricBridge {
                     "artist=${metadata?.artist.orEmpty().take(64)}"
             )
         }.onFailure { e ->
+            playbackStateGate.reset()
             Log.w(TAG, "Failed to send KuGou playback state, state=${state.state}", e)
         }
+    }
+
+    private fun isPlaybackInMotion(state: Int): Boolean {
+        return state == PlaybackState.STATE_PLAYING ||
+            state == PlaybackState.STATE_FAST_FORWARDING ||
+            state == PlaybackState.STATE_REWINDING
     }
 
     private fun sourceForPackage(packageName: String?): String {

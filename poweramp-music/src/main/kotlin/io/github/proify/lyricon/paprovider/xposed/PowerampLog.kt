@@ -13,8 +13,11 @@ object PowerampLog {
     @Volatile
     private var yukiLogAvailable = true
 
+    fun isDebugEnabled(tag: String = Constants.LOG_TAG): Boolean =
+        runCatching { Log.isLoggable(tag, Log.DEBUG) }.getOrDefault(false)
+
     fun debug(tag: String = Constants.LOG_TAG, msg: String, e: Throwable? = null) {
-        if (!Log.isLoggable(tag, Log.DEBUG)) return
+        if (!isDebugEnabled(tag)) return
         safeLog(tag, msg, e, Log::d) {
             YLog.debug(tag = tag, msg = msg, e = e)
         }

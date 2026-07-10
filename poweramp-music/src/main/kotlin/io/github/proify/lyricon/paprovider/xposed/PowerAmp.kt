@@ -6,6 +6,7 @@
 
 package io.github.proify.lyricon.paprovider.xposed
 
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -34,7 +35,25 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
     private const val TRANSLATION_ACTION_NAME = "\u7ffb\u8bd1"
 
     // 匹配元数据key
-    private val lyricTagRegex by lazy { Regex("(?i)\\b(LYRICS)\\b") }
+    private val lyricTagRegex = Regex("(?i)\\b(LYRICS)\\b")
+    private val translationAction by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        PlaybackState.CustomAction.Builder(
+            ACTION_TOGGLE_TRANSLATION,
+            TRANSLATION_ACTION_NAME,
+            android.R.drawable.ic_menu_manage
+        ).build()
+    }
+    private val playbackStateCustomActionsField by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        findPlaybackStateCustomActionsField()
+    }
+
+    @SuppressLint("SoonBlockedPrivateApi", "PrivateApi")
+    private fun findPlaybackStateCustomActionsField() =
+        runCatching {
+            PlaybackState.Builder::class.java.getDeclaredField("mCustomActions").apply {
+                isAccessible = true
+            }
+        }.getOrNull()
 
     private var provider: LyriconProvider? = null
     private var trackReceiver: BroadcastReceiver? = null
@@ -137,11 +156,6 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
         val originalActions = original.customActions.orEmpty()
         if (originalActions.any { it.action == ACTION_TOGGLE_TRANSLATION }) return original
 
-        val translationAction = PlaybackState.CustomAction.Builder(
-            ACTION_TOGGLE_TRANSLATION,
-            TRANSLATION_ACTION_NAME,
-            android.R.drawable.ic_menu_manage
-        ).build()
         val builder = PlaybackState.Builder(original)
         if (!clearPlaybackStateBuilderCustomActions(builder)) {
             builder.addCustomAction(translationAction)
@@ -159,8 +173,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
     private fun clearPlaybackStateBuilderCustomActions(
         builder: PlaybackState.Builder
     ): Boolean = runCatching {
-        val field = PlaybackState.Builder::class.java.getDeclaredField("mCustomActions")
-        field.isAccessible = true
+        val field = playbackStateCustomActionsField ?: return@runCatching false
         val actions = field.get(builder) as? MutableList<*> ?: return@runCatching false
         actions.clear()
         true
@@ -221,6 +234,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             msg = "Updating track: generation=$generation, id=${metadata.id}, title=${metadata.title}"
         )
         PowerampLyricInfoPublisher.onTrackChanged(metadata, generation)
+        PowerampSaltLyricBridge.sendTrackChanged(appContext, metadata, generation)
         provider?.player?.setSong(song)
     }
 
@@ -246,7 +260,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             lyrics = parsedLrc
         )
 
-        updateSong(song, generation)
+        updateSong(song, generation, rawLyric)
         PowerampLog.info(tag = TAG, msg = "Local lyric loaded for: ${data.title}")
         return true
     }
@@ -298,7 +312,11 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
     /**
      * 向歌词提供者更新当前歌曲信息。
      */
-    private fun updateSong(song: Song?, generation: Long) {
+    private fun updateSong(
+        song: Song?,
+        generation: Long,
+        bridgeSourceLyric: String? = null
+    ) {
         val currentSong = song ?: return
         if (!isCurrentTrack(currentSong, generation)) {
             PowerampLog.debug(
@@ -312,7 +330,12 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             msg = "Updating song lyric: generation=$generation, id=${currentSong.id}, title=${currentSong.name}"
         )
         provider?.player?.setSong(currentSong)
-        PowerampLyricInfoPublisher.onLyricReady(currentSong, generation)
+        PowerampLyricInfoPublisher.onLyricReady(
+            appContext,
+            currentSong,
+            generation,
+            bridgeSourceLyric
+        )
     }
 
     private fun isCurrentTrack(song: Song?, generation: Long): Boolean {

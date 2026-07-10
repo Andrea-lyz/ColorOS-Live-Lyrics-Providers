@@ -8,6 +8,7 @@ package io.github.proify.lyricon.spotifyprovider.xposed
 
 import android.media.MediaMetadata
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import com.highcapable.yukihookapi.hook.log.YLog
@@ -25,8 +26,19 @@ import java.util.Locale
 object Spotify : YukiBaseHooker(), DownloadCallback {
     private const val TAG = "SpotifyProvider"
     private var lyriconProvider: LyriconProvider? = null
+    @Volatile
     private var trackId: String? = null
+    @Volatile
+    private var bridgeTrack = BridgeTrack()
     private var lastSong: Song? = null
+
+    private data class BridgeTrack(
+        val mediaId: String = "",
+        val title: String? = null,
+        val artist: String? = null,
+        val duration: Long = 0L,
+        val generation: Long = 0L
+    )
 
     override fun onHook() {
         YLog.debug(tag = TAG, msg = "正在注入进程: $processName")
@@ -74,7 +86,16 @@ object Spotify : YukiBaseHooker(), DownloadCallback {
                 after {
                     val state = (args[0] as? PlaybackState) ?: return@after
                     lyriconProvider?.player?.setPlaybackState(state)
-                    SaltLyricBridge.sendPlaybackState(appContext, state)
+                    val currentTrack = bridgeTrack
+                    SaltLyricBridge.sendPlaybackState(
+                        context = appContext,
+                        state = state,
+                        mediaId = currentTrack.mediaId,
+                        title = currentTrack.title,
+                        artist = currentTrack.artist,
+                        duration = currentTrack.duration,
+                        trackGeneration = currentTrack.generation
+                    )
                 }
             }
 
@@ -102,7 +123,31 @@ object Spotify : YukiBaseHooker(), DownloadCallback {
 
                     val id = data.id
                     if (id == this@Spotify.trackId) return@after
-                    this@Spotify.trackId = id
+                    val nextTrack = synchronized(this@Spotify) {
+                        val nextGeneration = maxOf(
+                            bridgeTrack.generation + 1L,
+                            SystemClock.elapsedRealtime()
+                        )
+                        BridgeTrack(
+                            mediaId = id,
+                            title = data.title,
+                            artist = data.artist,
+                            duration = data.duration,
+                            generation = nextGeneration
+                        ).also {
+                            this@Spotify.trackId = id
+                            bridgeTrack = it
+                        }
+                    }
+
+                    SaltLyricBridge.sendTrackChanged(
+                        context = appContext,
+                        mediaId = nextTrack.mediaId,
+                        title = nextTrack.title,
+                        artist = nextTrack.artist,
+                        duration = nextTrack.duration,
+                        trackGeneration = nextTrack.generation
+                    )
 
                     onTrackIdChanged(data)
                 }
@@ -151,6 +196,15 @@ object Spotify : YukiBaseHooker(), DownloadCallback {
     private fun setSong(song: Song) {
         lastSong = song
         lyriconProvider?.player?.setSong(song)
-        SaltLyricBridge.send(appContext, song)
+        val currentTrack = bridgeTrack
+        if (song.id == currentTrack.mediaId) {
+            SaltLyricBridge.send(appContext, song, currentTrack.generation)
+        } else if (!song.id.isNullOrBlank()) {
+            YLog.debug(
+                tag = TAG,
+                msg = "Skip stale Bridge lyric, responseId=${song.id}, " +
+                    "currentId=${currentTrack.mediaId}, generation=${currentTrack.generation}"
+            )
+        }
     }
 }

@@ -6,6 +6,7 @@
 
 package io.github.proify.lyricon.paprovider.xposed
 
+import android.content.Context
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import com.highcapable.kavaref.KavaRef.Companion.resolve
@@ -24,15 +25,20 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
 
     private val lock = Any()
 
-    @Volatile
-    private var selfPublishing = false
+    private val selfPublishing = ThreadLocal<Boolean>()
     private var lastSession: MediaSession? = null
     private var lastMetadata: MediaMetadata? = null
     private var expectedTrackId: String = ""
     private var expectedGeneration: Long = 0L
     private var latestSong: Song? = null
     private var latestSongGeneration: Long = 0L
+    private var latestPreparedPayload: PowerampPreparedLyricPayload? = null
     private var lastPublishedFingerprint: String = ""
+    private val TIMED_LRC_REGEX =
+        Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val COMPARABLE_TEXT_REGEX = Regex("[\\p{Punct}\\s]+")
+    private val ARTIST_SPLIT_REGEX = Regex("[/,&;\\uff0c\\uff1b\\u3001]")
 
     private val creditRoleKeywords = arrayOf(
         "lyrics",
@@ -163,20 +169,60 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
             expectedGeneration = generation
             latestSong = null
             latestSongGeneration = 0L
+            latestPreparedPayload = null
             lastPublishedFingerprint = ""
         }
     }
 
-    fun onLyricReady(song: Song, generation: Long) {
-        synchronized(lock) {
+    fun onLyricReady(
+        context: Context?,
+        song: Song,
+        generation: Long,
+        bridgeSourceLyric: String? = null
+    ) {
+        if (!synchronized(lock) { isExpectedTrackLocked(song, generation) }) {
+            PowerampLog.debug(
+                tag = TAG,
+                msg = "Skip stale lyric before payload preparation, generation=$generation, " +
+                    "id=${song.id.orEmpty()}"
+            )
+            return
+        }
+        val preparedPayload = prepareLyricPayload(song, generation, bridgeSourceLyric)
+        if (preparedPayload == null) {
+            PowerampLog.debug(
+                tag = TAG,
+                msg = "Skip lyricInfo publish without timed lyric, id=${song.id.orEmpty()}"
+            )
+            return
+        }
+        val accepted = synchronized(lock) {
+            if (!isExpectedTrackLocked(song, generation)) {
+                return@synchronized false
+            }
             latestSong = song
             latestSongGeneration = generation
+            latestPreparedPayload = preparedPayload
+            true
         }
+        if (!accepted) {
+            PowerampLog.debug(
+                tag = TAG,
+                msg = "Skip stale prepared lyric payload, generation=$generation, id=${song.id.orEmpty()}"
+            )
+            return
+        }
+        PowerampSaltLyricBridge.sendLyricReady(context, preparedPayload)
         tryPublish("lyric-ready")
     }
 
+    private fun isExpectedTrackLocked(song: Song, generation: Long): Boolean {
+        return generation == expectedGeneration &&
+            (expectedTrackId.isBlank() || song.id.orEmpty().trim() == expectedTrackId)
+    }
+
     private fun onSetMetadata(session: MediaSession, metadata: MediaMetadata) {
-        if (selfPublishing) {
+        if (selfPublishing.get() == true) {
             return
         }
         synchronized(lock) {
@@ -191,6 +237,12 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
             val session = lastSession ?: return
             val metadata = lastMetadata ?: return
             val song = latestSong ?: return
+            val preparedPayload = latestPreparedPayload ?: return
+            if (latestSongGeneration != expectedGeneration ||
+                preparedPayload.trackGeneration != expectedGeneration
+            ) {
+                return
+            }
             if (!matchesCurrentTrack(metadata, song)) {
                 PowerampLog.debug(
                     tag = TAG,
@@ -201,14 +253,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
                 return
             }
 
-            val payload = buildLyricInfo(song, latestSongGeneration)
-            if (payload.isNullOrBlank()) {
-                PowerampLog.debug(
-                    tag = TAG,
-                    msg = "Skip lyricInfo publish without timed lyric, reason=$reason, id=${song.id.orEmpty()}"
-                )
-                return
-            }
+            val payload = preparedPayload.lyricInfo
 
             val fingerprint = buildFingerprint(metadata, payload)
             if (fingerprint == lastPublishedFingerprint) {
@@ -223,18 +268,21 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
                 lyricInfoChars = payload.length,
                 mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID).orEmpty(),
                 title = song.name.orEmpty(),
+                trackGeneration = preparedPayload.trackGeneration,
                 reason = reason
             )
         }
 
         runCatching {
-            selfPublishing = true
+            selfPublishing.set(true)
             request.session.setMetadata(request.metadata)
         }.onSuccess {
             synchronized(lock) {
-                lastPublishedFingerprint = request.fingerprint
+                if (request.trackGeneration == expectedGeneration) {
+                    lastPublishedFingerprint = request.fingerprint
+                }
             }
-            PowerampLog.info(
+            PowerampLog.debug(
                 tag = TAG,
                 msg = "Published Poweramp lyricInfo, reason=${request.reason}, " +
                     "mediaId=${request.mediaId}, title=${shortenForLog(request.title)}, " +
@@ -243,7 +291,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
         }.onFailure {
             PowerampLog.error(tag = TAG, msg = "Failed to publish Poweramp lyricInfo", e = it)
         }.also {
-            selfPublishing = false
+            selfPublishing.remove()
         }
     }
 
@@ -265,14 +313,91 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
         return value.substringAfterLast('/').takeIf { it.isNotBlank() } ?: value
     }
 
-    private fun buildLyricInfo(song: Song, generation: Long): String? {
+    private fun prepareLyricPayload(
+        song: Song,
+        generation: Long,
+        bridgeSourceLyric: String?
+    ): PowerampPreparedLyricPayload? {
+        prepareInlineBracketLyricPayload(song, generation, bridgeSourceLyric)?.let {
+            return it
+        }
         val lyricLines = filteredLyricLines(song)
         val rawLyric = toEnhancedLrc(song, lyricLines)
         if (!containsTimedLrc(rawLyric)) return null
 
         val lyric = toPlainLrc(song, lyricLines)
         val translationLyric = toTranslationLrc(song, lyricLines)
-        return JSONObject()
+        return buildPreparedPayload(song, generation, lyric, rawLyric, translationLyric)
+    }
+
+    private fun prepareInlineBracketLyricPayload(
+        song: Song,
+        generation: Long,
+        bridgeSourceLyric: String?
+    ): PowerampPreparedLyricPayload? {
+        val parsedLines = PowerampBridgeTaggedLyricParser.parse(bridgeSourceLyric)
+        if (parsedLines.isEmpty()) return null
+
+        var removedEarlyCredit = false
+        val lyricLines = parsedLines.filter { line ->
+            val probe = RichLyricLine(begin = line.begin, text = line.text)
+            val metadataLine = isLikelyMetadataLine(probe, song, removedEarlyCredit)
+            if (metadataLine && line.begin <= EARLY_METADATA_WINDOW_MS) {
+                removedEarlyCredit = true
+            }
+            !metadataLine
+        }
+        if (lyricLines.isEmpty()) return null
+        PowerampLog.debug(
+            tag = TAG,
+            msg = "Normalized inline bracket lyric for Bridge, lines=${lyricLines.size}, " +
+                "translations=${lyricLines.count { it.translation.isNotBlank() }}"
+        )
+
+        val lyric = StringBuilder().also { builder ->
+            appendMetadata(builder, song)
+            lyricLines.forEach { line -> appendTimedLine(builder, line.begin, line.text) }
+        }.toString()
+        val rawLyric = StringBuilder().also { builder ->
+            appendMetadata(builder, song)
+            lyricLines.forEach { line ->
+                builder.append('[')
+                appendLrcTime(builder, line.begin)
+                builder.append(']')
+                line.segments.forEach { segment ->
+                    builder.append('<')
+                    appendLrcTime(builder, segment.begin)
+                    builder.append('>').append(cleanInlineSegment(segment.text))
+                }
+                if (line.end > line.begin) {
+                    builder.append('<')
+                    appendLrcTime(builder, line.end)
+                    builder.append('>')
+                }
+                builder.append('\n')
+            }
+        }.toString()
+        val translationLyric = StringBuilder().also { builder ->
+            appendMetadata(builder, song)
+            lyricLines.forEach { line ->
+                if (line.translation.isNotBlank() && line.translation.trim() != "//") {
+                    appendTimedLine(builder, line.begin, line.translation)
+                }
+            }
+        }.toString()
+        if (!containsTimedLrc(rawLyric)) return null
+        return buildPreparedPayload(song, generation, lyric, rawLyric, translationLyric)
+    }
+
+    private fun buildPreparedPayload(
+        song: Song,
+        generation: Long,
+        lyric: String,
+        rawLyric: String,
+        translationLyric: String
+    ): PowerampPreparedLyricPayload {
+        val trackKey = buildTrackKey(song.name, song.artist)
+        val lyricInfo = JSONObject()
             .put("songName", song.name.orEmpty())
             .put("artist", song.artist.orEmpty())
             .put("songId", song.id.orEmpty())
@@ -280,9 +405,21 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
             .put("rawLyric", rawLyric)
             .put("translationLyric", translationLyric)
             .put("provider", SOURCE_POWERAMP)
-            .put("trackKey", buildTrackKey(song.name, song.artist))
+            .put("trackKey", trackKey)
             .put("sessionGeneration", generation)
             .toString()
+        return PowerampPreparedLyricPayload(
+            mediaId = song.id.orEmpty(),
+            title = song.name.orEmpty(),
+            artist = song.artist.orEmpty(),
+            duration = song.duration,
+            trackKey = trackKey,
+            trackGeneration = generation,
+            lyric = lyric,
+            rawLyric = rawLyric,
+            translationLyric = translationLyric,
+            lyricInfo = lyricInfo
+        )
     }
 
     private fun buildFingerprint(metadata: MediaMetadata, lyricInfo: String): String {
@@ -322,19 +459,19 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
             }
 
             builder.append('[')
-                .append(formatLrcTime(line.begin))
-                .append(']')
+            appendLrcTime(builder, line.begin)
+            builder.append(']')
             words.forEach { word ->
                 builder.append('<')
-                    .append(formatLrcTime(word.begin))
-                    .append('>')
+                appendLrcTime(builder, word.begin)
+                builder.append('>')
                     .append(cleanInlineSegment(word.text))
             }
             val end = inferEnhancedLineEnd(line, words)
             if (end > line.begin) {
                 builder.append('<')
-                    .append(formatLrcTime(end))
-                    .append('>')
+                appendLrcTime(builder, end)
+                builder.append('>')
             }
             builder.append('\n')
         }
@@ -437,13 +574,13 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
     private fun toTranslationLrc(song: Song, lines: List<RichLyricLine>): String {
         val builder = StringBuilder()
         appendMetadata(builder, song)
-        lines
-            .mapNotNull { line ->
-                val translation = line.translation?.takeIf { it.isNotBlank() && it.trim() != "//" }
-                    ?: secondaryTranslationFor(line)
-                if (translation.isNullOrBlank()) null else line.begin to translation
+        lines.forEach { line ->
+            val translation = line.translation?.takeIf { it.isNotBlank() && it.trim() != "//" }
+                ?: secondaryTranslationFor(line)
+            if (!translation.isNullOrBlank()) {
+                appendTimedLine(builder, line.begin, translation)
             }
-            .forEach { (begin, translation) -> appendTimedLine(builder, begin, translation) }
+        }
         return builder.toString()
     }
 
@@ -559,7 +696,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
     }
 
     private fun normalizeSpaces(value: String): String {
-        return cleanPlainText(value).replace(Regex("\\s+"), " ").trim()
+        return cleanPlainText(value)
     }
 
     private fun creditSeparatorIndex(value: String): Int {
@@ -583,17 +720,16 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
     }
 
     private fun containsCreditRoleKeyword(value: String): Boolean {
-        return creditRoleKeywords.any { value.contains(it.lowercase(Locale.ROOT)) }
+        return creditRoleKeywords.any(value::contains)
     }
 
     private fun startsWithCreditRoleKeyword(value: String): Boolean {
         return creditRoleKeywords.any { keyword ->
-            val lowerKeyword = keyword.lowercase(Locale.ROOT)
-            value == lowerKeyword ||
-                value.startsWith("$lowerKeyword:") ||
-                value.startsWith("$lowerKeyword\uff1a") ||
-                value.startsWith("$lowerKeyword by ") ||
-                (isStrongStandaloneCreditRole(lowerKeyword) && value.startsWith("$lowerKeyword "))
+            value == keyword ||
+                value.startsWith("$keyword:") ||
+                value.startsWith("$keyword\uff1a") ||
+                value.startsWith("$keyword by ") ||
+                (isStrongStandaloneCreditRole(keyword) && value.startsWith("$keyword "))
         }
     }
 
@@ -645,7 +781,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
 
     private fun splitArtistParts(artist: String?): List<String> {
         val value = artist ?: return emptyList()
-        return value.split(Regex("[/,&;\\uff0c\\uff1b\\u3001]"))
+        return value.split(ARTIST_SPLIT_REGEX)
             .map { normalizeCreditIdentity(it) }
             .filter { it.isNotBlank() }
     }
@@ -721,8 +857,8 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
         val clean = cleanPlainText(text)
         if (clean.isBlank()) return
         builder.append('[')
-            .append(formatLrcTime(timeMillis))
-            .append(']')
+        appendLrcTime(builder, timeMillis)
+        builder.append(']')
             .append(clean)
             .append('\n')
     }
@@ -762,7 +898,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
             }
             inWhitespace = whitespace
         }
-        return builder.toString().lowercase(Locale.ROOT)
+        return builder.toString()
     }
 
     private fun cleanInlineSegment(text: String): String {
@@ -772,14 +908,14 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
     private fun cleanPlainText(text: String): String {
         return text.replace('\r', ' ')
             .replace('\n', ' ')
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_REGEX, " ")
             .trim()
     }
 
     private fun normalizeComparableText(value: String): String {
         return cleanPlainText(value)
             .lowercase(Locale.ROOT)
-            .replace(Regex("[\\p{Punct}\\s]+"), "")
+            .replace(COMPARABLE_TEXT_REGEX, "")
     }
 
     private fun isLikelyRomanization(primary: String, candidate: String): Boolean {
@@ -790,7 +926,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
         ) {
             return false
         }
-        val words = clean.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val words = clean.split(WHITESPACE_REGEX).filter { it.isNotBlank() }
         if (words.size < 3) return false
         val shortWords = words.count { it.length <= 3 }
         return shortWords >= words.size * 2 / 3
@@ -803,16 +939,21 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
     }
 
     private fun containsTimedLrc(value: String): Boolean {
-        return Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
-            .containsMatchIn(value)
+        return TIMED_LRC_REGEX.containsMatchIn(value)
     }
 
-    private fun formatLrcTime(timeMillis: Long): String {
+    private fun appendLrcTime(builder: StringBuilder, timeMillis: Long) {
         val safeTime = max(0L, timeMillis)
         val minutes = safeTime / 60000L
         val seconds = (safeTime % 60000L) / 1000L
         val millis = safeTime % 1000L
-        return String.format(Locale.ROOT, "%02d:%02d.%03d", minutes, seconds, millis)
+        if (minutes < 10L) builder.append('0')
+        builder.append(minutes).append(':')
+        if (seconds < 10L) builder.append('0')
+        builder.append(seconds).append('.')
+        if (millis < 100L) builder.append('0')
+        if (millis < 10L) builder.append('0')
+        builder.append(millis)
     }
 
     private fun shortenForLog(value: String): String {
@@ -827,6 +968,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
         val lyricInfoChars: Int,
         val mediaId: String,
         val title: String,
+        val trackGeneration: Long,
         val reason: String
     )
 

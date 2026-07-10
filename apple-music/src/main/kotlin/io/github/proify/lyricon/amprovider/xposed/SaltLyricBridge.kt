@@ -8,8 +8,12 @@ package io.github.proify.lyricon.amprovider.xposed
 
 import android.content.Context
 import android.content.Intent
+import android.media.session.PlaybackState
+import android.os.SystemClock
 import android.text.Html
 import android.util.Log
+import io.github.proify.extensions.bridge.BridgePayloadGate
+import io.github.proify.extensions.bridge.BridgePlaybackStateGate
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import java.util.Locale
@@ -20,42 +24,177 @@ object SaltLyricBridge {
     private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
         "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
     private const val SYSTEMUI_PACKAGE = "com.android.systemui"
+    private const val BRIDGE_PROTOCOL_VERSION = 2
     private const val SOURCE_APPLE_MUSIC = "lyricprovider/apple-music"
+    private const val BRIDGE_CAPABILITIES =
+        "playbackState,trackGeneration,translationToggle"
+    private const val BRIDGE_MATCH_POLICY = "mediaId,trackKey,titleArtist"
+    private const val EXTRA_PLAYBACK_STATE = "playbackState"
+    private const val EXTRA_PLAYBACK_POSITION = "playbackPosition"
+    private const val EXTRA_PLAYBACK_SPEED = "playbackSpeed"
+    private const val EXTRA_PLAYBACK_LAST_POSITION_UPDATE_TIME = "playbackLastPositionUpdateTime"
+    private const val MAX_REASONABLE_DURATION_MS = 24L * 60L * 60L * 1000L
+    private val TIMED_LRC_REGEX =
+        Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val payloadGate = BridgePayloadGate()
+    private val playbackStateGate = BridgePlaybackStateGate()
 
-    fun send(context: Context?, song: Song?) {
-        if (context == null || song == null) return
+    fun sendTrackChanged(
+        context: Context?,
+        mediaId: String?,
+        title: String?,
+        artist: String?,
+        duration: Long,
+        trackGeneration: Long
+    ) {
+        if (context == null || mediaId.isNullOrBlank() || trackGeneration <= 0L) return
+
+        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
+            setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
+            putExtra("source", SOURCE_APPLE_MUSIC)
+            putExtra("eventType", "trackChanged")
+            putExtra("mediaId", mediaId)
+            putExtra("trackKey", buildTrackKey(title, artist))
+            putExtra("songName", title.orEmpty())
+            putExtra("artist", artist.orEmpty())
+            putExtra("duration", validDuration(duration))
+            putExtra("trackGeneration", trackGeneration)
+            putExtra("capturedAt", System.currentTimeMillis())
+        }
+
+        runCatching {
+            context.sendBroadcast(intent)
+        }.onSuccess {
+            debug("Sent Apple Music track change, generation=$trackGeneration, id=$mediaId")
+        }.onFailure { e ->
+            Log.w(TAG, "Failed to send Apple Music track change, generation=$trackGeneration", e)
+        }
+    }
+
+    fun send(context: Context?, song: Song?, trackGeneration: Long) {
+        if (context == null || song == null || trackGeneration <= 0L) return
 
         val lyricLines = filteredLyricLines(song)
         val rawLyric = toEnhancedLrc(song, lyricLines)
         if (!containsTimedLrc(rawLyric)) {
+            debug(
+                "Apple Music lyric payload not ready, generation=$trackGeneration, " +
+                    "id=${song.id.orEmpty()}, lines=${lyricLines.size}"
+            )
             return
         }
 
         val lyric = toPlainLrc(song, lyricLines)
         val translationLyric = toTranslationLrc(song, lyricLines)
         val requestId = buildRequestId(song, rawLyric, translationLyric)
+        val payloadKey = "$SOURCE_APPLE_MUSIC:$trackGeneration:$requestId"
+        if (!payloadGate.shouldSend(payloadKey, SystemClock.elapsedRealtime())) return
         val trackKey = buildTrackKey(song.name, song.artist)
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
             putExtra("source", SOURCE_APPLE_MUSIC)
+            putExtra("eventType", "lyricReady")
             putExtra("requestId", requestId)
             putExtra("mediaId", song.id.orEmpty())
             putExtra("trackKey", trackKey)
             putExtra("songName", song.name.orEmpty())
             putExtra("artist", song.artist.orEmpty())
-            putExtra("duration", song.duration)
+            putExtra("duration", validDuration(song.duration))
             putExtra("lyric", lyric)
             putExtra("rawLyric", rawLyric)
             putExtra("translationLyric", translationLyric)
+            putExtra("trackGeneration", trackGeneration)
+            putExtra("capturedAt", System.currentTimeMillis())
+        }
+
+        runCatching {
+            context.sendBroadcast(intent)
+        }.onSuccess {
+            debug(
+                "Sent Apple Music lyric payload, generation=$trackGeneration, " +
+                    "id=${song.id.orEmpty()}, rawChars=${rawLyric.length}"
+            )
+        }.onFailure { e ->
+            payloadGate.forget(payloadKey)
+            Log.w(TAG, "Failed to send Apple Music bridge payload, id=${song.id.orEmpty()}", e)
+        }
+    }
+
+    fun sendPlaybackState(
+        context: Context?,
+        playbackState: Int,
+        playbackPosition: Long,
+        playbackSpeed: Float,
+        playbackLastPositionUpdateTime: Long,
+        mediaId: String?,
+        title: String?,
+        artist: String?,
+        duration: Long,
+        trackGeneration: Long,
+        force: Boolean = false
+    ) {
+        if (context == null || mediaId.isNullOrBlank() || trackGeneration <= 0L) return
+        val nowElapsed = SystemClock.elapsedRealtime()
+        if (!playbackStateGate.shouldSend(
+                state = playbackState,
+                position = playbackPosition,
+                speed = playbackSpeed,
+                lastPositionUpdateTime = playbackLastPositionUpdateTime,
+                moving = isPlaybackInMotion(playbackState),
+                generation = trackGeneration,
+                nowElapsedMillis = nowElapsed,
+                force = force
+            )
+        ) {
+            return
+        }
+
+        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
+            setPackage(SYSTEMUI_PACKAGE)
+            putBridgeDeclaration(context)
+            putExtra("source", SOURCE_APPLE_MUSIC)
+            putExtra("eventType", "playbackState")
+            putExtra("mediaId", mediaId)
+            putExtra("trackKey", buildTrackKey(title, artist))
+            putExtra("songName", title.orEmpty())
+            putExtra("artist", artist.orEmpty())
+            putExtra("duration", validDuration(duration))
+            putExtra("trackGeneration", trackGeneration)
+            putExtra(EXTRA_PLAYBACK_STATE, playbackState)
+            putExtra(EXTRA_PLAYBACK_POSITION, playbackPosition)
+            putExtra(EXTRA_PLAYBACK_SPEED, playbackSpeed)
+            putExtra(EXTRA_PLAYBACK_LAST_POSITION_UPDATE_TIME, playbackLastPositionUpdateTime)
             putExtra("capturedAt", System.currentTimeMillis())
         }
 
         runCatching {
             context.sendBroadcast(intent)
         }.onFailure { e ->
-            Log.w(TAG, "Failed to send Apple Music bridge payload, id=${song.id.orEmpty()}", e)
+            playbackStateGate.reset()
+            Log.w(
+                TAG,
+                "Failed to send Apple Music playback state, generation=$trackGeneration, " +
+                    "state=$playbackState",
+                e
+            )
         }
+    }
+
+    private fun isPlaybackInMotion(state: Int): Boolean {
+        return state == PlaybackState.STATE_PLAYING ||
+            state == PlaybackState.STATE_FAST_FORWARDING ||
+            state == PlaybackState.STATE_REWINDING
+    }
+
+    private fun Intent.putBridgeDeclaration(context: Context) {
+        putExtra("protocolVersion", BRIDGE_PROTOCOL_VERSION)
+        putExtra("playerPackage", context.packageName)
+        putExtra("capabilities", BRIDGE_CAPABILITIES)
+        putExtra("matchPolicy", BRIDGE_MATCH_POLICY)
     }
 
     private fun toEnhancedLrc(song: Song, lines: List<RichLyricLine>): String {
@@ -171,7 +310,8 @@ object SaltLyricBridge {
         words: List<TimedWord>
     ): List<TimedWord> {
         val lineText = cleanPlainText(line.text.orEmpty())
-        if (lineText.isBlank() || words.size <= 1) return words
+        if (lineText.isBlank()) return words
+        if (words.size <= 1) return reconcileDisplayText(line, lineText, words)
 
         val placements = mutableListOf<TokenPlacement>()
         val usedRanges = mutableListOf<IntRange>()
@@ -184,7 +324,7 @@ object SaltLyricBridge {
             }
         }
 
-        if (placements.isEmpty()) return words
+        if (placements.isEmpty()) return reconcileDisplayText(line, lineText, words)
         if (hasPoorDisplayTextCoverage(lineText, placements)) {
             return synthesizeDisplayTextWords(line, lineText)
         }
@@ -203,14 +343,25 @@ object SaltLyricBridge {
         }
 
         val suffix = lineText.substring(searchIndex)
-        val suffixPunctuation = suffix.trim()
-        if (suffixPunctuation.isNotEmpty() && matched.isNotEmpty()) {
+        if (suffix.isNotEmpty() && matched.isNotEmpty()) {
             val lastIndex = matched.lastIndex
             matched[lastIndex] = matched[lastIndex].copy(
-                text = matched[lastIndex].text + suffixPunctuation
+                text = matched[lastIndex].text + suffix
             )
         }
-        return matched
+        return reconcileDisplayText(line, lineText, matched)
+    }
+
+    private fun reconcileDisplayText(
+        line: RichLyricLine,
+        lineText: String,
+        words: List<TimedWord>
+    ): List<TimedWord> {
+        return if (appleBridgeDisplayTextMismatch(lineText, words.map { it.text })) {
+            synthesizeDisplayTextWords(line, lineText)
+        } else {
+            words
+        }
     }
 
     private fun hasPoorDisplayTextCoverage(
@@ -303,7 +454,6 @@ object SaltLyricBridge {
         prefix: String,
         text: String
     ) {
-        val punctuation = prefix.trim()
         val mergeWithPrevious = matched.isNotEmpty() &&
                 prefix.none { it.isWhitespace() } &&
                 containsLatinLetter(matched.last().text + text)
@@ -316,13 +466,13 @@ object SaltLyricBridge {
             return
         }
 
-        if (punctuation.isNotEmpty() && matched.isNotEmpty()) {
+        if (prefix.isNotEmpty() && matched.isNotEmpty()) {
             val lastIndex = matched.lastIndex
             matched[lastIndex] = matched[lastIndex].copy(
-                text = matched[lastIndex].text + punctuation
+                text = matched[lastIndex].text + prefix
             )
         }
-        matched += word.copy(text = text)
+        matched += word.copy(text = if (matched.isEmpty()) prefix + text else text)
     }
 
     private data class TokenMatch(
@@ -486,6 +636,10 @@ object SaltLyricBridge {
         return normalizedTitle + "|" + normalizeTrackComponent(artist)
     }
 
+    private fun validDuration(duration: Long): Long {
+        return if (duration in 1L..MAX_REASONABLE_DURATION_MS) duration else 0L
+    }
+
     private fun normalizeTrackComponent(value: String?): String {
         if (value == null) return ""
         val builder = StringBuilder(value.length)
@@ -514,7 +668,7 @@ object SaltLyricBridge {
         return stripHtml(text)
             .replace('\r', ' ')
             .replace('\n', ' ')
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_REGEX, " ")
             .trim()
     }
 
@@ -524,8 +678,13 @@ object SaltLyricBridge {
     }
 
     private fun containsTimedLrc(value: String): Boolean {
-        return Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
-            .containsMatchIn(value)
+        return TIMED_LRC_REGEX.containsMatchIn(value)
+    }
+
+    private fun debug(message: String) {
+        if (Log.isLoggable(TAG, Log.DEBUG)) {
+            Log.d(TAG, message)
+        }
     }
 
     private fun formatLrcTime(timeMillis: Long): String {
@@ -540,4 +699,20 @@ object SaltLyricBridge {
         val clean = cleanPlainText(value)
         return if (clean.length <= 48) clean else clean.substring(0, 45) + "..."
     }
+}
+
+internal fun appleBridgeDisplayTextMismatch(
+    lineText: String,
+    wordTexts: List<String>
+): Boolean {
+    fun normalize(value: String): String = value
+        .replace('\r', ' ')
+        .replace('\n', ' ')
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+    val expected = normalize(lineText)
+    if (expected.isEmpty()) return false
+    val actual = normalize(wordTexts.joinToString(""))
+    return expected != actual
 }

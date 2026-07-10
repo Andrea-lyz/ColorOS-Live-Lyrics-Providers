@@ -69,7 +69,8 @@ SaltLyricBridge.send(appContext, song)
 参考：
 
 - `poweramp-music/src/main/kotlin/io/github/proify/lyricon/paprovider/xposed/PowerAmp.kt`
-- `poweramp-music/src/main/kotlin/io/github/proify/lyricon/paprovider/xposed/SaltLyricBridge.kt`
+- `poweramp-music/src/main/kotlin/io/github/proify/lyricon/paprovider/xposed/PowerampSaltLyricBridge.kt`
+- `poweramp-music/src/main/kotlin/io/github/proify/lyricon/paprovider/xposed/PowerampLyricInfoPublisher.kt`
 
 当前路线：
 
@@ -77,14 +78,17 @@ SaltLyricBridge.send(appContext, song)
 2. 从广播 extras 缓存 `id`、标题、歌手、专辑、时长和路径。
 3. 将 Poweramp 路径转换为 SAF URI 后，用 TagLib 读取音频标签里的 `LYRICS` 字段。
 4. 本地歌词缺失时，按模块设置走在线歌词搜索。
-5. 在 `updateSong(song)` 中同时调用：
+5. 曲目切换时先发送带 generation 的 `trackChanged`；歌词准备完成后发送 `lyricReady`，同时保留向 Poweramp `MediaSession` 注入 `lyricInfo` 的兼容路线。
+6. `MediaSession#setPlaybackState` 继续交给原版词幕 Provider；Bridge 直接使用 Poweramp 原生 MediaSession 状态，不再重复发送外部播放状态。
+7. 每次歌词就绪时只生成一份歌词 JSON、逐行 LRC 和 enhanced LRC，由外部广播和 metadata 注入共同复用。
+8. 本地标签若使用 `[行时间]单词 [单词时间]...` 的方括号逐字格式，只在 Bridge payload 中转换为标准 `<单词时间>` enhanced LRC；官方逐行 `lyric` 必须移除行内时间戳，原版词幕收到的 `Song` 保持不变。
 
 ```kotlin
 provider?.player?.setSong(song)
-SaltLyricBridge.send(appContext, song)
+PowerampLyricInfoPublisher.onLyricReady(appContext, song, generation)
 ```
 
-Poweramp 的重点是保留本地播放器体验：优先使用内嵌/本地歌词，只有用户启用联网搜索时才走在线匹配。Bridge 侧只接收歌词，不参与文件读取、SAF 授权和封面链路。
+Poweramp 的重点是保留本地播放器体验：优先使用内嵌/本地歌词，只有用户启用联网搜索时才走在线匹配。Bridge 适配不得改变原版词幕的 `setSong` / `setPlaybackState` 路线，也不要在原生 MediaSession 之外再广播一份播放进度；重复状态源会让一次拖动进度触发多轮 Recycler 定位。内部反射 probe 只用于显式 debug，发布态不应安装这些诊断 hook。Bridge 侧只接收歌词，不参与文件读取、SAF 授权和封面链路。
 
 ### Spotify
 

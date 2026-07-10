@@ -28,32 +28,13 @@ class LyricRequester(
         loadLyricsMethod = method
     }
 
-    fun requestDownload(playbackItem: Any) {
-        try {
+    fun requestDownload(playbackItem: Any): Boolean {
+        return try {
             callLoadLyrics(playbackItem)
+            true
         } catch (e: Exception) {
             YLog.error("LyricRequester: Failed to trigger download from PlaybackItem", e)
-        }
-    }
-
-    /**
-     * 欺骗 Apple Music 触发歌词下载
-     *
-     * @see Apple.hookLyricBuildMethod
-     */
-    fun requestDownload(mediaId: String) {
-        if (mediaId.isBlank()) {
-            return
-        }
-        try {
-            val song =
-                XposedHelpers.newInstance(classLoader.loadClass("com.apple.android.music.model.Song"))
-            XposedHelpers.callMethod(song, "setId", mediaId)
-            XposedHelpers.callMethod(song, "setHasLyrics", true)
-
-            callLoadLyrics(song)
-        } catch (e: Exception) {
-            YLog.error("LyricRequester: Failed to trigger download", e)
+            false
         }
     }
 

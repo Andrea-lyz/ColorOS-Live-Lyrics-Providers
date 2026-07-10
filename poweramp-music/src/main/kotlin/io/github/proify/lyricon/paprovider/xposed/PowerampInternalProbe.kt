@@ -17,6 +17,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
     private const val TAG = "PowerampInternalProbe"
     private const val LYRIC_INFO_KEY = "lyricInfo"
     private const val POWERAMP_OBFUSCATED_PACKAGE = "\u05c5"
+    private val WHITESPACE_REGEX = Regex("\\s+")
 
     @Volatile
     private var lastMetadataFingerprint = ""
@@ -24,6 +25,11 @@ object PowerampInternalProbe : YukiBaseHooker() {
     override fun onHook() = Unit
 
     fun install(loader: ClassLoader?) {
+        if (!PowerampLog.isDebugEnabled(TAG) &&
+            !PowerampLog.isDebugEnabled(Constants.LOG_TAG)
+        ) {
+            return
+        }
         hookMediaMetadata()
         if (loader == null) {
             PowerampLog.debug(tag = TAG, msg = "Skip Poweramp internal probe: appClassLoader is null")
@@ -259,7 +265,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
     private fun shorten(value: String, maxLength: Int = 96): String {
         val clean = value.replace('\r', ' ')
             .replace('\n', ' ')
-            .replace(Regex("\\s+"), " ")
+            .replace(WHITESPACE_REGEX, " ")
             .trim()
         if (clean.length <= maxLength) return clean
         val end = max(0, maxLength - 3)

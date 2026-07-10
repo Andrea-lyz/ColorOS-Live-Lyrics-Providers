@@ -8,6 +8,7 @@ package io.github.proify.lyricon.cmprovider.xposed
 import android.app.Application
 import android.media.MediaMetadata
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import com.highcapable.yukihookapi.hook.log.YLog
@@ -52,7 +53,19 @@ object CloudMusic : YukiBaseHooker() {
     private class LyricProviderManager : DownloadCallback {
         private var lyricProvider: LyriconProvider? = null
         private var lastSetSong: Song? = null
+        @Volatile
+        private var lastBridgeSong: Song? = null
         private var currentMusicId: Long = 0
+        @Volatile
+        private var bridgeTrack = BridgeTrack()
+
+        private data class BridgeTrack(
+            val mediaId: String = "",
+            val title: String? = null,
+            val artist: String? = null,
+            val duration: Long = 0L,
+            val generation: Long = 0L
+        )
 
         private var dexKitBridge: DexKitBridge? = null
         private var preferencesMonitor: PreferencesMonitor? = null
@@ -71,7 +84,7 @@ object CloudMusic : YukiBaseHooker() {
                     YLog.debug("type=$type")
                     lyricProvider?.player?.setDisplayTranslation(type == 0)
                     lyricProvider?.player?.setDisplayRoma(type == 1)
-                    SaltLyricBridge.send(appContext, lastSetSong, translationType)
+                    sendCurrentBridgeSong(lastBridgeSong)
                 }
             })
 
@@ -141,9 +154,35 @@ object CloudMusic : YukiBaseHooker() {
                         after {
                             val metadata = args[0] as? MediaMetadata ?: return@after
                             val data = MediaMetadataCache.save(metadata) ?: return@after
-                            if (currentMusicId == data.id) return@after
+                            val nextTrack = synchronized(this@LyricProviderManager) {
+                                if (currentMusicId == data.id) {
+                                    null
+                                } else {
+                                    val nextGeneration = maxOf(
+                                        bridgeTrack.generation + 1L,
+                                        SystemClock.elapsedRealtime()
+                                    )
+                                    BridgeTrack(
+                                        mediaId = data.id.toString(),
+                                        title = data.title,
+                                        artist = data.artist,
+                                        duration = data.duration,
+                                        generation = nextGeneration
+                                    ).also {
+                                        currentMusicId = data.id
+                                        bridgeTrack = it
+                                    }
+                                }
+                            } ?: return@after
 
-                            currentMusicId = data.id
+                            SaltLyricBridge.sendTrackChanged(
+                                context = appContext,
+                                mediaId = nextTrack.mediaId,
+                                title = nextTrack.title,
+                                artist = nextTrack.artist,
+                                duration = nextTrack.duration,
+                                trackGeneration = nextTrack.generation
+                            )
                             onSongChanged(data)
                         }
                     }
@@ -155,6 +194,16 @@ object CloudMusic : YukiBaseHooker() {
                         after {
                             val state = args[0] as? PlaybackState
                             lyricProvider?.player?.setPlaybackState(state)
+                            val currentTrack = bridgeTrack
+                            SaltLyricBridge.sendPlaybackState(
+                                context = appContext,
+                                state = state,
+                                mediaId = currentTrack.mediaId,
+                                title = currentTrack.title,
+                                artist = currentTrack.artist,
+                                duration = currentTrack.duration,
+                                trackGeneration = currentTrack.generation
+                            )
                         }
                     }
                 }
@@ -254,10 +303,30 @@ object CloudMusic : YukiBaseHooker() {
         }
 
         private fun setSong(song: Song) {
-            if (lastSetSong == song) return
-            lastSetSong = song
-            lyricProvider?.player?.setSong(song)
-            SaltLyricBridge.send(appContext, song, translationType)
+            if (lastSetSong != song) {
+                lastSetSong = song
+                lyricProvider?.player?.setSong(song)
+            }
+            sendCurrentBridgeSong(song)
+        }
+
+        private fun sendCurrentBridgeSong(song: Song?) {
+            val currentTrack = bridgeTrack
+            if (song?.id == currentTrack.mediaId && currentTrack.generation > 0L) {
+                lastBridgeSong = song
+                SaltLyricBridge.send(
+                    context = appContext,
+                    song = song,
+                    lyricMode = translationType,
+                    trackGeneration = currentTrack.generation
+                )
+            } else if (!song?.id.isNullOrBlank()) {
+                YLog.debug(
+                    tag = TAG,
+                    msg = "Skip stale Bridge lyric, responseId=${song.id}, " +
+                        "currentId=${currentTrack.mediaId}, generation=${currentTrack.generation}"
+                )
+            }
         }
     }
 }

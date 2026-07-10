@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.MediaMetadata
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.highcapable.kavaref.KavaRef.Companion.resolve
@@ -82,7 +83,18 @@ object QQMusic : YukiBaseHooker() {
 
     private class PlayerProcessHook : DownloadCallback {
         private var lyriconProvider: LyriconProvider? = null
+        @Volatile
         private var currentMediaId: String? = null
+        @Volatile
+        private var bridgeTrack = BridgeTrack()
+
+        private data class BridgeTrack(
+            val mediaId: String = "",
+            val title: String? = null,
+            val artist: String? = null,
+            val duration: Long = 0L,
+            val generation: Long = 0L
+        )
 
         fun hook(loader: ClassLoader) {
             YLog.debug("Hooking Player Process: MediaSession & Lyricon Provider")
@@ -102,8 +114,18 @@ object QQMusic : YukiBaseHooker() {
                         parameters(PlaybackState::class.java)
                     }.hook {
                         after {
-                            val state = (args[0] as? PlaybackState)
+                            val state = (args[0] as? PlaybackState) ?: return@after
                             lyriconProvider?.player?.setPlaybackState(state)
+                            val currentTrack = bridgeTrack
+                            SaltLyricBridge.sendPlaybackState(
+                                context = appContext,
+                                state = state,
+                                mediaId = currentTrack.mediaId,
+                                title = currentTrack.title,
+                                artist = currentTrack.artist,
+                                duration = currentTrack.duration,
+                                trackGeneration = currentTrack.generation
+                            )
                         }
                     }
 
@@ -119,8 +141,36 @@ object QQMusic : YukiBaseHooker() {
 
                             if (mediaId.isBlank() || mediaId == currentMediaId) return@after
 
-                            currentMediaId = mediaId
-                            MediaMetadataCache.save(metadata)
+                            val data = MediaMetadataCache.save(metadata) ?: return@after
+                            val nextTrack = synchronized(this@PlayerProcessHook) {
+                                if (mediaId == currentMediaId) {
+                                    null
+                                } else {
+                                    val nextGeneration = maxOf(
+                                        bridgeTrack.generation + 1L,
+                                        SystemClock.elapsedRealtime()
+                                    )
+                                    BridgeTrack(
+                                        mediaId = mediaId,
+                                        title = data.title,
+                                        artist = data.artist,
+                                        duration = data.duration,
+                                        generation = nextGeneration
+                                    ).also {
+                                        currentMediaId = mediaId
+                                        bridgeTrack = it
+                                    }
+                                }
+                            } ?: return@after
+
+                            SaltLyricBridge.sendTrackChanged(
+                                context = appContext,
+                                mediaId = nextTrack.mediaId,
+                                title = nextTrack.title,
+                                artist = nextTrack.artist,
+                                duration = nextTrack.duration,
+                                trackGeneration = nextTrack.generation
+                            )
                             refreshActiveSong()
                         }
                     }
@@ -191,7 +241,16 @@ object QQMusic : YukiBaseHooker() {
 
         private fun updateLyriconSong(song: Song?) {
             lyriconProvider?.player?.setSong(song)
-            SaltLyricBridge.send(appContext, song)
+            val currentTrack = bridgeTrack
+            if (song?.id == currentTrack.mediaId && currentTrack.generation > 0L) {
+                SaltLyricBridge.send(appContext, song, currentTrack.generation)
+            } else if (!song?.id.isNullOrBlank()) {
+                YLog.debug(
+                    tag = TAG,
+                    msg = "Skip stale Bridge lyric, responseId=${song.id}, " +
+                        "currentId=${currentTrack.mediaId}, generation=${currentTrack.generation}"
+                )
+            }
         }
 
         override fun onDownloadFinished(response: LyricResponse) {

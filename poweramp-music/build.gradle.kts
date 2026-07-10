@@ -25,8 +25,8 @@ configure<ApplicationExtension> {
         applicationId = "io.github.proify.lyricon.paprovider"
         minSdk = 28
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
-        versionCode = 6
-        versionName = "1.0.9"
+        versionCode = 7
+        versionName = "1.0.10"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -88,4 +88,5 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.appcompat)
     implementation(libs.taglib)
+    testImplementation(libs.junit)
 }

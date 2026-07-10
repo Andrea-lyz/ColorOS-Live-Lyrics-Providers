@@ -46,17 +46,9 @@ object PlayableDbCache {
         val primaryCandidates = candidates(databasesDir)
         findHit(primaryCandidates, id, metadata)?.let { return it }
 
-        val discoveredCandidates = discoverPlayableCandidates(databasesDir, primaryCandidates)
-        findHit(discoveredCandidates, id, metadata)?.let { hit ->
-            YLog.debug(
-                tag = TAG,
-                msg = "db discovered hit, mediaId=$id, db=${hit.databaseName}, " +
-                    "table=${hit.tableName}, lyrics=${hit.song.lyrics?.size ?: 0}"
-            )
-            return hit
-        }
-
-        logDatabaseDiagnostic(databasesDir, id, primaryCandidates, discoveredCandidates)
+        // The app directory also contains encrypted and unrelated databases. Probing every
+        // *.db here runs inside MediaSession.setMetadata and can stall track handoff for seconds.
+        logDatabaseDiagnostic(databasesDir, id, primaryCandidates)
         return null
     }
 
@@ -86,68 +78,6 @@ object PlayableDbCache {
             .map { Candidate(it, "history_playable") }
         return recent + history
     }
-
-    private fun discoverPlayableCandidates(
-        databasesDir: File,
-        primaryCandidates: List<Candidate>
-    ): List<Candidate> {
-        val known = primaryCandidates
-            .map { it.file.absolutePath to it.tableName }
-            .toMutableSet()
-        return databasesDir.listFiles().orEmpty()
-            .filter { it.isFile && it.name.endsWith(".db") }
-            .sortedByDescending { it.lastModified() }
-            .flatMap { file ->
-                discoverPlayableTables(file).map { tableName -> Candidate(file, tableName) }
-            }
-            .filter { known.add(it.file.absolutePath to it.tableName) }
-    }
-
-    private fun discoverPlayableTables(file: File): List<String> {
-        return runCatching {
-            SQLiteDatabase.openDatabase(
-                file.absolutePath,
-                null,
-                SQLiteDatabase.OPEN_READONLY
-            ).use { db ->
-                tableNames(db).filter { tableName ->
-                    val columns = columnNames(db, tableName)
-                    columns.contains("id") && columns.contains("playableJson")
-                }
-            }
-        }.onFailure {
-            Log.w(TAG, "discover tables failed, db=${file.name}", it)
-        }.getOrDefault(emptyList())
-    }
-
-    private fun tableNames(db: SQLiteDatabase): List<String> {
-        return db.rawQuery(
-            "SELECT name FROM sqlite_master WHERE type='table'",
-            null
-        ).use { cursor ->
-            buildList {
-                while (cursor.moveToNext()) {
-                    cursor.getString(0)?.takeIf { it.isNotBlank() }?.let(::add)
-                }
-            }
-        }
-    }
-
-    private fun columnNames(db: SQLiteDatabase, tableName: String): Set<String> {
-        return db.rawQuery(
-            "PRAGMA table_info(${quoteIdentifier(tableName)})",
-            null
-        ).use { cursor ->
-            buildSet {
-                while (cursor.moveToNext()) {
-                    cursor.getString(1)?.takeIf { it.isNotBlank() }?.let(::add)
-                }
-            }
-        }
-    }
-
-    private fun quoteIdentifier(value: String): String =
-        "\"${value.replace("\"", "\"\"")}\""
 
     private fun readPlayableJson(candidate: Candidate, id: String): String? {
         return runCatching {
@@ -222,8 +152,7 @@ object PlayableDbCache {
     private fun logDatabaseDiagnostic(
         databasesDir: File,
         id: String,
-        primaryCandidates: List<Candidate>,
-        discoveredCandidates: List<Candidate>
+        primaryCandidates: List<Candidate>
     ) {
         val now = System.currentTimeMillis()
         synchronized(diagnosticLogAtById) {
@@ -240,16 +169,11 @@ object PlayableDbCache {
         val sampleDbs = dbFiles
             .take(8)
             .joinToString("|") { "${it.name}:${it.length()}" }
-        val sampleDiscovered = discoveredCandidates
-            .take(8)
-            .joinToString("|") { "${it.file.name}.${it.tableName}" }
         YLog.debug(
             tag = TAG,
             msg = "db diag, mediaId=$id, dir=${databasesDir.absolutePath}, " +
                 "dirExists=${databasesDir.exists()}, dbFiles=${dbFiles.size}, " +
-                "primaryCandidates=${primaryCandidates.size}, " +
-                "discoveredCandidates=${discoveredCandidates.size}, sampleDbs=$sampleDbs, " +
-                "sampleDiscovered=$sampleDiscovered"
+                "primaryCandidates=${primaryCandidates.size}, sampleDbs=$sampleDbs"
         )
     }
 

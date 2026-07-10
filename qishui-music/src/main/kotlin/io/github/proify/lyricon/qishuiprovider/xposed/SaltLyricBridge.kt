@@ -9,7 +9,10 @@ package io.github.proify.lyricon.qishuiprovider.xposed
 import android.content.Context
 import android.content.Intent
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import android.util.Log
+import io.github.proify.extensions.bridge.BridgePayloadGate
+import io.github.proify.extensions.bridge.BridgePlaybackStateGate
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import java.util.Locale
@@ -25,7 +28,6 @@ object SaltLyricBridge {
     private const val BRIDGE_CAPABILITIES =
         "playbackState,trackGeneration,translationToggle"
     private const val BRIDGE_MATCH_POLICY = "mediaId,trackKey,titleArtist"
-    private const val PAYLOAD_DIAGNOSTIC_LOGS = false
     private const val EXTRA_PLAYBACK_STATE = "playbackState"
     private const val EXTRA_PLAYBACK_POSITION = "playbackPosition"
     private const val EXTRA_PLAYBACK_SPEED = "playbackSpeed"
@@ -33,6 +35,8 @@ object SaltLyricBridge {
     private const val EARLY_METADATA_WINDOW_MS = 30_000L
     private const val MAX_REASONABLE_DURATION_MS = 24L * 60L * 60L * 1000L
     private const val SKIP_TIMED_LYRIC_LOG_THROTTLE_MS = 10_000L
+    private val payloadGate = BridgePayloadGate()
+    private val playbackStateGate = BridgePlaybackStateGate()
     private var lastSkippedTimedLyricKey = ""
     private var lastSkippedTimedLyricLogAt = 0L
 
@@ -62,6 +66,8 @@ object SaltLyricBridge {
 
         runCatching {
             context.sendBroadcast(intent)
+        }.onSuccess {
+            debug("Sent QiShui track change, generation=$trackGeneration, id=$mediaId")
         }.onFailure { e ->
             Log.w(TAG, "Failed to send QiShui track change, generation=$trackGeneration", e)
         }
@@ -95,8 +101,8 @@ object SaltLyricBridge {
         val lyricLines = filteredLyricLines(song)
         val rawLyric = toEnhancedLrc(song, lyricLines)
         if (!containsTimedLrc(rawLyric)) {
-            if (PAYLOAD_DIAGNOSTIC_LOGS && shouldLogSkippedTimedLyric(song)) {
-                Log.d(TAG, "Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
+            if (isDiagnosticsEnabled() && shouldLogSkippedTimedLyric(song)) {
+                debug("Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
             }
             return
         }
@@ -104,6 +110,8 @@ object SaltLyricBridge {
         val lyric = toPlainLrc(song, lyricLines)
         val translationLyric = toTranslationLrc(song, lyricLines)
         val requestId = buildRequestId(song, rawLyric, translationLyric)
+        val payloadKey = "$SOURCE_QISHUI:$trackGeneration:$requestId"
+        if (!payloadGate.shouldSend(payloadKey, SystemClock.elapsedRealtime())) return
         val trackKey = buildTrackKey(song.name, song.artist)
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
@@ -127,28 +135,55 @@ object SaltLyricBridge {
         runCatching {
             context.sendBroadcast(intent)
         }.onSuccess {
-            if (!PAYLOAD_DIAGNOSTIC_LOGS) {
-                return@onSuccess
-            }
-            Log.d(
-                TAG,
+            debug(
                 "Sent QiShui bridge payload, id=${song.id.orEmpty()}, " +
                     "lines=${lyricLines.size}/${song.lyrics?.size ?: 0}, " +
                     "rawChars=${rawLyric.length}, transChars=${translationLyric.length}, " +
                     "first=${shortenForLog(lyricLines.firstOrNull()?.text.orEmpty())}"
             )
         }.onFailure { e ->
+            payloadGate.forget(payloadKey)
             Log.w(TAG, "Failed to send QiShui bridge payload, id=${song.id.orEmpty()}", e)
         }
     }
 
-    fun sendPlaybackState(context: Context?, state: PlaybackState?) {
-        if (context == null || state == null) return
+    fun sendPlaybackState(
+        context: Context?,
+        state: PlaybackState?,
+        mediaId: String?,
+        title: String?,
+        artist: String?,
+        duration: Long,
+        trackGeneration: Long
+    ) {
+        if (context == null || state == null || mediaId.isNullOrBlank() || trackGeneration <= 0L) {
+            return
+        }
+        if (state.state == PlaybackState.STATE_BUFFERING && state.position <= 0L) return
+        if (!playbackStateGate.shouldSend(
+                state = state.state,
+                position = state.position,
+                speed = state.playbackSpeed,
+                lastPositionUpdateTime = state.lastPositionUpdateTime,
+                moving = isPlaybackInMotion(state.state),
+                generation = trackGeneration,
+                nowElapsedMillis = SystemClock.elapsedRealtime()
+            )
+        ) {
+            return
+        }
 
         val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
             setPackage(SYSTEMUI_PACKAGE)
             putBridgeDeclaration(context)
             putExtra("source", SOURCE_QISHUI)
+            putExtra("eventType", "playbackState")
+            putExtra("mediaId", mediaId)
+            putExtra("trackKey", buildTrackKey(title, artist))
+            putExtra("songName", title.orEmpty())
+            putExtra("artist", artist.orEmpty())
+            putExtra("duration", validDuration(duration))
+            putExtra("trackGeneration", trackGeneration)
             putExtra(EXTRA_PLAYBACK_STATE, state.state)
             putExtra(EXTRA_PLAYBACK_POSITION, state.position)
             putExtra(EXTRA_PLAYBACK_SPEED, state.playbackSpeed)
@@ -159,8 +194,26 @@ object SaltLyricBridge {
         runCatching {
             context.sendBroadcast(intent)
         }.onFailure { e ->
-            Log.w(TAG, "Failed to send QiShui playback state, state=${state.state}", e)
+            playbackStateGate.reset()
+            Log.w(
+                TAG,
+                "Failed to send QiShui playback state, generation=$trackGeneration, " +
+                    "state=${state.state}",
+                e
+            )
         }
+    }
+
+    private fun isDiagnosticsEnabled(): Boolean = Log.isLoggable(TAG, Log.DEBUG)
+
+    private fun debug(message: String) {
+        if (isDiagnosticsEnabled()) Log.d(TAG, message)
+    }
+
+    private fun isPlaybackInMotion(state: Int): Boolean {
+        return state == PlaybackState.STATE_PLAYING ||
+            state == PlaybackState.STATE_FAST_FORWARDING ||
+            state == PlaybackState.STATE_REWINDING
     }
 
     private fun Intent.putBridgeDeclaration(context: Context) {

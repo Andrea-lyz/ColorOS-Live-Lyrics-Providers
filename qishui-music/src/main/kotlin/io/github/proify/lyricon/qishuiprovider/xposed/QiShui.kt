@@ -160,7 +160,18 @@ object QiShui : YukiBaseHooker() {
                     after {
                         val state = args[0] as? PlaybackState
                         provider?.player?.setPlaybackState(state)
-                        SaltLyricBridge.sendPlaybackState(appContext, state)
+                        val mediaId = curMediaId
+                        val trackGeneration = currentTrackGeneration
+                        val metadata = mediaId?.let(MetadataCache::get)
+                        SaltLyricBridge.sendPlaybackState(
+                            context = appContext,
+                            state = state,
+                            mediaId = mediaId,
+                            title = metadata?.title,
+                            artist = metadata?.artist,
+                            duration = metadata?.duration ?: 0L,
+                            trackGeneration = trackGeneration
+                        )
                         updateSongIfNeed()
                     }
                 }
@@ -442,9 +453,20 @@ object QiShui : YukiBaseHooker() {
         rememberMissing: Boolean = false,
         trackGeneration: Long = currentTrackGeneration
     ) {
+        val songId = song.id?.takeIf { it.isNotBlank() }
+        if (songId != null &&
+            (songId != curMediaId || trackGeneration != currentTrackGeneration)
+        ) {
+            YLog.debug(
+                tag = TAG,
+                msg = "skip stale song update, id=$songId, generation=$trackGeneration, " +
+                    "currentId=${curMediaId.orEmpty()}, currentGeneration=$currentTrackGeneration"
+            )
+            return
+        }
         if (song == lastSong) return
         provider?.player?.setSong(song)
-        SaltLyricBridge.send(appContext, song, trackGeneration)
+        SaltLyricBridge.send(appContext, bridgeSongWithCurrentMetadata(song), trackGeneration)
         YLog.debug(
             tag = TAG,
             msg = "song updated, id=${song.id.orEmpty()}, " +
@@ -456,6 +478,22 @@ object QiShui : YukiBaseHooker() {
         } else if (rememberMissing) {
             rememberMissingSong(song)
         }
+    }
+
+    private fun bridgeSongWithCurrentMetadata(song: Song): Song {
+        val id = song.id?.takeIf { it.isNotBlank() } ?: return song
+        val metadata = MetadataCache.get(id) ?: return song
+        val title = metadata.title?.takeIf { it.isNotBlank() } ?: song.name
+        val artist = metadata.artist?.takeIf { it.isNotBlank() } ?: song.artist
+        val duration = metadata.duration.takeIf { it > 0L } ?: song.duration
+        if (title == song.name && artist == song.artist && duration == song.duration) return song
+        return Song(
+            id = id,
+            name = title,
+            artist = artist,
+            duration = duration,
+            lyrics = song.lyrics
+        )
     }
 
     private fun acceptOfficialSong(song: Song, source: String) {

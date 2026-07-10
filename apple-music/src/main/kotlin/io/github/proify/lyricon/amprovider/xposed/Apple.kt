@@ -8,6 +8,8 @@ package io.github.proify.lyricon.amprovider.xposed
 
 import android.app.Application
 import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState as MediaSessionPlaybackState
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.kavaref.condition.type.VagueType
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
@@ -108,6 +110,7 @@ object Apple : YukiBaseHooker() {
         hookPlaybackItemConvertMethod()
         hookMediaMetadataChange()
         hookLyricBuildMethod()
+        hookBridgeMediaSessionPlaybackState()
         runCatching {
             hookExoMediaPlayer()
         }.onFailure {
@@ -218,6 +221,22 @@ object Apple : YukiBaseHooker() {
             }
         }.onFailure {
             YLog.error("hookLyricBuildMethod failed", it)
+        }
+    }
+
+    private fun hookBridgeMediaSessionPlaybackState() {
+        runCatching {
+            MediaSession::class.java
+                .getDeclaredMethod("setPlaybackState", MediaSessionPlaybackState::class.java)
+                .hook {
+                    after {
+                        val playbackState =
+                            args.getOrNull(0) as? MediaSessionPlaybackState ?: return@after
+                        PlaybackManager.onBridgeMediaSessionPlaybackStateChanged(playbackState)
+                    }
+                }
+        }.onFailure {
+            YLog.error("hookBridgeMediaSessionPlaybackState failed", it)
         }
     }
 
