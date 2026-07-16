@@ -13,6 +13,7 @@ import android.os.SystemClock
 import android.util.Log
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
+import io.github.proify.extensions.bridge.retainBridgeLyricLines
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import java.util.Locale
@@ -428,21 +429,7 @@ object SaltLyricBridge {
     }
 
     private fun filteredLyricLines(song: Song): List<RichLyricLine> {
-        val result = mutableListOf<RichLyricLine>()
-        var removedEarlyCredit = false
-        song.lyrics.orEmpty()
-            .filter { !it.text.isNullOrBlank() }
-            .sortedBy { it.begin }
-            .forEach { line ->
-                if (isLikelyMetadataLine(line, song, removedEarlyCredit)) {
-                    if (line.begin <= EARLY_METADATA_WINDOW_MS) {
-                        removedEarlyCredit = true
-                    }
-                } else {
-                    result.add(line)
-                }
-            }
-        return result
+        return retainBridgeLyricLines(song.lyrics)
     }
 
     private fun isLikelyMetadataLine(

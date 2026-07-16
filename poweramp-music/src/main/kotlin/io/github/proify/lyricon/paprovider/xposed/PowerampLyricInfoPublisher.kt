@@ -11,6 +11,7 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
+import io.github.proify.extensions.bridge.retainBridgeLyricLines
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import org.json.JSONObject
@@ -338,15 +339,11 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
         val parsedLines = PowerampBridgeTaggedLyricParser.parse(bridgeSourceLyric)
         if (parsedLines.isEmpty()) return null
 
-        var removedEarlyCredit = false
-        val lyricLines = parsedLines.filter { line ->
-            val probe = RichLyricLine(begin = line.begin, text = line.text)
-            val metadataLine = isLikelyMetadataLine(probe, song, removedEarlyCredit)
-            if (metadataLine && line.begin <= EARLY_METADATA_WINDOW_MS) {
-                removedEarlyCredit = true
-            }
-            !metadataLine
-        }
+        val lyricLines = retainBridgeLyricLines(
+            parsedLines,
+            { it.text },
+            { it.begin }
+        )
         if (lyricLines.isEmpty()) return null
         PowerampLog.debug(
             tag = TAG,
@@ -585,21 +582,7 @@ object PowerampLyricInfoPublisher : YukiBaseHooker() {
     }
 
     private fun filteredLyricLines(song: Song): List<RichLyricLine> {
-        val result = mutableListOf<RichLyricLine>()
-        var removedEarlyCredit = false
-        song.lyrics.orEmpty()
-            .filter { !it.text.isNullOrBlank() }
-            .sortedBy { it.begin }
-            .forEach { line ->
-                if (isLikelyMetadataLine(line, song, removedEarlyCredit)) {
-                    if (line.begin <= EARLY_METADATA_WINDOW_MS) {
-                        removedEarlyCredit = true
-                    }
-                } else {
-                    result.add(line)
-                }
-            }
-        return result
+        return retainBridgeLyricLines(song.lyrics)
     }
 
     private fun secondaryTranslationFor(line: RichLyricLine): String? {

@@ -63,17 +63,6 @@ abstract class KuGouBase : YukiBaseHooker() {
         private const val ORIGINAL_LYRIC_SNAPSHOT_EXTRA = "kg_original_lyric_snapshot"
         private const val ORIGINAL_LYRIC_STARTED_EXTRA = "kg_original_lyric_started"
         private val KUGOU_HASH_SUFFIX_REGEX = Regex("[0-9a-fA-F]{16,}$")
-        private val CAR_LYRIC_CREDIT_TOKEN_REGEX = Regex(
-            "lyricist|composer|arranger|producer|produced\\s+by|vocal|harmony|backing vocal|" +
-                "background vocal|recording|mixing|mastering|publisher|copyright|engineer|" +
-                "studio|music copyist|conductor|orchestra|choir|piccolo|flute|harmonica|harp|" +
-                "\\u4f5c\\u8bcd|\\u4f5c\\u66f2|\\u7f16\\u66f2|\\u5236\\u4f5c\\u4eba|" +
-                "\\u6f14\\u5531|\\u4eba\\u58f0|\\u548c\\u58f0|\\u5f55\\u97f3|" +
-                "\\u5f55\\u97f3\\u5e08|\\u6df7\\u97f3|\\u6bcd\\u5e26|\\u76d1\\u5236|" +
-                "\\u51fa\\u54c1|\\u6307\\u6325|\\u4e50\\u961f|\\u7edf\\u7b79|\\u5f26\\u4e50|\\u5409\\u4ed6|" +
-                "\\u8d1d\\u65af|\\u9f13|\\u952e\\u76d8",
-            RegexOption.IGNORE_CASE
-        )
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -1050,30 +1039,11 @@ abstract class KuGouBase : YukiBaseHooker() {
     }
 
     private fun looksLikeCarLyricDisplayMetadata(meta: MetadataData, current: MetadataData?): Boolean {
-        val rawTitle = meta.title.trim()
-        if (rawTitle.length < 12) return false
-        val hasDisplaySeparator = rawTitle.contains(" - ") ||
-            rawTitle.contains(" – ") ||
-            rawTitle.contains(" — ") ||
-            rawTitle.contains("｜") ||
-            rawTitle.contains(" / ")
-        if (!hasDisplaySeparator) return false
-        if (meta.artist.isNotBlank()) return true
-
-        val title = normalizeLocalLyricFileText(rawTitle)
-        val artist = normalizeLocalLyricFileText(meta.artist)
-        if (artist.length >= 2 && title.contains(artist)) return true
-
-        val currentTitle = normalizeLocalLyricFileText(current?.title)
-        val currentArtist = normalizeLocalLyricFileText(current?.artist)
-        return currentTitle.isNotBlank() &&
-            (title.contains(currentTitle) ||
-                artist.contains(currentTitle) ||
-                currentArtist.isNotBlank() && title.contains(currentArtist))
+        return KuGouMetadataIdentityPolicy.looksLikeCarLyricDisplayMetadata(meta, current)
     }
 
     private fun looksLikeCreditMetadataLine(value: String): Boolean {
-        return value.isNotBlank() && CAR_LYRIC_CREDIT_TOKEN_REGEX.containsMatchIn(value)
+        return KuGouMetadataIdentityPolicy.looksLikeCreditMetadataLine(value)
     }
 
     private fun sameStableMedia(current: MetadataData, incoming: MetadataData): Boolean {
