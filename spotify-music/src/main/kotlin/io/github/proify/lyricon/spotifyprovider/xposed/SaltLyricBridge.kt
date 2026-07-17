@@ -11,6 +11,8 @@ import android.content.Intent
 import android.media.session.PlaybackState
 import android.os.SystemClock
 import android.util.Log
+import io.github.proify.extensions.android.BridgeBroadcastSender
+import io.github.proify.extensions.bridge.BridgeInlineSegmentPolicy
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
 import io.github.proify.extensions.bridge.retainBridgeLyricLines
@@ -32,7 +34,6 @@ object SaltLyricBridge {
     private const val EXTRA_PLAYBACK_POSITION = "playbackPosition"
     private const val EXTRA_PLAYBACK_SPEED = "playbackSpeed"
     private const val EXTRA_PLAYBACK_LAST_POSITION_UPDATE_TIME = "playbackLastPositionUpdateTime"
-    private const val EARLY_METADATA_WINDOW_MS = 30_000L
     private const val MAX_REASONABLE_DURATION_MS = 24L * 60L * 60L * 1000L
     private val TIMED_LRC_REGEX =
         Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
@@ -65,35 +66,14 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_SPOTIFY)
         }.onSuccess {
             debug("Sent Spotify track change, generation=$trackGeneration, id=$mediaId")
         }.onFailure { e ->
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send Spotify track change, generation=$trackGeneration", e)
         }
     }
-
-    private val creditRoleKeywords = arrayOf(
-        "lyrics",
-        "lyricist",
-        "composer",
-        "arranger",
-        "producer",
-        "produced",
-        "production",
-        "publisher",
-        "copyright",
-        "op",
-        "sp",
-        "\u4f5c\u8bcd",
-        "\u4f5c\u8a5e",
-        "\u4f5c\u66f2",
-        "\u7f16\u66f2",
-        "\u7de8\u66f2",
-        "\u5236\u4f5c",
-        "\u88fd\u4f5c",
-        "\u51fa\u54c1"
-    )
 
     fun send(context: Context?, song: Song?, trackGeneration: Long) {
         if (context == null || song == null || trackGeneration <= 0L) return
@@ -130,7 +110,7 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_SPOTIFY)
         }.onSuccess {
             debug(
                 "Sent Spotify bridge payload, generation=$trackGeneration, " +
@@ -140,6 +120,7 @@ object SaltLyricBridge {
             )
         }.onFailure { e ->
             payloadGate.forget(payloadKey)
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send Spotify bridge payload, id=${song.id.orEmpty()}", e)
         }
     }
@@ -151,7 +132,8 @@ object SaltLyricBridge {
         title: String?,
         artist: String?,
         duration: Long,
-        trackGeneration: Long
+        trackGeneration: Long,
+        force: Boolean = false
     ) {
         if (context == null || state == null || mediaId.isNullOrBlank() || trackGeneration <= 0L) {
             return
@@ -164,7 +146,8 @@ object SaltLyricBridge {
                 lastPositionUpdateTime = state.lastPositionUpdateTime,
                 moving = isPlaybackInMotion(state.state),
                 generation = trackGeneration,
-                nowElapsedMillis = SystemClock.elapsedRealtime()
+                nowElapsedMillis = SystemClock.elapsedRealtime(),
+                force = force
             )
         ) {
             return
@@ -189,9 +172,10 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_SPOTIFY)
         }.onFailure { e ->
             playbackStateGate.reset()
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(
                 TAG,
                 "Failed to send Spotify playback state, generation=$trackGeneration, " +
@@ -227,11 +211,15 @@ object SaltLyricBridge {
             builder.append('[')
                 .append(formatLrcTime(line.begin))
                 .append(']')
-            words.forEach { word ->
+            words.forEach wordLoop@{ word ->
+                val segment = cleanInlineSegment(word.text)
+                if (BridgeInlineSegmentPolicy.appendStandaloneWhitespace(builder, segment)) {
+                    return@wordLoop
+                }
                 builder.append('<')
                     .append(formatLrcTime(word.begin))
                     .append('>')
-                    .append(cleanInlineSegment(word.text))
+                    .append(segment)
             }
             val end = inferEnhancedLineEnd(line, words)
             if (end > line.begin) {
@@ -412,143 +400,6 @@ object SaltLyricBridge {
 
     private fun filteredLyricLines(song: Song): List<RichLyricLine> {
         return retainBridgeLyricLines(song.lyrics)
-    }
-
-    private fun isLikelyMetadataLine(
-        line: RichLyricLine,
-        song: Song,
-        removedEarlyCredit: Boolean
-    ): Boolean {
-        val text = cleanPlainText(line.text.orEmpty())
-        if (text.isBlank()) return true
-        if (line.begin <= EARLY_METADATA_WINDOW_MS) {
-            if (looksLikeKnownTrackCredit(text, song)) return true
-        }
-        if (looksLikeCreditRoleLine(text)) return true
-        return removedEarlyCredit &&
-            line.begin <= EARLY_METADATA_WINDOW_MS &&
-            looksLikeArtistCreditContinuation(text)
-    }
-
-    private fun looksLikeKnownTrackCredit(text: String, song: Song): Boolean {
-        val value = normalizeCreditIdentity(text)
-        if (value.length < 3 || value.length > 96 || endsLikeSentence(text)) return false
-
-        val title = normalizeCreditIdentity(song.name)
-        if (title.isNotBlank() && value == title) return true
-
-        val artist = normalizeCreditIdentity(song.artist)
-        if (artist.isNotBlank() && value == artist) return true
-
-        return splitArtistParts(song.artist).any { part ->
-            part.length >= 3 && (value == part || (value.contains(part) && value.length <= part.length + 12))
-        }
-    }
-
-    private fun looksLikeCreditRoleLine(text: String): Boolean {
-        val value = cleanPlainText(text)
-        if (value.length > 160) return false
-
-        val lower = value.lowercase(Locale.ROOT)
-        val colon = firstColonIndex(value)
-        if (colon > 0 && colon <= 48) {
-            val prefix = lower.substring(0, colon).trim()
-            if (containsCreditRoleKeyword(prefix)) return true
-        }
-        return creditRoleKeywords.any { keyword ->
-            val lowerKeyword = keyword.lowercase(Locale.ROOT)
-            lower == lowerKeyword ||
-                lower.startsWith("$lowerKeyword:") ||
-                lower.startsWith("$lowerKeyword\uff1a") ||
-                lower.startsWith("$lowerKeyword by ") ||
-                lower.startsWith("$lowerKeyword ")
-        }
-    }
-
-    private fun looksLikeArtistCreditContinuation(text: String): Boolean {
-        val value = cleanPlainText(text)
-        if (value.length < 3 || value.length > 96 || endsLikeSentence(value)) return false
-        return (value.indexOf('/') >= 0 ||
-            value.indexOf('&') >= 0 ||
-            value.indexOf(',') >= 0 ||
-            value.indexOf('\u3001') >= 0) &&
-            containsLetter(value) &&
-            countWhitespaceRuns(value) <= 4
-    }
-
-    private fun firstColonIndex(value: String): Int {
-        val ascii = value.indexOf(':')
-        val fullWidth = value.indexOf('\uff1a')
-        if (ascii < 0) return fullWidth
-        if (fullWidth < 0) return ascii
-        return minOf(ascii, fullWidth)
-    }
-
-    private fun containsCreditRoleKeyword(value: String): Boolean {
-        return creditRoleKeywords.any { value.contains(it.lowercase(Locale.ROOT)) }
-    }
-
-    private fun splitArtistParts(artist: String?): List<String> {
-        val value = artist ?: return emptyList()
-        return value.split(Regex("[/,&;\\uff0c\\uff1b\\u3001]"))
-            .map { normalizeCreditIdentity(it) }
-            .filter { it.isNotBlank() }
-    }
-
-    private fun normalizeCreditIdentity(value: String?): String {
-        val text = cleanPlainText(value.orEmpty()).lowercase(Locale.ROOT)
-        val builder = StringBuilder(text.length)
-        var inWhitespace = false
-        text.forEach { ch ->
-            val normalized = when (ch) {
-                '\u2018', '\u2019', '\u02bc', '\uff07' -> '\''
-                else -> ch
-            }
-            if (normalized.isLetterOrDigit() || normalized == '-' || normalized == '\'') {
-                builder.append(normalized)
-                inWhitespace = false
-            } else if (normalized.isWhitespace()) {
-                if (!inWhitespace && builder.isNotEmpty()) {
-                    builder.append(' ')
-                }
-                inWhitespace = true
-            }
-        }
-        return builder.toString().trim()
-    }
-
-    private fun containsLetter(value: String): Boolean {
-        var index = 0
-        while (index < value.length) {
-            val codePoint = value.codePointAt(index)
-            if (Character.isLetter(codePoint)) return true
-            index += Character.charCount(codePoint)
-        }
-        return false
-    }
-
-    private fun endsLikeSentence(value: String): Boolean {
-        if (value.isBlank()) return false
-        return when (value.last()) {
-            '.', '!', '?', '\u3002', '\uff01', '\uff1f' -> true
-            else -> false
-        }
-    }
-
-    private fun countWhitespaceRuns(value: String): Int {
-        var count = 0
-        var inWhitespace = false
-        value.forEach {
-            if (it.isWhitespace()) {
-                if (!inWhitespace) {
-                    count++
-                    inWhitespace = true
-                }
-            } else {
-                inWhitespace = false
-            }
-        }
-        return count
     }
 
     private fun shortenForLog(value: String): String {

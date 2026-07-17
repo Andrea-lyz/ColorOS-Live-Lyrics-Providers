@@ -6,6 +6,7 @@
 
 package io.github.proify.lyricon.cmprovider.xposed
 
+import io.github.proify.extensions.bridge.PlaybackTrackToken
 import io.github.proify.lyricon.yrckit.download.YrcDownloader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,21 +15,25 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 object Downloader {
-    private val downloadingIds = ConcurrentHashMap.newKeySet<Long>()
+    private val downloadingRequests = ConcurrentHashMap.newKeySet<String>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    fun download(id: Long, downloadCallback: DownloadCallback) {
-        if (downloadingIds.contains(id)) return
-        downloadingIds.add(id)
+    fun download(
+        id: Long,
+        requestedTrack: PlaybackTrackToken,
+        downloadCallback: DownloadCallback
+    ) {
+        val requestKey = "$id:${requestedTrack.generation}:${requestedTrack.sessionIdentity}"
+        if (!downloadingRequests.add(requestKey)) return
 
         scope.launch {
             try {
                 val response = YrcDownloader.fetchLyric(id)
-                downloadCallback.onDownloadFinished(id, response)
+                downloadCallback.onDownloadFinished(requestedTrack, id, response)
             } catch (e: Exception) {
-                downloadCallback.onDownloadFailed(id, e)
+                downloadCallback.onDownloadFailed(requestedTrack, id, e)
             } finally {
-                downloadingIds.remove(id)
+                downloadingRequests.remove(requestKey)
             }
         }
     }

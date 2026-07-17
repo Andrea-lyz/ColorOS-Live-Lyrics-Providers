@@ -1,13 +1,14 @@
 package io.github.proify.lyricon.qishuiprovider.xposed
 
 import android.media.MediaMetadata
+import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import com.highcapable.yukihookapi.hook.log.YLog
+import io.github.proify.extensions.android.copy
 import io.github.proify.extensions.json
 import io.github.proify.extensions.md5
 import io.github.proify.lyricon.lyric.model.Song
@@ -19,20 +20,19 @@ import io.github.proify.lyricon.qishuiprovider.xposed.parser.toRichLyric
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.decodeFromStream
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.LinkedHashMap
+import java.util.concurrent.Executors
 
 object QiShui : YukiBaseHooker() {
 
-    private const val TAG = "QiShui"
     private const val SONG_CACHE_MAX_ENTRIES = 32
     private const val OFFICIAL_SONG_CACHE_MAX_ENTRIES = 32
     private const val MISSING_SONG_CACHE_MAX_ENTRIES = 32
-    private const val MISSING_SONG_CACHE_TTL_MS = 1_000L
     private const val RESOLUTION_LOG_THROTTLE_MS = 10_000L
     private const val ACTION_TOGGLE_TRANSLATION =
         "io.github.andrealtb.lockscreenlyrics.action.TOGGLE_TRANSLATION"
-    private const val TRANSLATION_ACTION_NAME = "\u7ffb\u8bd1"
-    private const val LYRIC_RETRY_MAX_ATTEMPTS = 24
+    private const val TRANSLATION_ACTION_NAME = "翻译"
     private const val NET_CACHE_DIAG_THROTTLE_MS = 10_000L
     private const val NET_CACHE_RECURSIVE_MAX_FILES = 1_000
     private var provider: LyriconProvider? = null
@@ -40,22 +40,43 @@ object QiShui : YukiBaseHooker() {
     private var curMediaId: String? = null
     private var currentTrackGeneration = 0L
     private var lastSong: Song? = null
+    private var lastSongGeneration = 0L
     private var translationActionInjectionLogged = false
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
-    private var lyricRetryGeneration = 0L
+    private val resolutionExecutor by lazy {
+        Executors.newSingleThreadExecutor { task ->
+            Thread(task, "QiShui-LyricResolver").apply {
+                priority = Thread.NORM_PRIORITY - 1
+            }
+        }
+    }
+    private var resolutionToken = 0L
     private var pendingLyricResolution: PendingLyricResolution? = null
+    private var authoritativeSession = WeakReference<MediaSession>(null)
+    @Volatile
+    private var officialTrackAuthority: QiShuiTrackAuthority? = null
+    private var latestPlaybackState: PlaybackState? = null
+    private var latestPlaybackSnapshot: QiShuiPlaybackSnapshot? = null
+    private var lastLoggedPlaybackSnapshot: QiShuiPlaybackSnapshot? = null
 
     private data class MissingSong(
         val song: Song,
-        val expiresAtMillis: Long
+        val expiresAtElapsedMillis: Long
     )
 
     private data class PendingLyricResolution(
         val mediaId: String,
         val trackGeneration: Long,
-        val nextAttempt: Int,
-        val generation: Long
+        val attempt: Int,
+        val token: Long,
+        val metadata: Metadata?,
+        val inFlight: Boolean
     )
+
+    private sealed interface ResolutionResult {
+        data class Found(val song: Song, val source: String) : ResolutionResult
+        data object Missing : ResolutionResult
+    }
 
     private val songCache = object : LinkedHashMap<String, Song>(
         SONG_CACHE_MAX_ENTRIES,
@@ -98,7 +119,11 @@ object QiShui : YukiBaseHooker() {
     }
 
     override fun onHook() {
-        YLog.info(tag = TAG, msg = "$packageName/$processName")
+        if (!QiShuiPlaybackPolicy.isPlaybackProcess(packageName, processName)) {
+            QiShuiLog.debug("event=processSkipped process=$processName expected=$packageName")
+            return
+        }
+        QiShuiLog.debug("event=playbackProcessAccepted process=$processName")
 
         onAppLifecycle {
             onCreate {
@@ -110,14 +135,18 @@ object QiShui : YukiBaseHooker() {
     private var hooked = false
     private fun hook() {
         if (hooked) {
-            YLog.info(tag = TAG, msg = "already hooked")
+            QiShuiLog.debug("event=hookSkipped reason=already-hooked")
             return
         }
         hooked = true
 
         initProvider()
         hookMediaSession()
-        QiShuiOfficialLyrics.install(appClassLoader, ::acceptOfficialSong)
+        QiShuiOfficialLyrics.install(
+            loader = appClassLoader,
+            authorityProvider = { officialTrackAuthority },
+            onSong = ::acceptOfficialSong
+        )
     }
 
     private fun initProvider() {
@@ -132,7 +161,7 @@ object QiShui : YukiBaseHooker() {
             player.setDisplayTranslation(true)
             register()
         }
-        YLog.debug(tag = TAG, msg = "provider registered, provider=${provider?.providerInfo}")
+        QiShuiLog.debug("event=providerRegistered")
     }
 
     private fun hookMediaSession() {
@@ -150,29 +179,14 @@ object QiShui : YukiBaseHooker() {
                             args[0] = patched
                             if (!translationActionInjectionLogged) {
                                 translationActionInjectionLogged = true
-                                YLog.info(
-                                    tag = TAG,
-                                    msg = "Injected translation toggle action into QiShui PlaybackState"
-                                )
+                                QiShuiLog.debug("event=translationActionInjected")
                             }
                         }
                     }
                     after {
-                        val state = args[0] as? PlaybackState
-                        provider?.player?.setPlaybackState(state)
-                        val mediaId = curMediaId
-                        val trackGeneration = currentTrackGeneration
-                        val metadata = mediaId?.let(MetadataCache::get)
-                        SaltLyricBridge.sendPlaybackState(
-                            context = appContext,
-                            state = state,
-                            mediaId = mediaId,
-                            title = metadata?.title,
-                            artist = metadata?.artist,
-                            duration = metadata?.duration ?: 0L,
-                            trackGeneration = trackGeneration
-                        )
-                        updateSongIfNeed()
+                        val session = instance as? MediaSession ?: return@after
+                        val state = args[0] as? PlaybackState ?: return@after
+                        runOnMain { handlePlaybackState(session, state) }
                     }
                 }
 
@@ -181,52 +195,113 @@ object QiShui : YukiBaseHooker() {
                     parameters("android.media.MediaMetadata")
                 }.hook {
                     after {
+                        val session = instance as? MediaSession ?: return@after
                         val mediaMetadata = args[0] as? MediaMetadata ?: return@after
-                        val id = MetadataCache.resolveId(mediaMetadata)
-                        val metadata = MetadataCache.save(mediaMetadata, id)
-
-                        if (id.isNullOrBlank()) {
-                            val description = mediaMetadata.description
-                            val title = description.title?.toString()
-                            val artist = description.subtitle?.toString()
-                            if (title.isNullOrBlank() && artist.isNullOrBlank()) {
-                                logResolutionOnce(
-                                    "blank-metadata",
-                                    "ignore blank metadata without media id"
-                                )
-                                return@after
-                            }
-                            setSong(
-                                Song(
-                                    name = title,
-                                    artist = artist
-                                )
-                            )
-                            return@after
-                        }
-
-                        if (curMediaId == id) return@after
-                        cancelPendingLyricResolution()
-                        curMediaId = id
-                        currentTrackGeneration++
-                        YLog.debug(
-                            tag = TAG,
-                            msg = "metadata id=${id.orEmpty()}, " +
-                                "title=${metadata?.title.orEmpty()}, " +
-                                "artist=${metadata?.artist.orEmpty()}"
-                        )
-                        SaltLyricBridge.sendTrackChanged(
-                            context = appContext,
-                            mediaId = id,
-                            title = metadata?.title,
-                            artist = metadata?.artist,
-                            duration = metadata?.duration ?: 0L,
-                            trackGeneration = currentTrackGeneration
-                        )
-                        updateSong()
+                        runOnMain { handleMetadata(session, mediaMetadata) }
                     }
                 }
             }
+    }
+
+    private fun handleMetadata(session: MediaSession, mediaMetadata: MediaMetadata) {
+        val id = MetadataCache.resolveId(mediaMetadata)
+        if (id.isNullOrBlank()) {
+            logResolutionOnce("blank-metadata", "event=metadataIgnored reason=blank-media-id")
+            return
+        }
+
+        val metadata = MetadataCache.save(mediaMetadata, id)
+        val sameTrack = curMediaId == id
+        authoritativeSession = WeakReference(session)
+
+        if (!sameTrack) {
+            cancelPendingLyricResolution()
+            curMediaId = id
+            currentTrackGeneration = QiShuiPlaybackPolicy.nextGeneration(
+                current = currentTrackGeneration,
+                nowElapsedMillis = SystemClock.elapsedRealtime()
+            )
+            officialTrackAuthority = QiShuiTrackAuthority(id, currentTrackGeneration)
+            latestPlaybackState = null
+            latestPlaybackSnapshot = null
+            lastLoggedPlaybackSnapshot = null
+            QiShuiLog.debug(
+                "event=trackChanged mediaId=$id generation=$currentTrackGeneration " +
+                    "session=${System.identityHashCode(session)}"
+            )
+            SaltLyricBridge.sendTrackChanged(
+                context = appContext,
+                mediaId = id,
+                title = metadata?.title,
+                artist = metadata?.artist,
+                duration = metadata?.duration ?: 0L,
+                trackGeneration = currentTrackGeneration
+            )
+        }
+
+        if (sameTrack) {
+            val existing = lastSong
+            if (existing?.id == id) {
+                val enriched = bridgeSongWithCurrentMetadata(existing)
+                if (enriched != existing) {
+                    commitSong(
+                        song = enriched,
+                        trackGeneration = currentTrackGeneration,
+                        reason = "metadata-enriched"
+                    )
+                    return
+                }
+            }
+            updateSongIfNeed()
+        } else {
+            updateSong()
+        }
+    }
+
+    private fun handlePlaybackState(session: MediaSession, state: PlaybackState) {
+        if (authoritativeSession.get() !== session) {
+            logResolutionOnce(
+                "non-authoritative-session:${System.identityHashCode(session)}",
+                "event=playbackIgnored reason=non-authoritative-session " +
+                    "session=${System.identityHashCode(session)}"
+            )
+            return
+        }
+        publishAuthoritativePlaybackState(session, state, reason = "media-session")
+        updateSongIfNeed()
+    }
+
+    private fun publishAuthoritativePlaybackState(
+        session: MediaSession,
+        state: PlaybackState,
+        reason: String
+    ) {
+        val mediaId = curMediaId ?: return
+        val trackGeneration = currentTrackGeneration
+        if (trackGeneration <= 0L) return
+
+        val snapshot = playbackSnapshot(session, state, trackGeneration)
+        latestPlaybackSnapshot = snapshot
+        latestPlaybackState = state
+        provider?.player?.setPlaybackState(state)
+        val metadata = MetadataCache.get(mediaId)
+        SaltLyricBridge.sendPlaybackState(
+            context = appContext,
+            state = state,
+            mediaId = mediaId,
+            title = metadata?.title,
+            artist = metadata?.artist,
+            duration = metadata?.duration ?: 0L,
+            trackGeneration = trackGeneration
+        )
+        if (QiShuiPlaybackPolicy.shouldLogPlaybackSnapshot(lastLoggedPlaybackSnapshot, snapshot)) {
+            QiShuiLog.debug(
+                "event=playbackSnapshot reason=$reason mediaId=$mediaId " +
+                "generation=$trackGeneration state=${state.state} position=${state.position} " +
+                "session=${System.identityHashCode(session)}"
+            )
+            lastLoggedPlaybackSnapshot = snapshot
+        }
     }
 
     private fun copyPlaybackStateWithTranslationActionFirst(
@@ -240,29 +315,13 @@ object QiShui : YukiBaseHooker() {
             TRANSLATION_ACTION_NAME,
             resolveTranslationActionPlaceholderIcon(original)
         ).build()
-        val builder = PlaybackState.Builder(original)
-        if (!clearPlaybackStateBuilderCustomActions(builder)) {
-            builder.addCustomAction(translationAction)
-            return builder.build()
-        }
-        builder.addCustomAction(translationAction)
-        originalActions.forEach { action ->
-            if (action.action != ACTION_TOGGLE_TRANSLATION) {
-                builder.addCustomAction(action)
+        return original.copy(
+            customActions = buildList {
+                add(translationAction)
+                originalActions.filterTo(this) { it.action != ACTION_TOGGLE_TRANSLATION }
             }
-        }
-        return builder.build()
+        )
     }
-
-    private fun clearPlaybackStateBuilderCustomActions(
-        builder: PlaybackState.Builder
-    ): Boolean = runCatching {
-        val field = PlaybackState.Builder::class.java.getDeclaredField("mCustomActions")
-        field.isAccessible = true
-        val actions = field.get(builder) as? MutableList<*> ?: return@runCatching false
-        actions.clear()
-        true
-    }.getOrDefault(false)
 
     private fun resolveTranslationActionPlaceholderIcon(state: PlaybackState): Int {
         state.customActions.orEmpty().firstOrNull { it.icon != 0 }?.let { return it.icon }
@@ -270,214 +329,380 @@ object QiShui : YukiBaseHooker() {
         return android.R.drawable.ic_menu_manage
     }
 
+    private fun isPlaybackInMotion(state: Int): Boolean {
+        return state == PlaybackState.STATE_PLAYING ||
+            state == PlaybackState.STATE_FAST_FORWARDING ||
+            state == PlaybackState.STATE_REWINDING
+    }
+
+    private fun runOnMain(action: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            action()
+        } else {
+            mainHandler.post(action)
+        }
+    }
+
     private fun updateSongIfNeed() {
-        if (curMediaId.isNullOrBlank()) return
-        val lastSong = this.lastSong
-        if (lastSong?.lyrics.isNullOrEmpty()) updateSong()
+        val mediaId = curMediaId?.takeIf { it.isNotBlank() } ?: return
+        val committed = lastSong
+        if (committed?.id != mediaId || committed.lyrics.isNullOrEmpty()) updateSong()
     }
 
-    @OptIn(ExperimentalSerializationApi::class)
-    fun updateSong() {
-        updateSongInternal(fromRetry = false)
+    private fun updateSong() {
+        runOnMain(::requestSongResolution)
     }
 
-    @OptIn(ExperimentalSerializationApi::class)
-    private fun updateSongInternal(fromRetry: Boolean) {
+    private fun requestSongResolution() {
         val id = curMediaId ?: return
         val trackGeneration = currentTrackGeneration
-        if (!fromRetry && hasPendingLyricResolution(id)) {
-            return
-        }
-        getCachedSong(id)?.let { cached ->
-            YLog.debug(
-                tag = TAG,
-                msg = "memory cache hit, mediaId=$id, lyrics=${cached.lyrics?.size ?: 0}"
+        getCachedOfficialSong(id)?.let { cached ->
+            QiShuiLog.debug(
+                "event=resolutionCacheHit source=official-memory mediaId=$id " +
+                    "lyrics=${cached.lyrics?.size ?: 0}"
             )
-            setSong(cached, trackGeneration = trackGeneration)
+            commitSong(cached, trackGeneration, reason = "official-memory-cache")
             clearPendingLyricResolution(id)
             return
         }
-        getCachedOfficialSong(id)?.let { cached ->
-            YLog.debug(
-                tag = TAG,
-                msg = "official runtime cache hit, mediaId=$id, lyrics=${cached.lyrics?.size ?: 0}"
+        getCachedSong(id)?.let { cached ->
+            QiShuiLog.debug(
+                "event=resolutionCacheHit source=memory mediaId=$id " +
+                    "lyrics=${cached.lyrics?.size ?: 0}"
             )
-            setSong(cached, trackGeneration = trackGeneration)
+            commitSong(cached, trackGeneration, reason = "memory-cache")
             clearPendingLyricResolution(id)
             return
         }
         getCachedMissingSong(id)?.let { missing ->
             logResolutionOnce(
                 "missing-cache:$id",
-                "missing lyric cache hit, mediaId=$id"
+                "event=resolutionCacheHit source=negative mediaId=$id"
             )
-            if (lastSong?.id != id) {
-                setSong(missing.song, rememberMissing = false, trackGeneration = trackGeneration)
+            if (lastSong?.id != id || lastSongGeneration != trackGeneration) {
+                commitSong(
+                    song = missing.song,
+                    trackGeneration = trackGeneration,
+                    rememberMissing = false,
+                    reason = "negative-cache"
+                )
             }
             return
         }
 
+        val pending = pendingLyricResolution
+        if (pending?.mediaId == id && pending.trackGeneration == trackGeneration) return
+
+        val request = PendingLyricResolution(
+            mediaId = id,
+            trackGeneration = trackGeneration,
+            attempt = 0,
+            token = nextResolutionToken(),
+            metadata = MetadataCache.get(id),
+            inFlight = true
+        )
+        pendingLyricResolution = request
+        startSongResolution(request)
+    }
+
+    private fun startSongResolution(request: PendingLyricResolution) {
+        if (request.attempt == 0) {
+            QiShuiLog.debug(
+                "event=resolutionStarted mediaId=${request.mediaId} " +
+                "generation=${request.trackGeneration} attempt=${request.attempt + 1}/" +
+                QiShuiResolutionPolicy.MAX_ATTEMPTS
+            )
+        }
+        resolutionExecutor.execute {
+            val result = runCatching { resolveSong(request) }
+                .onFailure {
+                    QiShuiLog.warningOnce(
+                        key = "resolution:${request.mediaId}",
+                        message = "event=resolutionFailed mediaId=${request.mediaId}",
+                        throwable = it
+                    )
+                }
+                .getOrDefault(ResolutionResult.Missing)
+            mainHandler.post { handleResolutionResult(request, result) }
+        }
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private fun resolveSong(request: PendingLyricResolution): ResolutionResult {
+        val id = request.mediaId
         val cache = runCatching {
             val file = getNetLyricCacheFile(id)
             if (file != null && file.exists()) {
-                YLog.debug(tag = TAG, msg = "cache hit, mediaId=$id, file=${file.name}")
+                QiShuiLog.debug("event=netCacheHit mediaId=$id")
                 file.inputStream().use {
                     json.decodeFromStream<NetResponseCache>(it)
                 }
             } else null
         }.onFailure {
-            YLog.error(tag = TAG, msg = "cache load failed, mediaId=$id, error=$it")
+            QiShuiLog.warningOnce(
+                key = "net-cache-load:$id",
+                message = "event=netCacheLoadFailed mediaId=$id",
+                throwable = it
+            )
         }.getOrNull()
 
-        val metadata = MetadataCache.get(id)
         if (cache != null) {
-            val song = cache.buildSong(id)
+            val song = cache.buildSong(id, request.metadata)
             if (!song.lyrics.isNullOrEmpty()) {
-                setSong(song, trackGeneration = trackGeneration)
-                clearPendingLyricResolution(id)
-                return
+                return ResolutionResult.Found(song, "net-cache")
             }
-            YLog.debug(tag = TAG, msg = "cache lyric empty, mediaId=$id")
+            QiShuiLog.debug("event=netCacheEmpty mediaId=$id")
         } else {
             logResolutionOnce(
                 "cache-miss:$id",
-                "cache miss, mediaId=$id, file=${calculateLyricCacheFileName(id)}"
+                "event=netCacheMiss mediaId=$id"
             )
         }
 
-        val dbHit = PlayableDbCache.findSong(appContext, id, metadata)
+        val dbHit = PlayableDbCache.findSong(appContext, id, request.metadata)
         if (dbHit != null) {
-            YLog.debug(
-                tag = TAG,
-                msg = "db hit, mediaId=$id, db=${dbHit.databaseName}, " +
+            QiShuiLog.debug(
+                "event=dbCacheHit mediaId=$id db=${dbHit.databaseName} " +
                     "table=${dbHit.tableName}, lyrics=${dbHit.song.lyrics?.size ?: 0}"
             )
-            setSong(dbHit.song, trackGeneration = trackGeneration)
-            clearPendingLyricResolution(id)
-            return
+            return ResolutionResult.Found(
+                dbHit.song,
+                "db:${dbHit.databaseName}/${dbHit.tableName}"
+            )
         }
-
-        if (scheduleLyricResolutionRetry(id, trackGeneration)) {
-            return
-        }
-
-        logResolutionOnce("db-miss:$id", "db miss, mediaId=$id")
-        setSong(
-            Song(
-                id = id,
-                name = metadata?.title,
-                artist = metadata?.artist,
-                duration = metadata?.duration ?: 0L
-            ),
-            rememberMissing = true,
-            trackGeneration = trackGeneration
-        )
-        clearPendingLyricResolution(id)
+        return ResolutionResult.Missing
     }
 
-    private fun hasPendingLyricResolution(id: String): Boolean =
-        pendingLyricResolution?.mediaId == id
+    private fun handleResolutionResult(
+        request: PendingLyricResolution,
+        result: ResolutionResult
+    ) {
+        val pending = pendingLyricResolution
+        if (pending == null ||
+            pending.token != request.token ||
+            pending.mediaId != request.mediaId ||
+            pending.trackGeneration != request.trackGeneration ||
+            pending.attempt != request.attempt ||
+            !pending.inFlight ||
+            curMediaId != request.mediaId ||
+            currentTrackGeneration != request.trackGeneration
+        ) {
+            QiShuiLog.debug(
+                "event=staleResolutionDropped mediaId=${request.mediaId} " +
+                    "generation=${request.trackGeneration} attempt=${request.attempt + 1}"
+            )
+            return
+        }
+
+        when (result) {
+            is ResolutionResult.Found -> {
+                commitSong(
+                    song = result.song,
+                    trackGeneration = request.trackGeneration,
+                    reason = result.source
+                )
+                clearPendingLyricResolution(request.mediaId)
+            }
+            ResolutionResult.Missing -> scheduleNextResolutionAttempt(request)
+        }
+    }
+
+    private fun scheduleNextResolutionAttempt(request: PendingLyricResolution) {
+        val nextAttempt = request.attempt + 1
+        val delayMillis = QiShuiResolutionPolicy.delayBeforeAttempt(nextAttempt)
+        if (nextAttempt >= QiShuiResolutionPolicy.MAX_ATTEMPTS || delayMillis == null) {
+            val metadata = request.metadata
+            logResolutionOnce(
+                "resolution-miss:${request.mediaId}",
+                "event=resolutionExhausted mediaId=${request.mediaId} " +
+                    "attempts=${QiShuiResolutionPolicy.MAX_ATTEMPTS}"
+            )
+            commitSong(
+                song = Song(
+                    id = request.mediaId,
+                    name = metadata?.title,
+                    artist = metadata?.artist,
+                    duration = metadata?.duration ?: 0L
+                ),
+                trackGeneration = request.trackGeneration,
+                rememberMissing = true,
+                reason = "resolution-miss"
+            )
+            clearPendingLyricResolution(request.mediaId)
+            return
+        }
+
+        val scheduled = request.copy(attempt = nextAttempt, inFlight = false)
+        pendingLyricResolution = scheduled
+        if (nextAttempt == 1) {
+            QiShuiLog.debug(
+                "event=resolutionPending mediaId=${request.mediaId} " +
+                    "maxAttempts=${QiShuiResolutionPolicy.MAX_ATTEMPTS} " +
+                    "nextDelay=${delayMillis}ms"
+            )
+        }
+        mainHandler.postDelayed(
+            {
+                val current = pendingLyricResolution ?: return@postDelayed
+                if (current.token != scheduled.token ||
+                    current.mediaId != scheduled.mediaId ||
+                    current.trackGeneration != scheduled.trackGeneration ||
+                    current.attempt != scheduled.attempt ||
+                    current.inFlight ||
+                    curMediaId != scheduled.mediaId ||
+                    currentTrackGeneration != scheduled.trackGeneration
+                ) {
+                    return@postDelayed
+                }
+                val inFlight = current.copy(inFlight = true)
+                pendingLyricResolution = inFlight
+                startSongResolution(inFlight)
+            },
+            delayMillis
+        )
+    }
 
     private fun cancelPendingLyricResolution() {
         if (pendingLyricResolution != null) {
-            lyricRetryGeneration++
+            nextResolutionToken()
             pendingLyricResolution = null
         }
     }
 
     private fun clearPendingLyricResolution(id: String) {
         if (pendingLyricResolution?.mediaId == id) {
-            lyricRetryGeneration++
+            nextResolutionToken()
             pendingLyricResolution = null
         }
     }
 
-    private fun scheduleLyricResolutionRetry(id: String, trackGeneration: Long): Boolean {
-        if (id.isBlank()) return false
-        val nextAttempt = pendingLyricResolution
-            ?.takeIf { it.mediaId == id && it.trackGeneration == trackGeneration }
-            ?.nextAttempt
-            ?: 0
-        if (nextAttempt >= LYRIC_RETRY_MAX_ATTEMPTS) {
-            clearPendingLyricResolution(id)
-            return false
-        }
-
-        val delayMillis = lyricRetryDelayMillis(nextAttempt)
-        val generation = ++lyricRetryGeneration
-        pendingLyricResolution = PendingLyricResolution(
-            mediaId = id,
-            trackGeneration = trackGeneration,
-            nextAttempt = nextAttempt + 1,
-            generation = generation
-        )
-        logResolutionOnce(
-            "lyrics-pending:$id:$nextAttempt",
-            "lyrics pending, mediaId=$id, retry=${nextAttempt + 1}/$LYRIC_RETRY_MAX_ATTEMPTS, " +
-                "delay=${delayMillis}ms"
-        )
-        mainHandler.postDelayed(
-            {
-                if (curMediaId != id) return@postDelayed
-                val pending = pendingLyricResolution ?: return@postDelayed
-                if (pending.mediaId != id ||
-                    pending.trackGeneration != trackGeneration ||
-                    pending.generation != generation
-                ) {
-                    return@postDelayed
-                }
-                updateSongInternal(fromRetry = true)
-            },
-            delayMillis
-        )
-        return true
+    private fun nextResolutionToken(): Long {
+        resolutionToken = if (resolutionToken == Long.MAX_VALUE) 1L else resolutionToken + 1L
+        return resolutionToken
     }
 
-    private fun lyricRetryDelayMillis(attempt: Int): Long {
-        return when {
-            attempt <= 0 -> 400L
-            attempt == 1 -> 600L
-            attempt == 2 -> 800L
-            attempt == 3 -> 1_200L
-            attempt == 4 -> 1_600L
-            attempt == 5 -> 2_000L
-            attempt == 6 -> 2_500L
-            attempt == 7 -> 3_000L
-            attempt == 8 -> 4_000L
-            else -> 5_000L
-        }
-    }
-
-    private fun setSong(
+    private fun commitSong(
         song: Song,
+        trackGeneration: Long,
         rememberMissing: Boolean = false,
-        trackGeneration: Long = currentTrackGeneration
+        reason: String
     ) {
         val songId = song.id?.takeIf { it.isNotBlank() }
         if (songId != null &&
             (songId != curMediaId || trackGeneration != currentTrackGeneration)
         ) {
-            YLog.debug(
-                tag = TAG,
-                msg = "skip stale song update, id=$songId, generation=$trackGeneration, " +
+            QiShuiLog.debug(
+                "event=songCommitSkipped reason=stale id=$songId generation=$trackGeneration " +
                     "currentId=${curMediaId.orEmpty()}, currentGeneration=$currentTrackGeneration"
             )
             return
         }
-        if (song == lastSong) return
-        provider?.player?.setSong(song)
-        SaltLyricBridge.send(appContext, bridgeSongWithCurrentMetadata(song), trackGeneration)
-        YLog.debug(
-            tag = TAG,
-            msg = "song updated, id=${song.id.orEmpty()}, " +
-                "title=${song.name.orEmpty()}, lyrics=${song.lyrics?.size ?: 0}"
+        val preparedSong = bridgeSongWithCurrentMetadata(song)
+        if (preparedSong == lastSong && trackGeneration == lastSongGeneration) return
+
+        val playback = resolvePlaybackForCommit(trackGeneration, preparedSong.duration)
+        val player = provider?.player
+        dispatchQiShuiSongCommit(
+            setSong = {
+                runCatching { player?.setSong(preparedSong) }
+                    .onFailure { QiShuiLog.error("event=setSongFailed", it) }
+            },
+            setPosition = playback?.position?.let { position ->
+                {
+                    runCatching { player?.setPosition(position) }
+                        .onFailure { QiShuiLog.error("event=setPositionFailed", it) }
+                }
+            },
+            replayPlaybackState = playback?.state?.let { state ->
+                {
+                    runCatching { player?.setPlaybackState(state) }
+                        .onFailure { QiShuiLog.error("event=stateReplayFailed", it) }
+                }
+            },
+            publishLyricReady = {
+                SaltLyricBridge.send(appContext, preparedSong, trackGeneration)
+            },
+            publishPlaybackState = playback?.state?.let { state ->
+                {
+                    SaltLyricBridge.sendPlaybackState(
+                        context = appContext,
+                        state = state,
+                        mediaId = preparedSong.id,
+                        title = preparedSong.name,
+                        artist = preparedSong.artist,
+                        duration = preparedSong.duration,
+                        trackGeneration = trackGeneration,
+                        force = true
+                    )
+                }
+            }
         )
-        lastSong = song
-        if (!song.id.isNullOrBlank() && !song.lyrics.isNullOrEmpty()) {
-            rememberSong(song)
+        QiShuiLog.debug(
+            "event=songCommitted reason=$reason id=${preparedSong.id.orEmpty()} " +
+                "generation=$trackGeneration lyrics=${preparedSong.lyrics?.size ?: 0} " +
+                "position=${playback?.position ?: -1L} state=${playback?.state?.state ?: -1}"
+        )
+        lastSong = preparedSong
+        lastSongGeneration = trackGeneration
+        if (!preparedSong.id.isNullOrBlank() && !preparedSong.lyrics.isNullOrEmpty()) {
+            rememberSong(preparedSong)
         } else if (rememberMissing) {
-            rememberMissingSong(song)
+            rememberMissingSong(preparedSong)
         }
+    }
+
+    private data class PlaybackCommit(
+        val state: PlaybackState,
+        val position: Long?
+    )
+
+    private fun resolvePlaybackForCommit(
+        trackGeneration: Long,
+        duration: Long
+    ): PlaybackCommit? {
+        val session = authoritativeSession.get() ?: return null
+        val sessionIdentity = System.identityHashCode(session)
+        val queriedState = runCatching { session.controller.playbackState }
+            .onFailure {
+                QiShuiLog.debug(
+                    "event=playbackQueryFailed type=${it.javaClass.simpleName}"
+                )
+            }
+            .getOrNull()
+        if (queriedState != null) {
+            latestPlaybackState = queriedState
+            latestPlaybackSnapshot = playbackSnapshot(session, queriedState, trackGeneration)
+        }
+
+        val snapshot = QiShuiPlaybackPolicy.snapshotForCommit(
+            snapshot = latestPlaybackSnapshot,
+            trackGeneration = trackGeneration,
+            sessionIdentity = sessionIdentity
+        ) ?: return null
+        val state = latestPlaybackState ?: return null
+        val position = QiShuiPlaybackPolicy.projectPosition(
+            snapshot = snapshot,
+            nowElapsedMillis = SystemClock.elapsedRealtime(),
+            duration = duration
+        )
+        return PlaybackCommit(state, position)
+    }
+
+    private fun playbackSnapshot(
+        session: MediaSession,
+        state: PlaybackState,
+        trackGeneration: Long
+    ): QiShuiPlaybackSnapshot {
+        return QiShuiPlaybackSnapshot(
+            state = state.state,
+            position = state.position,
+            speed = state.playbackSpeed,
+            lastPositionUpdateTime = state.lastPositionUpdateTime,
+            moving = isPlaybackInMotion(state.state),
+            trackGeneration = trackGeneration,
+            sessionIdentity = System.identityHashCode(session),
+            observedAtElapsedMillis = SystemClock.elapsedRealtime()
+        )
     }
 
     private fun bridgeSongWithCurrentMetadata(song: Song): Song {
@@ -496,38 +721,40 @@ object QiShui : YukiBaseHooker() {
         )
     }
 
-    private fun acceptOfficialSong(song: Song, source: String) {
+    private fun acceptOfficialSong(song: Song, source: String, observedGeneration: Long) {
+        runOnMain { acceptOfficialSongOnMain(song, source, observedGeneration) }
+    }
+
+    private fun acceptOfficialSongOnMain(
+        song: Song,
+        source: String,
+        observedGeneration: Long
+    ) {
         val id = song.id?.takeIf { it.isNotBlank() } ?: return
         if (song.lyrics.isNullOrEmpty()) return
-        rememberOfficialSong(song)
 
-        val existing = lastSong
-        if (existing?.id == id && !existing.lyrics.isNullOrEmpty()) {
-            clearPendingLyricResolution(id)
+        if (!QiShuiPlaybackPolicy.acceptsOfficialCandidate(
+                currentMediaId = curMediaId,
+                currentGeneration = currentTrackGeneration,
+                candidateMediaId = id,
+                observedGeneration = observedGeneration
+            )
+        ) {
+            QiShuiLog.debug(
+                "event=officialCandidateRejected source=$source mediaId=$id " +
+                    "observedGeneration=$observedGeneration currentId=${curMediaId.orEmpty()} " +
+                    "currentGeneration=$currentTrackGeneration"
+            )
             return
         }
 
-        if (curMediaId != id) {
-            cancelPendingLyricResolution()
-            curMediaId = id
-            currentTrackGeneration++
-            SaltLyricBridge.sendTrackChanged(
-                context = appContext,
-                mediaId = id,
-                title = song.name,
-                artist = song.artist,
-                duration = song.duration,
-                trackGeneration = currentTrackGeneration
-            )
-        }
-
-        YLog.debug(
-            tag = TAG,
-            msg = "official lyric accepted, source=$source, mediaId=$id, " +
-                "title=${song.name.orEmpty()}, lyrics=${song.lyrics?.size ?: 0}"
+        rememberOfficialSong(song)
+        cancelPendingLyricResolution()
+        commitSong(
+            song = song,
+            trackGeneration = currentTrackGeneration,
+            reason = "official:$source"
         )
-        setSong(song, trackGeneration = currentTrackGeneration)
-        clearPendingLyricResolution(id)
     }
 
     private fun getCachedSong(id: String): Song? {
@@ -563,10 +790,10 @@ object QiShui : YukiBaseHooker() {
     }
 
     private fun getCachedMissingSong(id: String): MissingSong? {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         synchronized(missingSongCache) {
             val cached = missingSongCache[id] ?: return null
-            if (cached.expiresAtMillis > now) {
+            if (cached.expiresAtElapsedMillis > now) {
                 return cached
             }
             missingSongCache.remove(id)
@@ -579,13 +806,14 @@ object QiShui : YukiBaseHooker() {
         synchronized(missingSongCache) {
             missingSongCache[id] = MissingSong(
                 song = song,
-                expiresAtMillis = System.currentTimeMillis() + MISSING_SONG_CACHE_TTL_MS
+                expiresAtElapsedMillis = SystemClock.elapsedRealtime() +
+                    QiShuiResolutionPolicy.NEGATIVE_CACHE_TTL_MS
             )
         }
     }
 
     private fun logResolutionOnce(key: String, message: String) {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         synchronized(resolutionLogAtByKey) {
             val lastLoggedAt = resolutionLogAtByKey[key]
             if (lastLoggedAt != null && now - lastLoggedAt < RESOLUTION_LOG_THROTTLE_MS) {
@@ -593,11 +821,10 @@ object QiShui : YukiBaseHooker() {
             }
             resolutionLogAtByKey[key] = now
         }
-        YLog.debug(tag = TAG, msg = message)
+        QiShuiLog.debug(message)
     }
 
-    fun NetResponseCache.buildSong(id: String): Song {
-        val metadata = MetadataCache.get(id)
+    private fun NetResponseCache.buildSong(id: String, metadata: Metadata?): Song {
         return Song(
             id = id,
             name = metadata?.title.orEmpty(),
@@ -609,7 +836,7 @@ object QiShui : YukiBaseHooker() {
 
     private val netCacheLoaderDir by lazy { appContext!!.cacheDir.resolve("NetCacheLoader") }
 
-    fun getNetLyricCacheFile(id: String): File? {
+    private fun getNetLyricCacheFile(id: String): File? {
         val fileName = calculateLyricCacheFileName(id)
 
         return runCatching {
@@ -626,7 +853,11 @@ object QiShui : YukiBaseHooker() {
             }
             targetFile ?: findNetLyricCacheFileRecursively(id, fileName)
         }.onFailure {
-            YLog.error(tag = TAG, msg = "getNetLyricCacheFile failed, mediaId=$id, error=$it")
+            QiShuiLog.warningOnce(
+                key = "net-cache-find:$id",
+                message = "event=netCacheFindFailed mediaId=$id",
+                throwable = it
+            )
         }.getOrNull()
     }
 
@@ -639,7 +870,6 @@ object QiShui : YukiBaseHooker() {
         if (!root.exists() || !root.isDirectory) {
             logNetCacheDiagnostic(
                 id = id,
-                fileName = fileName,
                 scannedDirs = scannedDirs,
                 scannedFiles = scannedFiles,
                 found = null,
@@ -669,31 +899,25 @@ object QiShui : YukiBaseHooker() {
 
         logNetCacheDiagnostic(
             id = id,
-            fileName = fileName,
             scannedDirs = scannedDirs,
             scannedFiles = scannedFiles,
             found = found,
             elapsedMs = SystemClock.elapsedRealtime() - start
         )
         if (found != null) {
-            YLog.debug(
-                tag = TAG,
-                msg = "cache recursive hit, mediaId=$id, file=${found.name}, " +
-                    "relative=${found.relativeToOrNull(root)?.path.orEmpty()}"
-            )
+            QiShuiLog.debug("event=netCacheRecursiveHit mediaId=$id")
         }
         return found
     }
 
     private fun logNetCacheDiagnostic(
         id: String,
-        fileName: String,
         scannedDirs: Int,
         scannedFiles: Int,
         found: File?,
         elapsedMs: Long
     ) {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         synchronized(netCacheDiagnosticLogAtById) {
             val lastLoggedAt = netCacheDiagnosticLogAtById[id]
             if (lastLoggedAt != null && now - lastLoggedAt < NET_CACHE_DIAG_THROTTLE_MS) {
@@ -702,27 +926,12 @@ object QiShui : YukiBaseHooker() {
             netCacheDiagnosticLogAtById[id] = now
         }
 
-        val root = netCacheLoaderDir
-        val children = root.listFiles().orEmpty()
-        val sampleDirs = children
-            .filter { it.isDirectory }
-            .take(6)
-            .joinToString("|") { it.name }
-        val sampleFiles = children
-            .filter { it.isFile }
-            .take(6)
-            .joinToString("|") { it.name }
-        YLog.debug(
-            tag = TAG,
-            msg = "net cache diag, mediaId=$id, file=$fileName, root=${root.absolutePath}, " +
-                "rootExists=${root.exists()}, rootDir=${root.isDirectory}, " +
-                "immediateDirs=${children.count { it.isDirectory }}, " +
-                "immediateFiles=${children.count { it.isFile }}, scannedDirs=$scannedDirs, " +
-                "scannedFiles=$scannedFiles, found=${found != null}, elapsedMs=$elapsedMs, " +
-                "sampleDirs=$sampleDirs, sampleFiles=$sampleFiles"
+        QiShuiLog.debug(
+            "event=netCacheScan mediaId=$id scannedDirs=$scannedDirs " +
+                "scannedFiles=$scannedFiles found=${found != null} elapsedMs=$elapsedMs"
         )
     }
 
-    fun calculateLyricCacheFileName(id: String): String =
+    private fun calculateLyricCacheFileName(id: String): String =
         "/luna/track_v2/$id".md5()
 }

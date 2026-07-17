@@ -7,11 +7,17 @@ package io.github.proify.lyricon.cmprovider.xposed
 
 import android.app.Application
 import android.media.MediaMetadata
+import android.media.session.MediaSession
 import android.media.session.PlaybackState
-import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import com.highcapable.yukihookapi.hook.log.YLog
+import io.github.proify.extensions.android.PlaybackStateCommitter
+import io.github.proify.extensions.android.ProviderDiagnostics
+import io.github.proify.extensions.bridge.PlaybackCommitPolicy
+import io.github.proify.extensions.bridge.PlaybackTrackToken
 import io.github.proify.extensions.json
 import io.github.proify.lyricon.cmprovider.xposed.Constants.ICON
 import io.github.proify.lyricon.cmprovider.xposed.Constants.PROVIDER_PACKAGE_NAME
@@ -25,6 +31,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.encodeToStream
 import org.luckypray.dexkit.DexKitBridge
 import java.io.File
+import java.util.concurrent.Executors
 
 /**
  * 网易云音乐模块主入口，根据进程名选择性启用歌词提供者钩子。
@@ -33,17 +40,13 @@ object CloudMusic : YukiBaseHooker() {
     private const val TAG = "CloudMusicProvider"
     private val providerManager by lazy { LyricProviderManager() }
 
-    init {
-        System.loadLibrary("dexkit")
-    }
-
     override fun onHook() {
-        when (processName) {
-            packageName,
-            "$packageName:play" -> {
-                YLog.debug(tag = TAG, msg = "Hooking $processName")
-                providerManager.onHook()
-            }
+        if (CloudMusicPlaybackPolicy.isPlaybackProcess(processName)) {
+            ProviderDiagnostics.debug(TAG) { "Hooking authoritative process $processName" }
+            System.loadLibrary("dexkit")
+            providerManager.onHook()
+        } else {
+            ProviderDiagnostics.debug(TAG) { "Skipping non-playback process $processName" }
         }
     }
 
@@ -53,18 +56,27 @@ object CloudMusic : YukiBaseHooker() {
     private class LyricProviderManager : DownloadCallback {
         private var lyricProvider: LyriconProvider? = null
         private var lastSetSong: Song? = null
-        @Volatile
+        private var lastSetTrack: PlaybackTrackToken? = null
         private var lastBridgeSong: Song? = null
         private var currentMusicId: Long = 0
-        @Volatile
         private var bridgeTrack = BridgeTrack()
+        private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+        private val playbackCommitter = PlaybackStateCommitter()
+        private val cacheExecutor by lazy {
+            Executors.newSingleThreadExecutor { task ->
+                Thread(task, "CloudMusic-LyricCache").apply {
+                    priority = Thread.NORM_PRIORITY - 1
+                }
+            }
+        }
 
         private data class BridgeTrack(
             val mediaId: String = "",
             val title: String? = null,
             val artist: String? = null,
             val duration: Long = 0L,
-            val generation: Long = 0L
+            val generation: Long = 0L,
+            val token: PlaybackTrackToken? = null
         )
 
         private var dexKitBridge: DexKitBridge? = null
@@ -75,16 +87,19 @@ object CloudMusic : YukiBaseHooker() {
         // ---------------------------------- 入口与初始化 ----------------------------------
 
         fun onHook() {
-            YLog.debug("Hooking, processName= $processName")
+            ProviderDiagnostics.debug(TAG) { "Hooking process=$processName" }
 
             dexKitBridge = DexKitBridge.create(appInfo.sourceDir)
             preferencesMonitor = PreferencesMonitor(dexKitBridge!!, object : PreferenceCallback {
                 override fun onTranslationOptionChanged(type: Int) {
-                    if (translationType == type) return; translationType = type
-                    YLog.debug("type=$type")
-                    lyricProvider?.player?.setDisplayTranslation(type == 0)
-                    lyricProvider?.player?.setDisplayRoma(type == 1)
-                    sendCurrentBridgeSong(lastBridgeSong)
+                    runOnMain {
+                        if (translationType == type) return@runOnMain
+                        translationType = type
+                        ProviderDiagnostics.debug(TAG) { "Translation type changed to $type" }
+                        lyricProvider?.player?.setDisplayTranslation(type == 0)
+                        lyricProvider?.player?.setDisplayRoma(type == 1)
+                        sendCurrentBridgeSong(lastBridgeSong)
+                    }
                 }
             })
 
@@ -138,7 +153,7 @@ object CloudMusic : YukiBaseHooker() {
                 register()
             }
 
-            YLog.info(tag = TAG, msg = "Provider registered")
+            ProviderDiagnostics.debug(TAG) { "Provider registered" }
         }
 
         // ---------------------------------- MediaSession 钩子 ----------------------------------
@@ -152,38 +167,9 @@ object CloudMusic : YukiBaseHooker() {
                         parameters(MediaMetadata::class.java)
                     }.hook {
                         after {
+                            val session = instance as? MediaSession ?: return@after
                             val metadata = args[0] as? MediaMetadata ?: return@after
-                            val data = MediaMetadataCache.save(metadata) ?: return@after
-                            val nextTrack = synchronized(this@LyricProviderManager) {
-                                if (currentMusicId == data.id) {
-                                    null
-                                } else {
-                                    val nextGeneration = maxOf(
-                                        bridgeTrack.generation + 1L,
-                                        SystemClock.elapsedRealtime()
-                                    )
-                                    BridgeTrack(
-                                        mediaId = data.id.toString(),
-                                        title = data.title,
-                                        artist = data.artist,
-                                        duration = data.duration,
-                                        generation = nextGeneration
-                                    ).also {
-                                        currentMusicId = data.id
-                                        bridgeTrack = it
-                                    }
-                                }
-                            } ?: return@after
-
-                            SaltLyricBridge.sendTrackChanged(
-                                context = appContext,
-                                mediaId = nextTrack.mediaId,
-                                title = nextTrack.title,
-                                artist = nextTrack.artist,
-                                duration = nextTrack.duration,
-                                trackGeneration = nextTrack.generation
-                            )
-                            onSongChanged(data)
+                            runOnMain { handleMetadata(session, metadata) }
                         }
                     }
 
@@ -192,31 +178,83 @@ object CloudMusic : YukiBaseHooker() {
                         parameters(PlaybackState::class.java)
                     }.hook {
                         after {
-                            val state = args[0] as? PlaybackState
-                            lyricProvider?.player?.setPlaybackState(state)
-                            val currentTrack = bridgeTrack
-                            SaltLyricBridge.sendPlaybackState(
-                                context = appContext,
-                                state = state,
-                                mediaId = currentTrack.mediaId,
-                                title = currentTrack.title,
-                                artist = currentTrack.artist,
-                                duration = currentTrack.duration,
-                                trackGeneration = currentTrack.generation
-                            )
+                            val session = instance as? MediaSession ?: return@after
+                            val state = args[0] as? PlaybackState ?: return@after
+                            runOnMain { handlePlaybackState(session, state) }
                         }
                     }
                 }
         }
 
-        // ---------------------------------- 下载回调实现 ----------------------------------
+        private fun handleMetadata(session: MediaSession, metadata: MediaMetadata) {
+            val data = MediaMetadataCache.save(metadata) ?: return
+            val currentToken = bridgeTrack.token
+            if (currentMusicId == data.id &&
+                currentToken?.sessionIdentity == System.identityHashCode(session)
+            ) {
+                bridgeTrack = bridgeTrack.copy(
+                    title = data.title,
+                    artist = data.artist,
+                    duration = data.duration
+                )
+                return
+            }
 
-        override fun onDownloadFinished(id: Long, response: LyricResponse) {
-            YLog.debug(tag = TAG, msg = "Download finished: $id")
-            writeToLocalLyricCache(id, response)
+            val generation = PlaybackCommitPolicy.nextGeneration(
+                bridgeTrack.generation,
+                android.os.SystemClock.elapsedRealtime()
+            )
+            val token = playbackCommitter.bindTrack(data.id.toString(), generation, session) ?: return
+            val nextTrack = BridgeTrack(
+                mediaId = data.id.toString(),
+                title = data.title,
+                artist = data.artist,
+                duration = data.duration,
+                generation = generation,
+                token = token
+            )
+            currentMusicId = data.id
+            bridgeTrack = nextTrack
+            lastSetSong = null
+            lastSetTrack = null
+            lastBridgeSong = null
+
+            SaltLyricBridge.sendTrackChanged(
+                context = appContext,
+                mediaId = nextTrack.mediaId,
+                title = nextTrack.title,
+                artist = nextTrack.artist,
+                duration = nextTrack.duration,
+                trackGeneration = nextTrack.generation
+            )
+            onSongChanged(data, token)
         }
 
-        override fun onDownloadFailed(id: Long, e: Exception) {
+        private fun handlePlaybackState(session: MediaSession, state: PlaybackState) {
+            val acceptedTrack = playbackCommitter.observePlaybackState(session, state) ?: return
+            val currentTrack = bridgeTrack
+            if (currentTrack.token != acceptedTrack) return
+            lyricProvider?.player?.setPlaybackState(state)
+            sendBridgePlaybackState(currentTrack, state)
+        }
+
+        // ---------------------------------- 下载回调实现 ----------------------------------
+
+        override fun onDownloadFinished(
+            requestedTrack: PlaybackTrackToken,
+            id: Long,
+            response: LyricResponse
+        ) {
+            ProviderDiagnostics.debug(TAG) { "Download finished: $id" }
+            val song = writeToLocalLyricCache(id, response)
+            runOnMain { commitSong(song, requestedTrack) }
+        }
+
+        override fun onDownloadFailed(
+            requestedTrack: PlaybackTrackToken,
+            id: Long,
+            e: Exception
+        ) {
             YLog.error(tag = TAG, msg = "Download failed: $id, e=$e")
         }
 
@@ -226,7 +264,7 @@ object CloudMusic : YukiBaseHooker() {
             File(Constants.getDownloadLyricDirectory(appContext!!), id.toString())
 
         @OptIn(ExperimentalSerializationApi::class)
-        private fun writeToLocalLyricCache(id: Long, response: LyricResponse) {
+        private fun writeToLocalLyricCache(id: Long, response: LyricResponse): Song {
             val outputFile = getDownloadLyricFile(id)
             val cacheEntry = LocalLyricCache(
                 musicId = id,
@@ -241,73 +279,98 @@ object CloudMusic : YukiBaseHooker() {
             outputFile.outputStream().use { outputStream ->
                 json.encodeToStream(cacheEntry, outputStream)
             }
-
-            loadLyricFromFile(cacheSource = "network", id = id, cacheFile = outputFile)
-        }
-
-        /**
-         * 从本地缓存文件加载并设置歌词。
-         */
-        private fun loadLyricFromFile(cacheSource: String, id: Long, cacheFile: File) {
-            YLog.debug(tag = TAG, msg = "Load lyric file: $cacheSource, file=$cacheFile")
-
-            val metadata = MediaMetadataCache.get(id) ?: return
-            loadAndSetSong(metadata, cacheFile)
+            return songFromCache(MediaMetadataCache.get(id), cacheEntry)
         }
 
         // ---------------------------------- 歌曲变更处理 ----------------------------------
 
-        private fun onSongChanged(metadata: Metadata) {
+        private fun onSongChanged(metadata: Metadata, requestedTrack: PlaybackTrackToken) {
             val newMusicId = metadata.id
-
-            val localCacheFile = getDownloadLyricFile(newMusicId)
-            if (localCacheFile.exists()) {
-                loadLyricFromFile(
-                    cacheSource = "localCache",
-                    id = currentMusicId,
-                    cacheFile = localCacheFile
-                )
-            } else {
-                Downloader.download(newMusicId, this)
+            commitSong(songFromCache(metadata, null), requestedTrack)
+            cacheExecutor.execute {
+                val localCacheFile = getDownloadLyricFile(newMusicId)
+                if (localCacheFile.exists()) {
+                    val song = loadSong(metadata, localCacheFile)
+                    runOnMain { commitSong(song, requestedTrack) }
+                } else {
+                    Downloader.download(newMusicId, requestedTrack, this)
+                }
             }
         }
 
-        /**
-         * 同步加载缓存文件并设置歌曲，若无有效歌词则回退到基本歌曲信息。
-         */
-        private fun loadAndSetSong(metadata: Metadata, cacheFile: File?) {
-            val id = metadata.id
+        /** 从缓存文件解析歌曲；磁盘与 JSON 操作始终在缓存执行器运行。 */
+        private fun loadSong(metadata: Metadata, cacheFile: File): Song {
+            return runCatching {
+                val cache = json.decodeFromString<LocalLyricCache>(cacheFile.readText())
+                songFromCache(metadata, cache)
+            }.onFailure { e ->
+                YLog.error("Cache parse failed for ${metadata.id}: ${e.message}", e = e)
+            }.getOrElse {
+                songFromCache(metadata, null)
+            }
+        }
 
-            var songToSet = Song(
-                id = id.toString(),
+        private fun songFromCache(metadata: Metadata?, cache: LocalLyricCache?): Song {
+            if (metadata == null) {
+                return Song(id = cache?.musicId?.toString().orEmpty())
+            }
+            val parsed = cache?.takeUnless { it.pureMusic }?.toSong()
+            if (parsed != null && !parsed.lyrics.isNullOrEmpty()) return parsed
+            return Song(
+                id = metadata.id.toString(),
                 name = metadata.title,
                 artist = metadata.artist,
                 duration = metadata.duration
             )
-
-            if (cacheFile?.exists() == true) {
-                try {
-                    val cachedData = cacheFile.readText()
-                    val cache = json.decodeFromString<LocalLyricCache>(cachedData)
-                    val parsedSong = cache.toSong()
-
-                    if (!parsedSong.lyrics.isNullOrEmpty() && !cache.pureMusic) {
-                        songToSet = parsedSong
-                    }
-                } catch (e: Exception) {
-                    YLog.error("Sync parse failed for $id: ${e.message}", e = e)
-                }
-            }
-
-            setSong(songToSet)
         }
 
-        private fun setSong(song: Song) {
-            if (lastSetSong != song) {
-                lastSetSong = song
-                lyricProvider?.player?.setSong(song)
+        private fun commitSong(song: Song, requestedTrack: PlaybackTrackToken) {
+            val currentTrack = bridgeTrack
+            if (!CloudMusicPlaybackPolicy.acceptsDownload(
+                    playbackCommitter.currentTrack(),
+                    requestedTrack,
+                    song.id
+                ) || currentTrack.token != requestedTrack
+            ) {
+                ProviderDiagnostics.debug(TAG) {
+                    "Skip stale song commit, responseId=${song.id.orEmpty()}, " +
+                        "requestedGeneration=${requestedTrack.generation}, " +
+                        "currentGeneration=${currentTrack.generation}"
+                }
+                return
             }
-            sendCurrentBridgeSong(song)
+            if (lastSetSong == song && lastSetTrack == requestedTrack) {
+                sendCurrentBridgeSong(song)
+                return
+            }
+
+            when (val result = playbackCommitter.commit(
+                requestedTrack = requestedTrack,
+                responseMediaId = song.id,
+                duration = song.duration.takeIf { it > 0L } ?: currentTrack.duration,
+                setSong = { lyricProvider?.player?.setSong(song) },
+                setPosition = { lyricProvider?.player?.setPosition(it) },
+                replayPlaybackState = { lyricProvider?.player?.setPlaybackState(it) },
+                publishLyricReady = { sendCurrentBridgeSong(song) },
+                publishPlaybackState = { state ->
+                    sendBridgePlaybackState(currentTrack, state, force = true)
+                }
+            )) {
+                is PlaybackStateCommitter.PlaybackCommitResult.Committed -> {
+                    lastSetSong = song
+                    lastSetTrack = requestedTrack
+                    ProviderDiagnostics.debug(TAG) {
+                        "Committed song generation=${requestedTrack.generation}, " +
+                            "position=${result.position ?: -1L}"
+                    }
+                }
+                is PlaybackStateCommitter.PlaybackCommitResult.Failed -> {
+                    YLog.error(tag = TAG, msg = "Song commit failed", e = result.throwable)
+                }
+                PlaybackStateCommitter.PlaybackCommitResult.Rejected -> {
+                    ProviderDiagnostics.debug(TAG) { "Song commit rejected as stale" }
+                }
+            }
         }
 
         private fun sendCurrentBridgeSong(song: Song?) {
@@ -321,12 +384,32 @@ object CloudMusic : YukiBaseHooker() {
                     trackGeneration = currentTrack.generation
                 )
             } else if (!song?.id.isNullOrBlank()) {
-                YLog.debug(
-                    tag = TAG,
-                    msg = "Skip stale Bridge lyric, responseId=${song.id}, " +
+                ProviderDiagnostics.debug(TAG) {
+                    "Skip stale Bridge lyric, responseId=${song.id}, " +
                         "currentId=${currentTrack.mediaId}, generation=${currentTrack.generation}"
-                )
+                }
             }
+        }
+
+        private fun sendBridgePlaybackState(
+            track: BridgeTrack,
+            state: PlaybackState,
+            force: Boolean = false
+        ) {
+            SaltLyricBridge.sendPlaybackState(
+                context = appContext,
+                state = state,
+                mediaId = track.mediaId,
+                title = track.title,
+                artist = track.artist,
+                duration = track.duration,
+                trackGeneration = track.generation,
+                force = force
+            )
+        }
+
+        private fun runOnMain(action: () -> Unit) {
+            if (Looper.myLooper() == Looper.getMainLooper()) action() else mainHandler.post(action)
         }
     }
 }

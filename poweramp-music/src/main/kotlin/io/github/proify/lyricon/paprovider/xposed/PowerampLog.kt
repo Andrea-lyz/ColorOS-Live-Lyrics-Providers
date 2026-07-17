@@ -11,21 +11,17 @@ import com.highcapable.yukihookapi.hook.log.YLog
 
 object PowerampLog {
     @Volatile
-    private var yukiLogAvailable = true
+    private var yukiErrorLogAvailable = true
 
     fun isDebugEnabled(tag: String = Constants.LOG_TAG): Boolean =
         runCatching { Log.isLoggable(tag, Log.DEBUG) }.getOrDefault(false)
 
     fun debug(tag: String = Constants.LOG_TAG, msg: String, e: Throwable? = null) {
         if (!isDebugEnabled(tag)) return
-        safeLog(tag, msg, e, Log::d) {
-            YLog.debug(tag = tag, msg = msg, e = e)
-        }
-    }
-
-    fun info(tag: String = Constants.LOG_TAG, msg: String, e: Throwable? = null) {
-        safeLog(tag, msg, e, Log::i) {
-            YLog.info(tag = tag, msg = msg, e = e)
+        try {
+            Log.d(tag, msg, e)
+        } catch (_: Throwable) {
+            // Logging must never affect the host player process.
         }
     }
 
@@ -42,12 +38,12 @@ object PowerampLog {
         fallback: (String, String, Throwable?) -> Int,
         block: () -> Unit
     ) {
-        if (yukiLogAvailable) {
+        if (yukiErrorLogAvailable) {
             try {
                 block()
                 return
             } catch (_: Throwable) {
-                yukiLogAvailable = false
+                yukiErrorLogAvailable = false
             }
         }
         try {

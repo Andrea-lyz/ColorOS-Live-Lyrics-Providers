@@ -2,8 +2,7 @@ package io.github.proify.lyricon.qishuiprovider.xposed
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
-import android.util.Log
-import com.highcapable.yukihookapi.hook.log.YLog
+import android.os.SystemClock
 import io.github.proify.extensions.json
 import io.github.proify.lyricon.lyric.model.Song
 import io.github.proify.lyricon.qishuiprovider.xposed.parser.NetResponseCache
@@ -16,7 +15,6 @@ import java.util.LinkedHashMap
 object PlayableDbCache {
 
     private const val TAG = "QiShuiPlayableDb"
-    private const val DB_DIAGNOSTIC_LOGS = false
     private const val EMPTY_LYRIC_LOG_THROTTLE_MS = 10_000L
     private const val DB_DIAGNOSTIC_LOG_THROTTLE_MS = 10_000L
     private val emptyLyricLogAtById = object : LinkedHashMap<String, Long>(32, 0.75f, true) {
@@ -46,8 +44,8 @@ object PlayableDbCache {
         val primaryCandidates = candidates(databasesDir)
         findHit(primaryCandidates, id, metadata)?.let { return it }
 
-        // The app directory also contains encrypted and unrelated databases. Probing every
-        // *.db here runs inside MediaSession.setMetadata and can stall track handoff for seconds.
+        // The app directory also contains encrypted and unrelated databases. Even on the
+        // resolver thread, probing every *.db on each bounded retry would waste I/O.
         logDatabaseDiagnostic(databasesDir, id, primaryCandidates)
         return null
     }
@@ -97,18 +95,18 @@ object PlayableDbCache {
                     "1"
                 ).use { cursor ->
                     if (cursor.moveToFirst()) {
-                        cursor.getString(0)?.also {
-                            YLog.debug(
-                                tag = TAG,
-                                msg = "db row hit, mediaId=$id, db=${candidate.file.name}, " +
-                                    "table=${candidate.tableName}, chars=${it.length}"
-                            )
-                        }
+                        cursor.getString(0)
                     } else null
                 }
             }
         }.onFailure {
-            Log.w(TAG, "read failed, db=${candidate.file.name}, table=${candidate.tableName}", it)
+            QiShuiLog.warningOnce(
+                key = "db-read:${candidate.file.name}:${candidate.tableName}:$id",
+                message = "event=dbReadFailed mediaId=$id db=${candidate.file.name} " +
+                    "table=${candidate.tableName}",
+                throwable = it,
+                tag = TAG
+            )
         }.getOrNull()
     }
 
@@ -116,7 +114,12 @@ object PlayableDbCache {
         val playable = runCatching {
             json.decodeFromString<PlayableCache>(playableJson)
         }.onFailure {
-            Log.w(TAG, "parse playable failed, id=$id", it)
+            QiShuiLog.warningOnce(
+                key = "db-parse:$id",
+                message = "event=dbParseFailed mediaId=$id",
+                throwable = it,
+                tag = TAG
+            )
         }.getOrNull()
         val track = playable?.track ?: return null
         val lyric = track.track_lyric
@@ -135,7 +138,7 @@ object PlayableDbCache {
     }
 
     private fun logEmptyLyricCandidateOnce(id: String, title: String) {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         synchronized(emptyLyricLogAtById) {
             val lastLoggedAt = emptyLyricLogAtById[id]
             if (lastLoggedAt != null && now - lastLoggedAt < EMPTY_LYRIC_LOG_THROTTLE_MS) {
@@ -143,10 +146,10 @@ object PlayableDbCache {
             }
             emptyLyricLogAtById[id] = now
         }
-        if (DB_DIAGNOSTIC_LOGS) {
-            Log.d(TAG, "skip empty lyric candidate, id=$id, title=$title")
-        }
-        YLog.debug(tag = TAG, msg = "skip empty lyric candidate, id=$id, title=$title")
+        QiShuiLog.debug(
+            message = "event=dbCandidateEmpty mediaId=$id titleLength=${title.length}",
+            tag = TAG
+        )
     }
 
     private fun logDatabaseDiagnostic(
@@ -154,7 +157,7 @@ object PlayableDbCache {
         id: String,
         primaryCandidates: List<Candidate>
     ) {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.elapsedRealtime()
         synchronized(diagnosticLogAtById) {
             val lastLoggedAt = diagnosticLogAtById[id]
             if (lastLoggedAt != null && now - lastLoggedAt < DB_DIAGNOSTIC_LOG_THROTTLE_MS) {
@@ -166,14 +169,10 @@ object PlayableDbCache {
         val dbFiles = databasesDir.listFiles().orEmpty()
             .filter { it.isFile && it.name.endsWith(".db") }
             .sortedByDescending { it.lastModified() }
-        val sampleDbs = dbFiles
-            .take(8)
-            .joinToString("|") { "${it.name}:${it.length()}" }
-        YLog.debug(
+        QiShuiLog.debug(
+            message = "event=dbMiss mediaId=$id dbFiles=${dbFiles.size} " +
+                "primaryCandidates=${primaryCandidates.size}",
             tag = TAG,
-            msg = "db diag, mediaId=$id, dir=${databasesDir.absolutePath}, " +
-                "dirExists=${databasesDir.exists()}, dbFiles=${dbFiles.size}, " +
-                "primaryCandidates=${primaryCandidates.size}, sampleDbs=$sampleDbs"
         )
     }
 

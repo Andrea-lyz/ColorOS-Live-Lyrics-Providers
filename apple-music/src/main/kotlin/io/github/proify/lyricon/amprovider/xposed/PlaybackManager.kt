@@ -11,11 +11,12 @@ import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import com.highcapable.yukihookapi.hook.log.YLog
+import io.github.proify.extensions.android.ProviderDiagnostics
 import io.github.proify.lyricon.lyric.model.Song
 import io.github.proify.lyricon.provider.RemotePlayer
 
 object PlaybackManager {
+    private const val TAG = "Lyricon_AppleMusic"
     private var player: RemotePlayer? = null
     private var lyricRequester: LyricRequester? = null
     private var application: Application? = null
@@ -224,11 +225,10 @@ object PlaybackManager {
         if (song?.id == currentTrack.mediaId && currentTrack.generation > 0L) {
             SaltLyricBridge.send(application, song, currentTrack.generation)
         } else if (!song?.id.isNullOrBlank()) {
-            YLog.debug(
-                tag = "Lyricon_AppleMusic",
-                msg = "Skip stale Bridge lyric, responseId=${song.id}, " +
+            ProviderDiagnostics.debug(TAG) {
+                "Skip stale Bridge lyric, responseId=${song.id}, " +
                     "currentId=${currentTrack.mediaId}, generation=${currentTrack.generation}"
-            )
+            }
         }
     }
 
@@ -244,11 +244,10 @@ object PlaybackManager {
         } ?: currentPlaybackItem
         val playbackItemMetadata = MediaMetadataCache.putPlaybackItem(playbackItem)
         if (playbackItem == null || playbackItemMetadata?.id != mediaId) {
-            YLog.debug(
-                tag = "Lyricon_AppleMusic",
-                msg = "Wait for matching PlaybackItem before Bridge lyric request, " +
+            ProviderDiagnostics.debug(TAG) {
+                "Wait for matching PlaybackItem before Bridge lyric request, " +
                     "mediaId=$mediaId, generation=${currentTrack.generation}"
-            )
+            }
             return
         }
 
@@ -261,11 +260,10 @@ object PlaybackManager {
         lyricRequestAttempts++
         val attempt = lyricRequestAttempts
         val requested = lyricRequester?.requestDownload(playbackItem) == true
-        YLog.debug(
-            tag = "Lyricon_AppleMusic",
-            msg = "Requested Bridge lyric from matching PlaybackItem, mediaId=$mediaId, " +
+        ProviderDiagnostics.debug(TAG) {
+            "Requested Bridge lyric from matching PlaybackItem, mediaId=$mediaId, " +
                 "generation=${currentTrack.generation}, attempt=$attempt, accepted=$requested"
-        )
+        }
         if (attempt < 3 && lastSong?.lyrics.isNullOrEmpty()) {
             scheduleLyricRequestRetry(
                 mediaId = mediaId,

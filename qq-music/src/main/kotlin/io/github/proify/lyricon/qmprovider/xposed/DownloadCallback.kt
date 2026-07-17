@@ -6,9 +6,10 @@
 
 package io.github.proify.lyricon.qmprovider.xposed
 
+import io.github.proify.extensions.bridge.PlaybackTrackToken
 import io.github.proify.qrckit.LyricResponse
 
 interface DownloadCallback {
-    fun onDownloadFinished(response: LyricResponse)
-    fun onDownloadFailed(id: String, e: Exception)
+    fun onDownloadFinished(requestedTrack: PlaybackTrackToken, response: LyricResponse)
+    fun onDownloadFailed(requestedTrack: PlaybackTrackToken, e: Exception)
 }

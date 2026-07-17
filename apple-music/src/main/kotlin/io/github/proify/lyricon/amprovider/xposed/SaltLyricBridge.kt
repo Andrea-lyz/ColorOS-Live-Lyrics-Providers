@@ -12,6 +12,8 @@ import android.media.session.PlaybackState
 import android.os.SystemClock
 import android.text.Html
 import android.util.Log
+import io.github.proify.extensions.android.BridgeBroadcastSender
+import io.github.proify.extensions.bridge.BridgeInlineSegmentPolicy
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
 import io.github.proify.lyricon.lyric.model.RichLyricLine
@@ -65,10 +67,11 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_APPLE_MUSIC)
         }.onSuccess {
             debug("Sent Apple Music track change, generation=$trackGeneration, id=$mediaId")
         }.onFailure { e ->
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send Apple Music track change, generation=$trackGeneration", e)
         }
     }
@@ -112,7 +115,7 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_APPLE_MUSIC)
         }.onSuccess {
             debug(
                 "Sent Apple Music lyric payload, generation=$trackGeneration, " +
@@ -120,6 +123,7 @@ object SaltLyricBridge {
             )
         }.onFailure { e ->
             payloadGate.forget(payloadKey)
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send Apple Music bridge payload, id=${song.id.orEmpty()}", e)
         }
     }
@@ -172,9 +176,10 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_APPLE_MUSIC)
         }.onFailure { e ->
             playbackStateGate.reset()
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(
                 TAG,
                 "Failed to send Apple Music playback state, generation=$trackGeneration, " +
@@ -211,11 +216,15 @@ object SaltLyricBridge {
             builder.append('[')
                 .append(formatLrcTime(prepared.begin))
                 .append(']')
-            words.forEach { word ->
+            words.forEach wordLoop@{ word ->
+                val segment = cleanInlineSegment(word.text)
+                if (BridgeInlineSegmentPolicy.appendStandaloneWhitespace(builder, segment)) {
+                    return@wordLoop
+                }
                 builder.append('<')
                     .append(formatLrcTime(word.begin))
                     .append('>')
-                    .append(cleanInlineSegment(word.text))
+                    .append(segment)
             }
             val end = inferEnhancedLineEnd(line, words, prepared.begin)
             if (end > prepared.begin) {

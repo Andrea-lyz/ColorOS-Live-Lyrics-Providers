@@ -76,23 +76,10 @@ object DiskSongCache {
     }
 
     /**
-     * 检查是否存在指定歌曲的缓存
-     */
-    fun isCached(songId: String): Boolean = resolveCacheFile(songId).exists()
-
-    /**
      * 获取缓存文件句柄
      * 使用 .json.gz 作为后缀名（虽然底层是 Deflate，但 .gz 语义更通俗）
      */
     private fun resolveCacheFile(songId: String): File {
         return File(localizedLyricDir, "$songId.json.gz")
     }
-
-//    /**
-//     * 清理当前语言环境下的所有缓存
-//     */
-//    fun clearCurrentLocaleCache() {
-//        localizedLyricDir.deleteRecursively()
-//        localizedLyricDir.mkdirs()
-//    }
 }

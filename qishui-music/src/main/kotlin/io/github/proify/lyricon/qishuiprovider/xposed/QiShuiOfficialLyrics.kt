@@ -1,30 +1,43 @@
 package io.github.proify.lyricon.qishuiprovider.xposed
 
 import android.os.SystemClock
-import com.highcapable.yukihookapi.hook.log.YLog
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import io.github.proify.lyricon.lyric.model.Song
 import io.github.proify.lyricon.qishuiprovider.xposed.parser.NetResponseCache
 import io.github.proify.lyricon.qishuiprovider.xposed.parser.toRichLyric
+import java.lang.reflect.Field
+import java.lang.reflect.Method
 import java.util.LinkedHashMap
+import java.util.concurrent.ConcurrentHashMap
 
 object QiShuiOfficialLyrics {
     private const val TAG = "QiShuiOfficialLyrics"
     private const val LOG_THROTTLE_MS = 10_000L
     private var installed = false
-    private var onSong: ((Song, String) -> Unit)? = null
+    private var authorityProvider: (() -> QiShuiTrackAuthority?)? = null
+    private var onSong: ((Song, String, Long) -> Unit)? = null
 
     private val lastLogAtByKey = object : LinkedHashMap<String, Long>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
             return size > 64
         }
     }
+    private data class AccessorKey(val owner: Class<*>, val name: String)
+    private val methodCache = ConcurrentHashMap<AccessorKey, Method>()
+    private val missingMethods = ConcurrentHashMap.newKeySet<AccessorKey>()
+    private val fieldCache = ConcurrentHashMap<AccessorKey, Field>()
+    private val missingFields = ConcurrentHashMap.newKeySet<AccessorKey>()
 
-    fun install(loader: ClassLoader?, onSong: (Song, String) -> Unit) {
+    internal fun install(
+        loader: ClassLoader?,
+        authorityProvider: () -> QiShuiTrackAuthority?,
+        onSong: (Song, String, Long) -> Unit
+    ) {
         if (loader == null || installed) return
         installed = true
+        this.authorityProvider = authorityProvider
         this.onSong = onSong
         hookCoreRemoteControl(loader)
     }
@@ -52,21 +65,33 @@ object QiShuiOfficialLyrics {
             XposedBridge.hookMethod(method, object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val playable = resolvePlayable(param.args.firstOrNull()) ?: return
-                    val song = buildSong(playable) ?: return
+                    val id = playableId(playable)?.takeIf { it.isNotBlank() } ?: return
+                    val authority = authorityProvider?.invoke() ?: return
+                    if (id != authority.mediaId) {
+                        logDebugOnce(
+                            "official-candidate:$id",
+                            "ignore non-current official lyric candidate, mediaId=$id, " +
+                                "currentId=${authority.mediaId}"
+                        )
+                        return
+                    }
+                    val song = buildSong(playable, id) ?: return
                     logDebugOnce(
                         "official:${song.id.orEmpty()}",
                         "official lyric ready, mediaId=${song.id.orEmpty()}, " +
-                            "title=${song.name.orEmpty()}, lyrics=${song.lyrics?.size ?: 0}"
+                            "lyrics=${song.lyrics?.size ?: 0}"
                     )
-                    onSong?.invoke(song, "core-remote-control")
+                    onSong?.invoke(song, "core-remote-control", authority.generation)
                 }
             })
         }
-        YLog.info(tag = TAG, msg = "CoreRemoteControl official lyric hooked, methods=${methods.size}")
+        QiShuiLog.debug(
+            message = "event=officialHookInstalled methods=${methods.size}",
+            tag = TAG
+        )
     }
 
-    private fun buildSong(playable: Any): Song? {
-        val id = playableId(playable)?.takeIf { it.isNotBlank() } ?: return null
+    private fun buildSong(playable: Any, id: String): Song? {
         val trackLyric = callNoArg(playable, "getLyric") ?: return null
         val lyric = buildNetLyric(trackLyric) ?: return null
         val lyrics = NetResponseCache(lyric).toRichLyric()
@@ -195,28 +220,54 @@ object QiShuiOfficialLyrics {
     private fun callNoArg(instance: Any?, name: String): Any? {
         if (instance == null) return null
         return runCatching {
-            val method = instance.javaClass.methods.firstOrNull {
-                it.name == name && it.parameterTypes.isEmpty()
-            } ?: instance.javaClass.declaredMethods.firstOrNull {
-                it.name == name && it.parameterTypes.isEmpty()
-            } ?: return null
-            method.isAccessible = true
+            val method = findNoArgMethod(instance.javaClass, name) ?: return null
             method.invoke(instance)
         }.getOrNull()
     }
 
     private fun readField(instance: Any?, name: String): Any? {
         if (instance == null) return null
-        var clazz: Class<*>? = instance.javaClass
-        while (clazz != null) {
-            runCatching {
-                val field = clazz.getDeclaredField(name)
-                field.isAccessible = true
-                return field.get(instance)
+        return runCatching { findField(instance.javaClass, name)?.get(instance) }.getOrNull()
+    }
+
+    private fun findNoArgMethod(owner: Class<*>, name: String): Method? {
+        val key = AccessorKey(owner, name)
+        methodCache[key]?.let { return it }
+        if (key in missingMethods) return null
+
+        val method = owner.methods.firstOrNull {
+            it.name == name && it.parameterTypes.isEmpty()
+        } ?: generateSequence(owner as Class<*>?) { it.superclass }
+            .firstNotNullOfOrNull { type ->
+                type.declaredMethods.firstOrNull {
+                    it.name == name && it.parameterTypes.isEmpty()
+                }
             }
-            clazz = clazz.superclass
+        if (method == null) {
+            missingMethods.add(key)
+            return null
         }
-        return null
+        method.isAccessible = true
+        methodCache[key] = method
+        return method
+    }
+
+    private fun findField(owner: Class<*>, name: String): Field? {
+        val key = AccessorKey(owner, name)
+        fieldCache[key]?.let { return it }
+        if (key in missingFields) return null
+
+        val field = generateSequence(owner as Class<*>?) { it.superclass }
+            .firstNotNullOfOrNull { type ->
+                runCatching { type.getDeclaredField(name) }.getOrNull()
+            }
+        if (field == null) {
+            missingFields.add(key)
+            return null
+        }
+        field.isAccessible = true
+        fieldCache[key] = field
+        return field
     }
 
     private fun firstNonNull(vararg values: Any?): Any? =
@@ -235,7 +286,7 @@ object QiShuiOfficialLyrics {
             if (last != null && now - last < LOG_THROTTLE_MS) return
             lastLogAtByKey[key] = now
         }
-        YLog.info(tag = TAG, msg = message)
+        QiShuiLog.warning(message = message, tag = TAG)
     }
 
     private fun logDebugOnce(key: String, message: String) {
@@ -245,6 +296,6 @@ object QiShuiOfficialLyrics {
             if (last != null && now - last < LOG_THROTTLE_MS) return
             lastLogAtByKey[key] = now
         }
-        YLog.debug(tag = TAG, msg = message)
+        QiShuiLog.debug(message = message, tag = TAG)
     }
 }

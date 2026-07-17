@@ -32,7 +32,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
     private const val ACTION_TRACK_CHANGED = "com.maxmpz.audioplayer.TRACK_CHANGED"
     private const val ACTION_TOGGLE_TRANSLATION =
         "io.github.andrealtb.lockscreenlyrics.action.TOGGLE_TRANSLATION"
-    private const val TRANSLATION_ACTION_NAME = "\u7ffb\u8bd1"
+    private const val TRANSLATION_ACTION_NAME = "翻译"
 
     // 匹配元数据key
     private val lyricTagRegex = Regex("(?i)\\b(LYRICS)\\b")
@@ -81,7 +81,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
 
     private fun initDataChannel() {
         dataChannel.wait(key = BridgeConstants.ACTION_SETTING_CHANGED) {
-            PowerampLog.info(tag = TAG, msg = "Settings changed signal received")
+            PowerampLog.debug(tag = TAG, msg = "Settings changed signal received")
             applyProviderSettings()
         }
     }
@@ -135,7 +135,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
                             args[0] = patched
                             if (!translationActionInjectionLogged) {
                                 translationActionInjectionLogged = true
-                                PowerampLog.info(
+                                PowerampLog.debug(
                                     tag = TAG,
                                     msg = "Injected translation toggle action into Poweramp PlaybackState"
                                 )
@@ -261,7 +261,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
         )
 
         updateSong(song, generation, rawLyric)
-        PowerampLog.info(tag = TAG, msg = "Local lyric loaded for: ${data.title}")
+        PowerampLog.debug(tag = TAG, msg = "Local lyric loaded for: ${data.title}")
         return true
     }
 
@@ -372,7 +372,7 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
             lyrics = richLyrics
         )
         updateSong(song, generation)
-        PowerampLog.info(tag = TAG, msg = "Online lyric applied for: ${metadata.title}")
+        PowerampLog.debug(tag = TAG, msg = "Online lyric applied for: ${metadata.title}")
     }
 
     override fun onDownloadFailed(metadata: TrackMetadata, e: Exception) {
@@ -393,6 +393,6 @@ object PowerAmp : YukiBaseHooker(), DownloadCallback {
     private fun release() {
         trackReceiver?.let { appContext?.unregisterReceiver(it) }
         trackReceiver = null
-        PowerampLog.info(tag = TAG, msg = "PowerAmp provider released")
+        PowerampLog.debug(tag = TAG, msg = "PowerAmp provider released")
     }
 }

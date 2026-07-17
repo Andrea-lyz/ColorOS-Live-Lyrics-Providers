@@ -1,6 +1,5 @@
 package io.github.proify.lyricon.qishuiprovider.xposed.parser
 
-import io.github.proify.extensions.findClosest
 import io.github.proify.lrckit.LrcParser
 import io.github.proify.lyricon.lyric.model.LyricLine
 import io.github.proify.lyricon.lyric.model.RichLyricLine
@@ -11,27 +10,30 @@ fun NetResponseCache.toRichLyric(): List<RichLyricLine> {
     val lines = parserTypeLyric(lyric?.type, lyric?.resolvedContent)?.normalize()
     if (lines.isNullOrEmpty()) return emptyList()
 
-    val langKey = lyric?.lang_translations?.keys?.let { getLangKeyForTranslations(it) }
+    val langKey = lyric?.lang_translations?.keys?.let(::getLangKeyForTranslations)
     val translation = lyric?.lang_translations?.get(langKey.orEmpty())
-    val translationLines = parserTypeLyric(translation?.type, translation?.resolvedContent)?.normalize()
+    val translationLines = parserTypeLyric(
+        translation?.type,
+        translation?.resolvedContent
+    )?.normalize().orEmpty()
+    val matchedTranslations = matchTranslationLines(lines, translationLines)
 
-    return lines.map { line ->
-        val translation = translationLines?.findClosest(line.begin, 50)?.text
-
+    return lines.mapIndexed { index, line ->
+        val translatedText = matchedTranslations[index]?.text
         RichLyricLine(
             begin = line.begin,
             end = line.end,
             duration = line.duration,
             text = line.text,
             words = line.words,
-            translation = if (translation == line.text) null else translation
+            translation = if (translatedText == line.text) null else translatedText
         )
     }
 }
 
 private fun parserTypeLyric(type: String?, lyric: String?): List<LyricLine>? {
     if (type.isNullOrBlank() || lyric.isNullOrBlank()) return null
-    return when (type.lowercase()) {
+    return when (type.lowercase(Locale.ROOT)) {
         "krc" -> KtvLyricParser.parse(lyric)
         "lrc" -> LrcParser.parse(lyric).lines
         else -> null
@@ -39,39 +41,95 @@ private fun parserTypeLyric(type: String?, lyric: String?): List<LyricLine>? {
 }
 
 /**
- * 根据系统语言匹配 lang_translations 中的 key
+ * Matches each translated line at most once. The tolerance follows the local source-line spacing,
+ * accepting small provider offsets without allowing a translation to drift into a neighbour.
  */
+internal fun matchTranslationLines(
+    sourceLines: List<LyricLine>,
+    translationLines: List<LyricLine>
+): List<LyricLine?> {
+    if (sourceLines.isEmpty() || translationLines.isEmpty()) {
+        return List(sourceLines.size) { null }
+    }
+
+    val used = BooleanArray(translationLines.size)
+    return sourceLines.mapIndexed { index, source ->
+        val tolerance = localTranslationTolerance(sourceLines, index)
+        var bestIndex = -1
+        var bestDistance = Long.MAX_VALUE
+        translationLines.forEachIndexed { translationIndex, candidate ->
+            if (used[translationIndex]) return@forEachIndexed
+            val distance = absoluteDifference(source.begin, candidate.begin)
+            if (distance <= tolerance && distance < bestDistance) {
+                bestDistance = distance
+                bestIndex = translationIndex
+            }
+        }
+        if (bestIndex < 0) {
+            null
+        } else {
+            used[bestIndex] = true
+            translationLines[bestIndex]
+        }
+    }
+}
+
+private fun localTranslationTolerance(lines: List<LyricLine>, index: Int): Long {
+    val current = lines[index].begin
+    val gaps = buildList {
+        lines.getOrNull(index - 1)?.begin?.let { previous ->
+            if (current > previous) add(current - previous)
+        }
+        lines.getOrNull(index + 1)?.begin?.let { next ->
+            if (next > current) add(next - current)
+        }
+    }
+    val localSpacing = gaps.minOrNull() ?: DEFAULT_TRANSLATION_LINE_SPACING_MS
+    return (localSpacing / 3L).coerceIn(
+        MIN_TRANSLATION_TOLERANCE_MS,
+        MAX_TRANSLATION_TOLERANCE_MS
+    )
+}
+
+private fun absoluteDifference(first: Long, second: Long): Long {
+    if (first == second) return 0L
+    val difference = if (first > second) first - second else second - first
+    return if (difference < 0L) Long.MAX_VALUE else difference
+}
+
+/** Selects the closest translation locale exposed by QiShui. */
 private fun getLangKeyForTranslations(availableKeys: Set<String>): String? {
     val locale = Locale.getDefault()
     val systemTag = buildString {
-        append(locale.language.uppercase())
-        if (locale.script.isNotEmpty()) append("-${locale.script.uppercase()}")
-        if (locale.country.isNotEmpty()) append("-${locale.country.uppercase()}")
+        append(locale.language.uppercase(Locale.ROOT))
+        if (locale.script.isNotEmpty()) append("-${locale.script.uppercase(Locale.ROOT)}")
+        if (locale.country.isNotEmpty()) append("-${locale.country.uppercase(Locale.ROOT)}")
     }
 
-    // 精确匹配
     availableKeys.firstOrNull { it.equals(systemTag, ignoreCase = true) }?.let { return it }
 
-    // 中文特殊处理：简体 Hans / 繁体 Hant
     if (locale.language == "zh") {
-        val fallbackHans = "ZH-HANS-${locale.country.uppercase()}"
+        val country = locale.country.uppercase(Locale.ROOT)
+        val fallbackHans = "ZH-HANS-$country"
         availableKeys.firstOrNull { it.equals(fallbackHans, ignoreCase = true) }?.let { return it }
 
-        val fallbackHant = "ZH-HANT-${locale.country.uppercase()}"
+        val fallbackHant = "ZH-HANT-$country"
         availableKeys.firstOrNull { it.equals(fallbackHant, ignoreCase = true) }?.let { return it }
     }
 
-    // 模糊匹配语言部分
     return availableKeys.firstOrNull { it.startsWith(locale.language, ignoreCase = true) }
-        ?: availableKeys.firstOrNull { isPreferredChineseTranslationKey(it) }
+        ?: availableKeys.firstOrNull(::isPreferredChineseTranslationKey)
         ?: availableKeys.firstOrNull { it.startsWith("ZH", ignoreCase = true) }
         ?: availableKeys.firstOrNull()
 }
 
 private fun isPreferredChineseTranslationKey(key: String): Boolean {
-    val normalized = key.uppercase()
-    return normalized == "ZH-HANS"
-        || normalized == "ZH-HANS-CN"
-        || normalized == "ZH-CN"
-        || normalized == "ZH"
+    return when (key.uppercase(Locale.ROOT)) {
+        "ZH-HANS", "ZH-HANS-CN", "ZH-CN", "ZH" -> true
+        else -> false
+    }
 }
+
+private const val DEFAULT_TRANSLATION_LINE_SPACING_MS = 1_500L
+private const val MIN_TRANSLATION_TOLERANCE_MS = 80L
+private const val MAX_TRANSLATION_TOLERANCE_MS = 800L

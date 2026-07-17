@@ -11,6 +11,7 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.util.Log
 import com.highcapable.yukihookapi.hook.log.YLog
+import io.github.proify.extensions.android.ProviderDiagnostics
 import io.github.proify.lyricon.lyric.model.Song
 import java.util.Locale
 
@@ -201,7 +202,7 @@ object KuGouLyricInfoPublisher {
 
     private fun diagnose(message: String) {
         if (KUGOU_DIAGNOSTICS_ENABLED || Log.isLoggable(TAG, Log.VERBOSE)) {
-            YLog.debug(tag = TAG, msg = message)
+            ProviderDiagnostics.debug(TAG) { message }
         }
     }
 

@@ -9,6 +9,7 @@ package io.github.proify.lyricon.paprovider.xposed
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
+import io.github.proify.extensions.android.BridgeBroadcastSender
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import java.util.Locale
 
@@ -49,13 +50,14 @@ internal object PowerampSaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_POWERAMP)
         }.onSuccess {
             PowerampLog.debug(
                 tag = TAG,
                 msg = "Sent Poweramp track change, generation=$trackGeneration, id=${metadata.id}"
             )
         }.onFailure { error ->
+            if (!BridgeBroadcastSender.shouldReportFailure(error)) return@onFailure
             PowerampLog.error(
                 tag = TAG,
                 msg = "Failed to send Poweramp track change, generation=$trackGeneration",
@@ -93,7 +95,7 @@ internal object PowerampSaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_POWERAMP)
         }.onSuccess {
             PowerampLog.debug(
                 tag = TAG,
@@ -102,6 +104,7 @@ internal object PowerampSaltLyricBridge {
             )
         }.onFailure { error ->
             payloadGate.forget(payloadKey)
+            if (!BridgeBroadcastSender.shouldReportFailure(error)) return@onFailure
             PowerampLog.error(
                 tag = TAG,
                 msg = "Failed to send Poweramp lyric payload, generation=${payload.trackGeneration}",

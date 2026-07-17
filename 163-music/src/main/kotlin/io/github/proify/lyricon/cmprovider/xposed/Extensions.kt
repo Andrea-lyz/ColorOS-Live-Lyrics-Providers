@@ -20,7 +20,7 @@ fun LocalLyricCache.toSong(): Song {
     return Song(id = musicId.toString()).apply {
         name = metadata?.title
         artist = metadata?.artist
-        duration = metadata?.duration ?: richLyricLines.last().end
+        duration = metadata?.duration?.takeIf { it > 0L } ?: richLyricLines.lastOrNull()?.end ?: 0L
         lyrics = richLyricLines
     }
 }

@@ -134,7 +134,7 @@ val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
     putExtra("translationLyric", translationLrc)
     putExtra("capturedAt", System.currentTimeMillis())
 }
-context.sendBroadcast(intent)
+BridgeBroadcastSender.send(context, intent, TAG, "lyricprovider/<module-id>")
 ```
 
 字段约定：
@@ -153,6 +153,11 @@ context.sendBroadcast(intent)
 | `capturedAt` | 发送时间戳，便于 Bridge 侧丢弃旧广播。 |
 
 不要在广播里携带封面，也不要在 provider 里改 `MediaMetadata` 的 artwork。封面收发应完全沿用播放器和 SystemUI 原链路，避免纯色封面、短暂闪现后被覆盖等问题。
+
+所有 Bridge 广播在发送前必须通过共享 `BridgeBroadcastSender` 使用
+`Parcel.dataSize()` 预检。当前保守上限为 512 KiB：逐字歌词超限时先把
+`rawLyric` 降级为行级 `lyric`，保留 `translationLyric`；降级后仍超限则拒绝发送，
+并按来源节流记录警告，避免把超大事务交给 Binder。
 
 ## 歌词转换规则
 
@@ -214,7 +219,12 @@ provider 发给 Bridge 前应做轻量清洗：
 复杂播放器要注意多进程：
 
 - QQ 音乐主要在 `com.tencent.qqmusic:QQPlayerService` 处理播放和歌词。
-- 网易云音乐需要同时关注主进程和 `:play` 进程。
+- 网易云音乐 Provider 只由已验证持有 MediaSession 的主进程
+  `com.netease.cloudmusic` 注册；`:play`、`:push` 等进程不得成为第二事件源。
+- Spotify Provider 只在 `com.spotify.music` 主进程注册。
+- 异步歌词请求必须捕获 `mediaId + generation + MediaSession identity`，回调提交前再次
+  与当前令牌精确比对；旧结果可以写入缓存，但不得调用 `setSong()`。
+- 歌词提交顺序统一为 `setSong -> setPosition -> setPlaybackState -> lyricReady -> playbackState`。
 - 使用热更新框架的 App，需要在 Tinker / split classloader 加载后重新挂钩。
 - 类名、方法名不稳定时可以使用 DexKit 查找特征，但最终入口仍应落到稳定的歌曲/歌词数据流。
 
@@ -224,6 +234,8 @@ provider 发给 Bridge 前应做轻量清洗：
 
 ```powershell
 adb logcat -c
+adb shell setprop log.tag.Lyricon_SaltBridge DEBUG
+adb shell setprop log.tag.Lyricon_NeteaseBridge DEBUG
 adb logcat -d -v time -s LockscreenLyrics AndroidRuntime Lyricon_SaltBridge Lyricon_NeteaseBridge > logcat.log
 ```
 
@@ -232,6 +244,10 @@ adb logcat -d -v time -s LockscreenLyrics AndroidRuntime Lyricon_SaltBridge Lyri
 ```powershell
 adb logcat -v time -s LockscreenLyrics AndroidRuntime Lyricon_SaltBridge Lyricon_NeteaseBridge
 ```
+
+Provider 的正常提交、缓存命中和广播成功日志默认静默，仅在对应 Tag 显式设为
+`DEBUG` 时输出；警告和错误始终保留。抓取结束后用 `setprop log.tag.<Tag> INFO`
+恢复默认值，避免调试日志持续写入及被 LSPosed 重复镜像。
 
 provider 侧应至少打印：
 

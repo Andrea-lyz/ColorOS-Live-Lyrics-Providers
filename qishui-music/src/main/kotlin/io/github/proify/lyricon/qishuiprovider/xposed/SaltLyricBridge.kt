@@ -10,7 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.media.session.PlaybackState
 import android.os.SystemClock
-import android.util.Log
+import io.github.proify.extensions.android.BridgeBroadcastSender
+import io.github.proify.extensions.bridge.BridgeInlineSegmentPolicy
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
 import io.github.proify.extensions.bridge.retainBridgeLyricLines
@@ -33,7 +34,6 @@ object SaltLyricBridge {
     private const val EXTRA_PLAYBACK_POSITION = "playbackPosition"
     private const val EXTRA_PLAYBACK_SPEED = "playbackSpeed"
     private const val EXTRA_PLAYBACK_LAST_POSITION_UPDATE_TIME = "playbackLastPositionUpdateTime"
-    private const val EARLY_METADATA_WINDOW_MS = 30_000L
     private const val MAX_REASONABLE_DURATION_MS = 24L * 60L * 60L * 1000L
     private const val SKIP_TIMED_LYRIC_LOG_THROTTLE_MS = 10_000L
     private val payloadGate = BridgePayloadGate()
@@ -66,35 +66,18 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_QISHUI)
         }.onSuccess {
-            debug("Sent QiShui track change, generation=$trackGeneration, id=$mediaId")
+            debug("event=trackChangedSent generation=$trackGeneration mediaId=$mediaId")
         }.onFailure { e ->
-            Log.w(TAG, "Failed to send QiShui track change, generation=$trackGeneration", e)
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            QiShuiLog.warning(
+                message = "event=trackChangedSendFailed generation=$trackGeneration",
+                throwable = e,
+                tag = TAG
+            )
         }
     }
-
-    private val creditRoleKeywords = arrayOf(
-        "lyrics",
-        "lyricist",
-        "composer",
-        "arranger",
-        "producer",
-        "produced",
-        "production",
-        "publisher",
-        "copyright",
-        "op",
-        "sp",
-        "\u4f5c\u8bcd",
-        "\u4f5c\u8a5e",
-        "\u4f5c\u66f2",
-        "\u7f16\u66f2",
-        "\u7de8\u66f2",
-        "\u5236\u4f5c",
-        "\u88fd\u4f5c",
-        "\u51fa\u54c1"
-    )
 
     fun send(context: Context?, song: Song?, trackGeneration: Long = 0L) {
         if (context == null || song == null) return
@@ -103,7 +86,7 @@ object SaltLyricBridge {
         val rawLyric = toEnhancedLrc(song, lyricLines)
         if (!containsTimedLrc(rawLyric)) {
             if (isDiagnosticsEnabled() && shouldLogSkippedTimedLyric(song)) {
-                debug("Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
+                debug("event=lyricReadySkipped reason=untimed mediaId=${song.id.orEmpty()}")
             }
             return
         }
@@ -134,17 +117,23 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_QISHUI)
         }.onSuccess {
             debug(
-                "Sent QiShui bridge payload, id=${song.id.orEmpty()}, " +
-                    "lines=${lyricLines.size}/${song.lyrics?.size ?: 0}, " +
-                    "rawChars=${rawLyric.length}, transChars=${translationLyric.length}, " +
-                    "first=${shortenForLog(lyricLines.firstOrNull()?.text.orEmpty())}"
+                "event=lyricReadySent generation=$trackGeneration " +
+                    "mediaId=${song.id.orEmpty()} lines=${lyricLines.size}/" +
+                    "${song.lyrics?.size ?: 0} rawChars=${rawLyric.length} " +
+                    "transChars=${translationLyric.length}"
             )
         }.onFailure { e ->
             payloadGate.forget(payloadKey)
-            Log.w(TAG, "Failed to send QiShui bridge payload, id=${song.id.orEmpty()}", e)
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            QiShuiLog.warning(
+                message = "event=lyricReadySendFailed generation=$trackGeneration " +
+                    "mediaId=${song.id.orEmpty()}",
+                throwable = e,
+                tag = TAG
+            )
         }
     }
 
@@ -155,7 +144,8 @@ object SaltLyricBridge {
         title: String?,
         artist: String?,
         duration: Long,
-        trackGeneration: Long
+        trackGeneration: Long,
+        force: Boolean = false
     ) {
         if (context == null || state == null || mediaId.isNullOrBlank() || trackGeneration <= 0L) {
             return
@@ -168,7 +158,8 @@ object SaltLyricBridge {
                 lastPositionUpdateTime = state.lastPositionUpdateTime,
                 moving = isPlaybackInMotion(state.state),
                 generation = trackGeneration,
-                nowElapsedMillis = SystemClock.elapsedRealtime()
+                nowElapsedMillis = SystemClock.elapsedRealtime(),
+                force = force
             )
         ) {
             return
@@ -193,22 +184,23 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_QISHUI)
         }.onFailure { e ->
             playbackStateGate.reset()
-            Log.w(
-                TAG,
-                "Failed to send QiShui playback state, generation=$trackGeneration, " +
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            QiShuiLog.warning(
+                message = "event=playbackStateSendFailed generation=$trackGeneration " +
                     "state=${state.state}",
-                e
+                throwable = e,
+                tag = TAG
             )
         }
     }
 
-    private fun isDiagnosticsEnabled(): Boolean = Log.isLoggable(TAG, Log.DEBUG)
+    private fun isDiagnosticsEnabled(): Boolean = QiShuiLog.isDebugEnabled(TAG)
 
     private fun debug(message: String) {
-        if (isDiagnosticsEnabled()) Log.d(TAG, message)
+        QiShuiLog.debug(message = message, tag = TAG)
     }
 
     private fun isPlaybackInMotion(state: Int): Boolean {
@@ -227,23 +219,31 @@ object SaltLyricBridge {
     private fun toEnhancedLrc(song: Song, lines: List<RichLyricLine>): String {
         val builder = StringBuilder()
         appendMetadata(builder, song)
-        lines.forEach { line ->
+        lines.forEachIndexed { index, line ->
             val words = timedWordsInTextOrder(line)
             if (words.isEmpty()) {
                 appendTimedLine(builder, line.begin, line.text.orEmpty())
-                return@forEach
+                return@forEachIndexed
             }
 
             builder.append('[')
                 .append(formatLrcTime(line.begin))
                 .append(']')
-            words.forEach { word ->
+            words.forEach wordLoop@{ word ->
+                val segment = cleanInlineSegment(word.text)
+                if (BridgeInlineSegmentPolicy.appendStandaloneWhitespace(builder, segment)) {
+                    return@wordLoop
+                }
                 builder.append('<')
                     .append(formatLrcTime(word.begin))
                     .append('>')
-                    .append(cleanInlineSegment(word.text))
+                    .append(segment)
             }
-            val end = inferEnhancedLineEnd(line, words)
+            val end = inferEnhancedLineEnd(
+                line = line,
+                words = words,
+                nextLineBegin = lines.getOrNull(index + 1)?.begin
+            )
             if (end > line.begin) {
                 builder.append('<')
                     .append(formatLrcTime(end))
@@ -254,14 +254,18 @@ object SaltLyricBridge {
         return builder.toString()
     }
 
-    private fun inferEnhancedLineEnd(line: RichLyricLine, words: List<TimedWord>): Long {
-        val declaredSpan = max(line.duration, line.end - line.begin)
-        if (declaredSpan in 360L..12_000L) {
-            return line.begin + declaredSpan
-        }
+    private fun inferEnhancedLineEnd(
+        line: RichLyricLine,
+        words: List<TimedWord>,
+        nextLineBegin: Long?
+    ): Long {
+        val declaredEnd = max(line.end, safeAdd(line.begin, max(line.duration, 0L)))
         val maxWordEnd = words.maxOfOrNull { it.end } ?: line.begin
         val lastWordBegin = words.maxOfOrNull { it.begin } ?: line.begin
-        return max(max(line.end, maxWordEnd), max(line.begin + 720L, lastWordBegin + 520L))
+        val knownEnd = max(declaredEnd, maxWordEnd)
+        if (knownEnd > line.begin) return knownEnd
+        nextLineBegin?.takeIf { it > line.begin }?.let { return it }
+        return safeAdd(max(line.begin, lastWordBegin), 520L)
     }
 
     private data class TimedWord(
@@ -271,12 +275,14 @@ object SaltLyricBridge {
     )
 
     private fun timedWordsInTextOrder(line: RichLyricLine): List<TimedWord> {
+        var previousBegin = line.begin
         val words = line.words.orEmpty()
             .filter { !it.text.isNullOrEmpty() }
             .map { word ->
-                val begin = normalizeWordTime(line, word.begin)
-                val declaredEnd = max(word.end, word.begin + max(word.duration, 0L))
-                val end = max(begin, normalizeWordTime(line, declaredEnd))
+                val begin = max(max(line.begin, word.begin), previousBegin)
+                val declaredEnd = max(word.end, safeAdd(word.begin, max(word.duration, 0L)))
+                val end = max(begin, declaredEnd)
+                previousBegin = begin
                 TimedWord(
                     text = word.text.orEmpty(),
                     begin = begin,
@@ -317,19 +323,6 @@ object SaltLyricBridge {
         }
     }
 
-    private fun normalizeWordTime(line: RichLyricLine, wordTime: Long): Long {
-        val lineDuration = max(line.duration, line.end - line.begin)
-        val likelyAbsolute = wordTime + 250L >= line.begin
-        if (!likelyAbsolute &&
-            line.begin > 0L &&
-            wordTime >= 0L &&
-            wordTime <= max(lineDuration + 2_000L, 2_000L)
-        ) {
-            return line.begin + wordTime
-        }
-        return max(0L, wordTime)
-    }
-
     private fun toPlainLrc(song: Song, lines: List<RichLyricLine>): String {
         val builder = StringBuilder()
         appendMetadata(builder, song)
@@ -349,148 +342,6 @@ object SaltLyricBridge {
 
     private fun filteredLyricLines(song: Song): List<RichLyricLine> {
         return retainBridgeLyricLines(song.lyrics)
-    }
-
-    private fun isLikelyMetadataLine(
-        line: RichLyricLine,
-        song: Song,
-        removedEarlyCredit: Boolean
-    ): Boolean {
-        val text = cleanPlainText(line.text.orEmpty())
-        if (text.isBlank()) return true
-        if (line.begin <= EARLY_METADATA_WINDOW_MS) {
-            if (looksLikeKnownTrackCredit(text, song)) return true
-        }
-        if (looksLikeCreditRoleLine(text)) return true
-        return removedEarlyCredit &&
-            line.begin <= EARLY_METADATA_WINDOW_MS &&
-            looksLikeArtistCreditContinuation(text)
-    }
-
-    private fun looksLikeKnownTrackCredit(text: String, song: Song): Boolean {
-        val value = normalizeCreditIdentity(text)
-        if (value.length < 3 || value.length > 96 || endsLikeSentence(text)) return false
-
-        val title = normalizeCreditIdentity(song.name)
-        if (title.isNotBlank() && value == title) return true
-
-        val artist = normalizeCreditIdentity(song.artist)
-        if (artist.isNotBlank() && value == artist) return true
-
-        return splitArtistParts(song.artist).any { part ->
-            part.length >= 3 && (value == part || (value.contains(part) && value.length <= part.length + 12))
-        }
-    }
-
-    private fun looksLikeCreditRoleLine(text: String): Boolean {
-        val value = cleanPlainText(text)
-        if (value.length > 160) return false
-
-        val lower = value.lowercase(Locale.ROOT)
-        val colon = firstColonIndex(value)
-        if (colon > 0 && colon <= 48) {
-            val prefix = lower.substring(0, colon).trim()
-            if (containsCreditRoleKeyword(prefix)) return true
-        }
-        return creditRoleKeywords.any { keyword ->
-            val lowerKeyword = keyword.lowercase(Locale.ROOT)
-            lower == lowerKeyword ||
-                lower.startsWith("$lowerKeyword:") ||
-                lower.startsWith("$lowerKeyword\uff1a") ||
-                lower.startsWith("$lowerKeyword by ") ||
-                lower.startsWith("$lowerKeyword ")
-        }
-    }
-
-    private fun looksLikeArtistCreditContinuation(text: String): Boolean {
-        val value = cleanPlainText(text)
-        if (value.length < 3 || value.length > 96 || endsLikeSentence(value)) return false
-        return (value.indexOf('/') >= 0 ||
-            value.indexOf('&') >= 0 ||
-            value.indexOf(',') >= 0 ||
-            value.indexOf('\u3001') >= 0) &&
-            containsLetter(value) &&
-            countWhitespaceRuns(value) <= 4
-    }
-
-    private fun firstColonIndex(value: String): Int {
-        val ascii = value.indexOf(':')
-        val fullWidth = value.indexOf('\uff1a')
-        if (ascii < 0) return fullWidth
-        if (fullWidth < 0) return ascii
-        return minOf(ascii, fullWidth)
-    }
-
-    private fun containsCreditRoleKeyword(value: String): Boolean {
-        return creditRoleKeywords.any { value.contains(it.lowercase(Locale.ROOT)) }
-    }
-
-    private fun splitArtistParts(artist: String?): List<String> {
-        val value = artist ?: return emptyList()
-        return value.split(Regex("[/,&;\\uff0c\\uff1b\\u3001]"))
-            .map { normalizeCreditIdentity(it) }
-            .filter { it.isNotBlank() }
-    }
-
-    private fun normalizeCreditIdentity(value: String?): String {
-        val text = cleanPlainText(value.orEmpty()).lowercase(Locale.ROOT)
-        val builder = StringBuilder(text.length)
-        var inWhitespace = false
-        text.forEach { ch ->
-            val normalized = when (ch) {
-                '\u2018', '\u2019', '\u02bc', '\uff07' -> '\''
-                else -> ch
-            }
-            if (normalized.isLetterOrDigit() || normalized == '-' || normalized == '\'') {
-                builder.append(normalized)
-                inWhitespace = false
-            } else if (normalized.isWhitespace()) {
-                if (!inWhitespace && builder.isNotEmpty()) {
-                    builder.append(' ')
-                }
-                inWhitespace = true
-            }
-        }
-        return builder.toString().trim()
-    }
-
-    private fun containsLetter(value: String): Boolean {
-        var index = 0
-        while (index < value.length) {
-            val codePoint = value.codePointAt(index)
-            if (Character.isLetter(codePoint)) return true
-            index += Character.charCount(codePoint)
-        }
-        return false
-    }
-
-    private fun endsLikeSentence(value: String): Boolean {
-        if (value.isBlank()) return false
-        return when (value.last()) {
-            '.', '!', '?', '\u3002', '\uff01', '\uff1f' -> true
-            else -> false
-        }
-    }
-
-    private fun countWhitespaceRuns(value: String): Int {
-        var count = 0
-        var inWhitespace = false
-        value.forEach {
-            if (it.isWhitespace()) {
-                if (!inWhitespace) {
-                    count++
-                    inWhitespace = true
-                }
-            } else {
-                inWhitespace = false
-            }
-        }
-        return count
-    }
-
-    private fun shortenForLog(value: String): String {
-        val clean = cleanPlainText(value)
-        return if (clean.length <= 48) clean else clean.substring(0, 45) + "..."
     }
 
     private fun appendMetadata(builder: StringBuilder, song: Song) {
@@ -587,5 +438,14 @@ object SaltLyricBridge {
         val seconds = (safeTime % 60000L) / 1000L
         val millis = safeTime % 1000L
         return String.format(Locale.ROOT, "%02d:%02d.%03d", minutes, seconds, millis)
+    }
+
+    private fun safeAdd(first: Long, second: Long): Long {
+        if (second <= 0L) return first
+        return if (first > Long.MAX_VALUE - second) Long.MAX_VALUE else first + second
+    }
+
+    internal fun enhancedLrcForTest(song: Song): String {
+        return toEnhancedLrc(song, filteredLyricLines(song))
     }
 }

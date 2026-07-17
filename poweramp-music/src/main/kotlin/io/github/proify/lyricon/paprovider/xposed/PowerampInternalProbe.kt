@@ -54,7 +54,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
                     }
                 }
         }.onSuccess {
-            PowerampLog.info(tag = TAG, msg = "Hooked MediaSession.setMetadata probe")
+            PowerampLog.debug(tag = TAG, msg = "Hooked MediaSession.setMetadata probe")
         }.onFailure {
             PowerampLog.error(tag = TAG, msg = "Failed to hook MediaSession.setMetadata probe", e = it)
         }
@@ -79,7 +79,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
                     }
                 }
         }.onSuccess {
-            PowerampLog.info(tag = TAG, msg = "Hooked Poweramp LyricsChain.K probe")
+            PowerampLog.debug(tag = TAG, msg = "Hooked Poweramp LyricsChain.K probe")
         }.onFailure {
             PowerampLog.error(
                 tag = TAG,
@@ -109,7 +109,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
                     }
                 }
         }.onSuccess {
-            PowerampLog.info(tag = TAG, msg = "Hooked Poweramp LyricsResolver steps probe")
+            PowerampLog.debug(tag = TAG, msg = "Hooked Poweramp LyricsResolver steps probe")
         }.onFailure {
             PowerampLog.error(
                 tag = TAG,
@@ -145,7 +145,7 @@ object PowerampInternalProbe : YukiBaseHooker() {
                     }
                 }
         }.onSuccess {
-            PowerampLog.info(tag = TAG, msg = "Hooked Poweramp LRC parser probe")
+            PowerampLog.debug(tag = TAG, msg = "Hooked Poweramp LRC parser probe")
         }.onFailure {
             PowerampLog.error(
                 tag = TAG,

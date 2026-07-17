@@ -6,7 +6,14 @@
 
 package io.github.proify.lyricon.spotifyprovider.xposed
 
+import io.github.proify.extensions.bridge.PlaybackTrackToken
+
 interface DownloadCallback {
-    fun onDownloadFinished(id: String, response: String)
-    fun onDownloadFailed(id: String, e: Exception)
+    fun onDownloadFinished(
+        requestedTrack: PlaybackTrackToken,
+        id: String,
+        response: String
+    )
+
+    fun onDownloadFailed(requestedTrack: PlaybackTrackToken, id: String, e: Exception)
 }

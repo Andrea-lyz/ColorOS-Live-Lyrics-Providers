@@ -19,6 +19,10 @@ open class HookEntry : IYukiHookXposedInit {
         }
 
     override fun onInit() = YukiHookAPI.configs {
-        debugLog { tag = "QiShuiProvider" }
+        isDebug = false
+        debugLog {
+            tag = "QiShuiProvider"
+            isEnable = false
+        }
     }
 }

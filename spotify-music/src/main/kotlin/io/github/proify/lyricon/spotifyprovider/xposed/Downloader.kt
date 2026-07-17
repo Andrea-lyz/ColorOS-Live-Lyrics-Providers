@@ -6,6 +6,7 @@
 
 package io.github.proify.lyricon.spotifyprovider.xposed
 
+import io.github.proify.extensions.bridge.PlaybackTrackToken
 import io.github.proify.lyricon.spotifyprovider.xposed.api.SpotifyApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,23 +16,25 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 object Downloader {
-    private val downloadingIds = ConcurrentHashMap.newKeySet<String>()
+    private val downloadingRequests = ConcurrentHashMap.newKeySet<String>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     fun download(
-        id: String,
+        requestedTrack: PlaybackTrackToken,
         downloadCallback: DownloadCallback
     ): Job? {
-        if (!downloadingIds.add(id)) return null
+        val id = requestedTrack.mediaId
+        val requestKey = "$id:${requestedTrack.generation}:${requestedTrack.sessionIdentity}"
+        if (!downloadingRequests.add(requestKey)) return null
 
         return scope.launch {
             try {
                 val response = SpotifyApi.fetchRawLyric(id)
-                downloadCallback.onDownloadFinished(id, response)
+                downloadCallback.onDownloadFinished(requestedTrack, id, response)
             } catch (e: Exception) {
-                downloadCallback.onDownloadFailed(id, e)
+                downloadCallback.onDownloadFailed(requestedTrack, id, e)
             } finally {
-                downloadingIds.remove(id)
+                downloadingRequests.remove(requestKey)
             }
         }
     }

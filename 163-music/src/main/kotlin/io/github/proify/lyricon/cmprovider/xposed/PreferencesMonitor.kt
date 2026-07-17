@@ -7,7 +7,7 @@
 package io.github.proify.lyricon.cmprovider.xposed
 
 import android.content.SharedPreferences
-import com.highcapable.yukihookapi.hook.log.YLog
+import io.github.proify.extensions.android.ProviderDiagnostics
 import org.luckypray.dexkit.DexKitBridge
 import org.luckypray.dexkit.result.MethodData
 import java.lang.reflect.Method
@@ -18,6 +18,10 @@ class PreferencesMonitor(
     kitBridge: DexKitBridge,
     callback: PreferenceCallback
 ) {
+    private companion object {
+        const val TAG = "CloudMusicProvider"
+    }
+
     private var preferences: SharedPreferences? = null
     private val getPreferenceMethodData: MethodData?
     private var getPreferenceMethod: Method? = null
@@ -38,7 +42,9 @@ class PreferencesMonitor(
                 }
             }.singleOrNull()
         }
-        YLog.debug("PreferencesMonitor initialization completed in ${time}ms")
+        ProviderDiagnostics.debug(TAG) {
+            "PreferencesMonitor initialization completed in ${time}ms"
+        }
     }
 
     private val sharedPreferenceChangeListener =

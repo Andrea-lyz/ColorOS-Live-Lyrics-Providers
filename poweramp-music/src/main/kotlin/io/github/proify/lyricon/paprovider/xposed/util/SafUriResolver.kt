@@ -10,6 +10,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
+import io.github.proify.extensions.android.ProviderDiagnostics
 
 /**
  * SAF URI 工具
@@ -59,7 +60,7 @@ object SafUriResolver {
                 val fileUri =
                     DocumentsContract.buildDocumentUriUsingTree(treeUri, standardDocumentId)
 
-                Log.i(TAG, "Resolved SAF URI: $fileUri")
+                ProviderDiagnostics.debug(TAG) { "Resolved SAF URI: $fileUri" }
                 return fileUri
             }
         }

@@ -6,6 +6,7 @@
 
 package io.github.proify.lyricon.qmprovider.xposed
 
+import io.github.proify.extensions.bridge.PlaybackTrackToken
 import io.github.proify.qrckit.QrcDownloader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -14,24 +15,23 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 object DownloadManager {
-    private val downloadingIds = ConcurrentHashMap.newKeySet<String>()
+    private val downloadingRequests = ConcurrentHashMap.newKeySet<String>()
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private fun isDownloading(id: String): Boolean = downloadingIds.contains(id)
-
-    fun download(id: String, downloadCallback: DownloadCallback) {
-        if (isDownloading(id)) return
-        downloadingIds.add(id)
+    fun download(requestedTrack: PlaybackTrackToken, downloadCallback: DownloadCallback) {
+        val id = requestedTrack.mediaId
+        val requestKey = "$id:${requestedTrack.generation}:${requestedTrack.sessionIdentity}"
+        if (!downloadingRequests.add(requestKey)) return
 
         scope.launch {
             try {
                 val response = QrcDownloader.downloadLyrics(id)
-                downloadCallback.onDownloadFinished(response)
+                downloadCallback.onDownloadFinished(requestedTrack, response)
             } catch (e: Exception) {
-                downloadCallback.onDownloadFailed(id, e)
+                downloadCallback.onDownloadFailed(requestedTrack, e)
             } finally {
-                downloadingIds.remove(id)
+                downloadingRequests.remove(requestKey)
             }
         }
     }

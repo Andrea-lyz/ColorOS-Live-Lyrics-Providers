@@ -11,6 +11,8 @@ import android.content.Intent
 import android.media.session.PlaybackState
 import android.os.SystemClock
 import android.util.Log
+import io.github.proify.extensions.android.BridgeBroadcastSender
+import io.github.proify.extensions.bridge.BridgeInlineSegmentPolicy
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
 import io.github.proify.lyricon.lyric.model.RichLyricLine
@@ -66,7 +68,12 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(
+                context,
+                intent,
+                TAG,
+                sourceForPackage(context.packageName)
+            )
         }.onSuccess {
             debug(
                 "KG_ALIGN provider trackChanged gen=$trackGeneration " +
@@ -74,6 +81,7 @@ object SaltLyricBridge {
                     "title=${metadata.title.take(64)} artist=${metadata.artist.take(64)}"
             )
         }.onFailure { e ->
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send KuGou track change, generation=$trackGeneration", e)
         }
     }
@@ -121,7 +129,7 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(context, intent, TAG, payload.source)
         }.onSuccess {
             debug(
                 "KG_ALIGN provider lyricReady gen=$trackGeneration " +
@@ -139,6 +147,7 @@ object SaltLyricBridge {
             )
         }.onFailure { e ->
             payloadGate.forget(payloadKey)
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send KuGou bridge payload, id=${song.id.orEmpty()}", e)
         }
     }
@@ -195,6 +204,7 @@ object SaltLyricBridge {
             setPackage(SYSTEMUI_PACKAGE)
             putBridgeDeclaration(context)
             putExtra("source", sourceForPackage(context.packageName))
+            putExtra("eventType", "playbackState")
             putExtra("playbackState", state.state)
             putExtra("playbackPosition", state.position)
             putExtra("playbackSpeed", state.playbackSpeed)
@@ -212,7 +222,12 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            context.sendBroadcast(intent)
+            BridgeBroadcastSender.send(
+                context,
+                intent,
+                TAG,
+                sourceForPackage(context.packageName)
+            )
         }.onSuccess {
             debug(
                 "KG_ALIGN provider playback gen=$trackGeneration " +
@@ -223,6 +238,7 @@ object SaltLyricBridge {
             )
         }.onFailure { e ->
             playbackStateGate.reset()
+            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send KuGou playback state, state=${state.state}", e)
         }
     }
@@ -304,11 +320,15 @@ object SaltLyricBridge {
             builder.append('[')
                 .append(formatLrcTime(line.begin))
                 .append(']')
-            words.forEach { word ->
+            words.forEach wordLoop@{ word ->
+                val segment = cleanInlineSegment(word.text)
+                if (BridgeInlineSegmentPolicy.appendStandaloneWhitespace(builder, segment)) {
+                    return@wordLoop
+                }
                 builder.append('<')
                     .append(formatLrcTime(word.begin))
                     .append('>')
-                    .append(cleanInlineSegment(word.text))
+                    .append(segment)
             }
             val end = inferEnhancedLineEnd(line, words)
             if (end > line.begin) {

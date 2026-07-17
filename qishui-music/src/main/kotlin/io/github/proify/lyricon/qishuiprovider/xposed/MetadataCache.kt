@@ -8,9 +8,15 @@ package io.github.proify.lyricon.qishuiprovider.xposed
 
 import android.media.MediaMetadata
 import kotlinx.serialization.Serializable
+import java.util.LinkedHashMap
 
 object MetadataCache {
-    private val map = mutableMapOf<String, Metadata>()
+    private const val MAX_ENTRIES = 64
+    private val map = object : LinkedHashMap<String, Metadata>(MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(
+            eldest: MutableMap.MutableEntry<String, Metadata>?
+        ): Boolean = size > MAX_ENTRIES
+    }
 
     fun resolveId(metadata: MediaMetadata?): String? {
         if (metadata == null) return null
@@ -19,6 +25,7 @@ object MetadataCache {
             ?: description.mediaId.takeIfNotBlank()
     }
 
+    @Synchronized
     fun save(metadata: MediaMetadata?, idOverride: String? = null): Metadata? {
         if (metadata == null) return null
         val id = idOverride.takeIfNotBlank() ?: resolveId(metadata)
@@ -30,9 +37,6 @@ object MetadataCache {
         val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
             ?: description.subtitle?.toString()
         val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
-//        metadata.keySet().forEach {
-//            Log.d("MediaMetadataCache", "key: $it, value: ${metadata.getString(it)}")
-//        }
 
         val previous = map[id]
         val data = Metadata(
@@ -45,6 +49,7 @@ object MetadataCache {
         return data
     }
 
+    @Synchronized
     fun get(id: String): Metadata? = map[id]
 
     private fun String?.takeIfNotBlank(): String? =

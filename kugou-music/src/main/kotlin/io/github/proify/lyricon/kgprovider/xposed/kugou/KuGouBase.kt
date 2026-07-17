@@ -15,6 +15,7 @@ import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import com.highcapable.yukihookapi.hook.log.YLog
 import io.github.proify.extensions.android.AndroidUtils
+import io.github.proify.extensions.android.ProviderDiagnostics
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import io.github.proify.extensions.toRichLyricLines
@@ -180,7 +181,9 @@ abstract class KuGouBase : YukiBaseHooker() {
                 player.setDisplayTranslation(true)
             }
             isInitialized = true
-            YLog.info(msg = "Lyricon Provider initialized for ${ctx.packageName}", tag = TAG)
+            ProviderDiagnostics.debug(TAG) {
+                "Lyricon provider initialized for ${ctx.packageName}"
+            }
         } catch (e: Exception) {
             YLog.error(msg = "Failed to init provider: ${e.message}", tag = TAG)
         }
@@ -637,7 +640,6 @@ abstract class KuGouBase : YukiBaseHooker() {
         val snapshot = currentTrackSnapshot()
         val current = snapshot.metadata
 
-        if (looksLikeCreditMetadataLine(meta.title)) return true
         if (current == null || snapshot.generation <= 0L) return false
 
         val currentTitle = normalizeLocalLyricFileText(current.title)
@@ -1008,15 +1010,11 @@ abstract class KuGouBase : YukiBaseHooker() {
         val artistMergedWithTitle = currentArtist.isNotBlank() &&
             incomingArtist.contains(currentArtist) &&
             incomingArtist.contains(currentTitle)
-        val creditLineForCurrentTrack = looksLikeCreditMetadataLine(incoming.title) &&
-            (incomingTitle.contains(currentTitle) || incomingArtist.contains(currentTitle))
-        return titleDecorated || artistMergedWithTitle || creditLineForCurrentTrack
+        return titleDecorated || artistMergedWithTitle
     }
 
     private fun isSuspiciousMetadataIdentity(meta: MetadataData, current: MetadataData?): Boolean {
-        if (looksLikeCreditMetadataLine(meta.title)) return true
-        if (looksLikeCarLyricDisplayMetadata(meta, current)) return true
-        return false
+        return looksLikeCarLyricDisplayMetadata(meta, current)
     }
 
     private fun looksLikeMetadataForTrack(incoming: MetadataData, track: MetadataData): Boolean {
@@ -1040,10 +1038,6 @@ abstract class KuGouBase : YukiBaseHooker() {
 
     private fun looksLikeCarLyricDisplayMetadata(meta: MetadataData, current: MetadataData?): Boolean {
         return KuGouMetadataIdentityPolicy.looksLikeCarLyricDisplayMetadata(meta, current)
-    }
-
-    private fun looksLikeCreditMetadataLine(value: String): Boolean {
-        return KuGouMetadataIdentityPolicy.looksLikeCreditMetadataLine(value)
     }
 
     private fun sameStableMedia(current: MetadataData, incoming: MetadataData): Boolean {
@@ -1602,31 +1596,7 @@ abstract class KuGouBase : YukiBaseHooker() {
             )
             cleanLyrics = cleanLyrics.drop(1)
         }
-        if (useOriginalApkLyricPipeline()) {
-            cleanLyrics = dropLeadingCreditLyrics(cleanLyrics, meta)
-        }
         return cleanLyrics
-    }
-
-    private fun dropLeadingCreditLyrics(
-        lyrics: List<RichLyricLine>,
-        meta: MetadataData
-    ): List<RichLyricLine> {
-        if (lyrics.size <= 1) return lyrics
-        var dropCount = 0
-        for (line in lyrics) {
-            val text = line.text.orEmpty()
-            if (dropCount >= lyrics.lastIndex || !looksLikeCreditMetadataLine(text)) {
-                break
-            }
-            dropCount++
-        }
-        if (dropCount <= 0) return lyrics
-        diagnoseDebug(
-            "KG_ORIG drop leading credit lyric lines count=$dropCount title=${meta.title.take(48)} " +
-                "first=${lyrics.firstOrNull()?.text.orEmpty().take(80)}"
-        )
-        return lyrics.drop(dropCount)
     }
 
     private fun isMetadataLeadLyricLine(line: RichLyricLine, meta: MetadataData): Boolean {
@@ -1727,13 +1697,13 @@ abstract class KuGouBase : YukiBaseHooker() {
 
     private fun diagnose(message: String) {
         if (isDiagnosticLoggable(Log.DEBUG)) {
-            YLog.debug(tag = TAG, msg = message)
+            ProviderDiagnostics.debug(TAG) { message }
         }
     }
 
     private fun diagnoseDebug(message: String) {
         if (isDiagnosticLoggable(Log.VERBOSE)) {
-            YLog.debug(tag = TAG, msg = message)
+            ProviderDiagnostics.debug(TAG) { message }
         }
     }
 

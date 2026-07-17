@@ -2,115 +2,155 @@ package io.github.proify.lyricon.qishuiprovider.xposed.parser
 
 import io.github.proify.lyricon.lyric.model.LyricLine
 import io.github.proify.lyricon.lyric.model.LyricWord
+import kotlin.math.max
 
+/** Parses QiShui KRC into one canonical representation: absolute millisecond word times. */
 object KtvLyricParser {
 
-    // 匹配行时间： [start,duration]
-    private val lineTimeRegex = "\\[(\\d+),(\\d+)]".toRegex()
+    private val lineTimeRegex = Regex("""^\s*\[(\d+),(\d+)]""")
+    private val wordTimeRegex = Regex("""<(\d+),(\d+),(?:\d+)>""")
 
-    // 匹配时间标签（既可独立存在，也可紧跟字符）
-    private val tagRegex = "<(\\d+),(\\d+),(\\d+)>".toRegex()
-
-    /**
-     * 解析整个文件内容为 Line 列表。
-     *
-     * @param content 原始文本（多行）
-     * @param inferUntaggedTime 若为 true，则对未带时间标签的字符推断 begin 为上一个 word.end（duration = 0），
-     *                          若为 false，则把未带标签字符的时间设为 0。
-     */
     fun parse(content: String?, inferUntaggedTime: Boolean = true): List<LyricLine> {
-        val result = mutableListOf<LyricLine>()
-        if (content.isNullOrBlank()) return result
+        if (content.isNullOrBlank()) return emptyList()
 
-        content.lineSequence()
-            .filter { it.isNotBlank() }
-            .forEach { rawLine ->
-                val timeMatch = lineTimeRegex.find(rawLine) ?: return@forEach
+        val parsed = content.lineSequence()
+            .mapNotNull(::parseLine)
+            .toList()
 
-                val lineStart = timeMatch.groupValues[1].toLong()
-                val lineDuration = timeMatch.groupValues[2].toLong()
-                val lineEnd = lineStart + lineDuration
+        return parsed.mapIndexed { index, value ->
+            val nextBegin = parsed.getOrNull(index + 1)?.begin
+            value.toLyricLine(nextBegin, inferUntaggedTime)
+        }
+    }
 
-                val line = LyricLine(
-                    begin = lineStart,
-                    end = lineEnd,
-                    duration = lineDuration
-                )
+    private fun parseLine(rawLine: String): ParsedLine? {
+        if (rawLine.isBlank()) return null
+        val lineMatch = lineTimeRegex.find(rawLine) ?: return null
+        val lineBegin = lineMatch.groupValues[1].toLongOrNull() ?: return null
+        val declaredDuration = lineMatch.groupValues[2].toLongOrNull() ?: return null
+        val body = rawLine.substring(lineMatch.range.last + 1)
+        val matches = wordTimeRegex.findAll(body).toList()
 
-                val words = mutableListOf<LyricWord>()
-
-                // 行体（包含字符与可能的行内标签）
-                val body = rawLine.substring(timeMatch.range.last + 1)
-
-                var index = 0
-                var lastAssignedEnd: Long? = null
-
-                while (index < body.length) {
-                    val ch = body[index]
-
-                    // 情况 A：当前位置为 '<' 且这处是一个独立时间标签（没有前字符）
-                    if (ch == '<') {
-                        val tagAtIndex = tagRegex.find(body, index)
-                        if (tagAtIndex != null && tagAtIndex.range.first == index) {
-                            // 独立标签（通常是行音高或无主字的标签），跳过它。
-                            index = tagAtIndex.range.last + 1
-                            continue
-                        }
-                    }
-
-                    // 情况 B：当前字符后紧跟时间标签 -> 正常带标签字
-                    if (index + 1 < body.length && body[index + 1] == '<') {
-                        val tagMatch = tagRegex.find(body, index + 1)
-                        if (tagMatch != null && tagMatch.range.first == index + 1) {
-                            val offset = tagMatch.groupValues[1].toLong()
-                            val duration = tagMatch.groupValues[2].toLong()
-                            val wordBegin = lineStart + offset
-                            val wordEnd = wordBegin + duration
-
-                            val word = LyricWord(
-                                begin = wordBegin,
-                                end = wordEnd,
-                                duration = duration,
-                                text = ch.toString()
-                            )
-
-                            words.add(word)
-                            lastAssignedEnd = wordEnd
-                            index = tagMatch.range.last + 1
-                            continue
-                        }
-                    }
-
-                    // 情况 C：未带标签字符（裸字符 / 空格 / 标点 / 行尾单独字符）
-                    val inferredBegin = if (inferUntaggedTime) {
-                        lastAssignedEnd ?: lineStart
-                    } else {
-                        0L
-                    }
-                    val inferredDuration = 0L
-                    val inferredEnd = inferredBegin + inferredDuration
-
-                    val word = LyricWord(
-                        begin = inferredBegin,
-                        end = inferredEnd,
-                        duration = inferredDuration,
-                        text = ch.toString()
-                    )
-
-                    words.add(word)
-                    // lastAssignedEnd 保持不变（因为 inferredDuration = 0），但为了连续推断，更新为 inferredEnd
-                    lastAssignedEnd = inferredEnd
-                    index++
-                }
-
-                // 还原行文本：移除所有时间标签（保留空格与行内非时间字符）
-                val textRecovered = body.replace(tagRegex, "")
-                line.text = textRecovered
-
-                line.words = words
-                result.add(line)
+        val segments = when {
+            matches.isEmpty() -> emptyList()
+            body.substring(0, matches.first().range.first).isBlank() -> {
+                parsePrefixTimedSegments(body, matches, lineBegin)
             }
+            else -> parseSuffixTimedSegments(body, matches, lineBegin)
+        }
 
+        return ParsedLine(
+            begin = lineBegin,
+            declaredDuration = declaredDuration,
+            text = wordTimeRegex.replace(body, ""),
+            segments = clampMonotonic(segments)
+        )
+    }
+
+    /** Standard KRC form: `<offset,duration,flag>text`. */
+    private fun parsePrefixTimedSegments(
+        body: String,
+        matches: List<MatchResult>,
+        lineBegin: Long
+    ): List<TimedSegment> = matches.mapIndexedNotNull { index, match ->
+        val textStart = match.range.last + 1
+        val textEnd = matches.getOrNull(index + 1)?.range?.first ?: body.length
+        val text = body.substring(textStart, textEnd)
+        timedSegment(match, text, lineBegin)
+    }
+
+    /** Compatibility form seen in a few converted files: `text<offset,duration,flag>`. */
+    private fun parseSuffixTimedSegments(
+        body: String,
+        matches: List<MatchResult>,
+        lineBegin: Long
+    ): List<TimedSegment> {
+        val result = mutableListOf<TimedSegment>()
+        var textStart = 0
+        matches.forEach { match ->
+            val text = body.substring(textStart, match.range.first)
+            timedSegment(match, text, lineBegin)?.let(result::add)
+            textStart = match.range.last + 1
+        }
+
+        val trailing = body.substring(textStart)
+        if (trailing.isNotEmpty()) {
+            val previous = result.lastOrNull()
+            if (previous != null) {
+                result[result.lastIndex] = previous.copy(text = previous.text + trailing)
+            }
+        }
         return result
+    }
+
+    private fun timedSegment(
+        match: MatchResult,
+        text: String,
+        lineBegin: Long
+    ): TimedSegment? {
+        if (text.isEmpty()) return null
+        val offset = match.groupValues[1].toLongOrNull() ?: return null
+        val duration = match.groupValues[2].toLongOrNull() ?: return null
+        val begin = safeAdd(lineBegin, offset)
+        return TimedSegment(
+            text = text,
+            begin = begin,
+            end = safeAdd(begin, duration),
+            duration = duration
+        )
+    }
+
+    private fun clampMonotonic(segments: List<TimedSegment>): List<TimedSegment> {
+        var previousBegin = Long.MIN_VALUE
+        return segments.map { segment ->
+            val begin = max(segment.begin, previousBegin)
+            val end = max(begin, segment.end)
+            previousBegin = begin
+            segment.copy(begin = begin, end = end, duration = end - begin)
+        }
+    }
+
+    private data class ParsedLine(
+        val begin: Long,
+        val declaredDuration: Long,
+        val text: String,
+        val segments: List<TimedSegment>
+    ) {
+        fun toLyricLine(nextBegin: Long?, inferUntaggedTime: Boolean): LyricLine {
+            val declaredEnd = safeAdd(begin, declaredDuration)
+            val wordEnd = segments.maxOfOrNull { it.end } ?: begin
+            val inferredEnd = nextBegin?.takeIf { it > begin } ?: begin
+            val end = max(
+                max(begin, wordEnd),
+                if (declaredDuration > 0L || !inferUntaggedTime) declaredEnd else inferredEnd
+            )
+            return LyricLine(
+                begin = begin,
+                end = end,
+                duration = end - begin
+            ).also { line ->
+                line.text = text
+                line.words = segments.map { segment ->
+                    LyricWord(
+                        begin = segment.begin,
+                        end = segment.end,
+                        duration = segment.duration,
+                        text = segment.text
+                    )
+                }
+            }
+        }
+    }
+
+    private data class TimedSegment(
+        val text: String,
+        val begin: Long,
+        val end: Long,
+        val duration: Long
+    )
+
+    private fun safeAdd(first: Long, second: Long): Long {
+        if (second <= 0L) return first
+        return if (first > Long.MAX_VALUE - second) Long.MAX_VALUE else first + second
     }
 }
