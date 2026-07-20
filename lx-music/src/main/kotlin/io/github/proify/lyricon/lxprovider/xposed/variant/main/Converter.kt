@@ -10,12 +10,15 @@ import io.github.proify.lrckit.EnhanceLrcParser
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
 import io.github.proify.lyricon.lyric.model.extensions.normalize
+import io.github.proify.lyricon.lxprovider.xposed.Metadata
 
 object Converter {
 
-    fun List<RichLyricLine>.toSong(id: String) = Song(id = id).apply {
+    fun List<RichLyricLine>.toSong(id: String, metadata: Metadata? = null) = Song(id = id).apply {
         lyrics = this@toSong
-        duration = this@toSong.maxOfOrNull { it.end } ?: Long.MAX_VALUE
+        duration = metadata?.duration ?: (this@toSong.maxOfOrNull { it.end } ?: Long.MAX_VALUE)
+        name = metadata?.title.orEmpty()
+        artist = metadata?.artist.orEmpty()
     }
 
     fun toRich(

@@ -6,11 +6,15 @@
 
 package io.github.proify.lyricon.lxprovider.xposed.variant.main
 
+import android.media.MediaMetadata
+import android.media.session.PlaybackState
 import android.util.Log
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.proify.lyricon.lxprovider.xposed.Constants
+import io.github.proify.lyricon.lxprovider.xposed.MetadataCache
 import io.github.proify.lyricon.lxprovider.xposed.variant.main.Converter.toSong
+import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.provider.LyriconFactory
 import io.github.proify.lyricon.provider.LyriconProvider
 import io.github.proify.lyricon.provider.ProviderConstants
@@ -35,6 +39,8 @@ open class LXMusic(private val lyricModuleClass: String = "cn.toside.music.mobil
     private var playbackRate = 1f
     private var isDisplayTranslation = false
     private var isDisplayRoma = false
+    private var lastRichLyric: List<RichLyricLine>? = null
+    private var lastSongId: String? = null
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var syncJob: Job? = null
@@ -54,6 +60,7 @@ open class LXMusic(private val lyricModuleClass: String = "cn.toside.music.mobil
             onCreate {
                 provider.register()
                 injectLyricModule()
+                hookMediaSession()
             }
         }
     }
@@ -109,11 +116,47 @@ open class LXMusic(private val lyricModuleClass: String = "cn.toside.music.mobil
             }
     }
 
+    private fun hookMediaSession() {
+        "android.media.session.MediaSession".toClass()
+            .resolve()
+            .apply {
+                firstMethod {
+                    name = "setPlaybackState"
+                    parameters(PlaybackState::class.java)
+                }.hook {
+                    after {
+                        val state = args[0] as? PlaybackState
+                        provider.player.setPlaybackState(state)
+                    }
+                }
+
+                firstMethod {
+                    name = "setMetadata"
+                    parameters("android.media.MediaMetadata")
+                }.hook {
+                    after {
+                        val mediaMetadata = args[0] as? MediaMetadata ?: return@after
+                        MetadataCache.save(mediaMetadata)
+                        // 如果已有歌词信息，更新歌曲信息
+                        lastRichLyric?.let { richLyric ->
+                            lastSongId?.let { songId ->
+                                val metadata = MetadataCache.getCurrent()
+                                provider.player.setSong(richLyric.toSong(songId, metadata))
+                            }
+                        }
+                    }
+                }
+            }
+    }
+
     private fun updateLyric(lyric: String, trans: String?, roma: String?) {
         val richLyric = Converter.toRich(lyric, trans, roma)
+        lastRichLyric = richLyric
         val songId =
             (lyric.hashCode() + (trans?.hashCode() ?: 0) + (roma?.hashCode() ?: 0)).toString()
-        provider.player.setSong(richLyric.toSong(songId))
+        lastSongId = songId
+        val metadata = MetadataCache.getCurrent()
+        provider.player.setSong(richLyric.toSong(songId, metadata))
     }
 
     private fun handlePlay(position: Long) {
