@@ -11,6 +11,7 @@ import io.github.proify.lyricon.yrckit.download.YrcDownloader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
@@ -28,13 +29,27 @@ object Downloader {
 
         scope.launch {
             try {
-                val response = YrcDownloader.fetchLyric(id)
-                downloadCallback.onDownloadFinished(requestedTrack, id, response)
-            } catch (e: Exception) {
-                downloadCallback.onDownloadFailed(requestedTrack, id, e)
+                var failure: Exception? = null
+                for (attempt in 0 until MAX_ATTEMPTS) {
+                    try {
+                        val response = YrcDownloader.fetchLyric(id)
+                        downloadCallback.onDownloadFinished(requestedTrack, id, response)
+                        failure = null
+                        break
+                    } catch (e: Exception) {
+                        failure = e
+                        if (attempt + 1 < MAX_ATTEMPTS) {
+                            delay(RETRY_DELAY_MS * (attempt + 1))
+                        }
+                    }
+                }
+                failure?.let { downloadCallback.onDownloadFailed(requestedTrack, id, it) }
             } finally {
                 downloadingRequests.remove(requestKey)
             }
         }
     }
+
+    private const val MAX_ATTEMPTS = 3
+    private const val RETRY_DELAY_MS = 350L
 }

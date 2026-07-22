@@ -11,8 +11,11 @@ import io.github.proify.lyricon.lyric.model.LyricWord
 import java.util.regex.Pattern
 
 object YrcParser {
-    private val YRC_LINE_HEADER_REGEX = Pattern.compile("\\[(\\d+),(\\d+)]")
-    private val YRC_SYLLABLE_REGEX = Pattern.compile("\\((\\d+),(\\d+),\\d+\\)([^(]*)")
+    // Honor's lyric service may emit a small negative pre-roll line and may
+    // include spaces after commas; accept both while still ignoring JSON
+    // metadata records.
+    private val YRC_LINE_HEADER_REGEX = Pattern.compile("\\[\\s*(-?\\d+)\\s*,\\s*(\\d+)\\s*]")
+    private val YRC_SYLLABLE_REGEX = Pattern.compile("\\(\\s*(-?\\d+)\\s*,\\s*(\\d+)\\s*,\\s*\\d+\\s*\\)([^()]*)")
 
     fun parse(raw: String?): List<LyricLine> {
         val entries = mutableListOf<LyricLine>()

@@ -31,8 +31,69 @@ object MediaMetadataCache {
         return data
     }
 
+    /**
+     * Extract metadata from Netease's PlayService callback. Both supplied
+     * APKs still expose PlayService.onMetadataChanged(BizMusicMeta), but the
+     * concrete BizMusicMeta class differs. Reflection is kept here so the
+     * adapter does not depend on either player's private model.
+     */
+    @Synchronized
+    fun saveBiz(value: Any?): Metadata? {
+        if (value == null) return null
+        val outer = invoke(value, "getOuterData") ?: value
+        val id = readLong(value, "getMatchedMusicId", "getMusicId", "getId")
+            ?.takeIf { it > 0L }
+            ?: readLong(outer, "getMatchedMusicId", "getMusicId", "getId")
+                ?.takeIf { it > 0L }
+            ?: return null
+
+        val existing = map[id]
+        val data = Metadata(
+            id = id,
+            title = readString(value, "getMusicName", "getTitle", "getName")
+                ?: readString(outer, "getMusicName", "getTitle", "getName")
+                ?: existing?.title,
+            artist = readString(value, "getArtistsName", "getArtist")
+                ?: readString(outer, "getArtistsName", "getArtist")
+                ?: existing?.artist,
+            duration = readLong(value, "getDuration")
+                ?: readLong(outer, "getDuration")
+                ?: existing?.duration
+                ?: 0L
+        )
+        map[id] = data
+        return data
+    }
+
     @Synchronized
     fun get(id: Long): Metadata? = map[id]
+
+    private fun invoke(value: Any?, name: String): Any? {
+        if (value == null) return null
+        return runCatching {
+            value.javaClass.methods.firstOrNull {
+                it.name == name && it.parameterCount == 0
+            }?.invoke(value)
+        }.getOrNull()
+    }
+
+    private fun readLong(value: Any?, vararg names: String): Long? {
+        for (name in names) {
+            when (val result = invoke(value, name)) {
+                is Number -> return result.toLong()
+                is String -> result.toLongOrNull()?.let { return it }
+            }
+        }
+        return null
+    }
+
+    private fun readString(value: Any?, vararg names: String): String? {
+        for (name in names) {
+            val result = invoke(value, name)?.toString()?.trim()
+            if (!result.isNullOrBlank()) return result
+        }
+        return null
+    }
 }
 
 @Serializable

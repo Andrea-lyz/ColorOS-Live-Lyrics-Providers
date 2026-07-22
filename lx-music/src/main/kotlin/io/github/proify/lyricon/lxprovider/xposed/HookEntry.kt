@@ -9,8 +9,6 @@ package io.github.proify.lyricon.lxprovider.xposed
 import com.highcapable.yukihookapi.YukiHookAPI
 import com.highcapable.yukihookapi.annotation.xposed.InjectYukiHookWithXposed
 import com.highcapable.yukihookapi.hook.xposed.proxy.IYukiHookXposedInit
-import io.github.proify.lyricon.lxprovider.xposed.variant.ikunshare.IKunMusic
-import io.github.proify.lyricon.lxprovider.xposed.variant.lxnetease.LxNetease
 import io.github.proify.lyricon.lxprovider.xposed.variant.lxwalnut.LxWalnut
 import io.github.proify.lyricon.lxprovider.xposed.variant.main.LXMusic
 
@@ -18,9 +16,7 @@ import io.github.proify.lyricon.lxprovider.xposed.variant.main.LXMusic
 open class HookEntry : IYukiHookXposedInit {
 
     override fun onHook() = YukiHookAPI.encase {
-        loadApp("cn.toside.music.mobile", LXMusic())
-        loadApp("com.ikunshare.music.mobile", IKunMusic())
-        loadApp("com.lxnetease.music.mobile", LxNetease())
+        loadApp("cn.toside.music.mobile", LXMusic("cn.toside.music.mobile.lyric.LyricModule"))
         loadApp("com.lxwalnut.music.mobile", LxWalnut())
     }
 

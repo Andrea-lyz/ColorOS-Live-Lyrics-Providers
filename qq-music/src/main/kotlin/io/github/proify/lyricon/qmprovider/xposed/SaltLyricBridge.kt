@@ -11,7 +11,7 @@ import android.content.Intent
 import android.media.session.PlaybackState
 import android.os.SystemClock
 import android.util.Log
-import io.github.proify.extensions.android.BridgeBroadcastSender
+import io.github.proify.extensions.android.SystemUiBroadcastSender
 import io.github.proify.extensions.bridge.BridgeInlineSegmentPolicy
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
@@ -23,10 +23,6 @@ import kotlin.math.max
 
 object SaltLyricBridge {
     private const val TAG = "Lyricon_SaltBridge"
-    private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
-        "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
-    private const val SYSTEMUI_PACKAGE = "com.android.systemui"
-    private const val BRIDGE_PROTOCOL_VERSION = 2
     private const val SOURCE_QQ_MUSIC = "lyricprovider/qq-music"
     private const val BRIDGE_CAPABILITIES =
         "playbackState,trackGeneration,translationToggle"
@@ -52,9 +48,8 @@ object SaltLyricBridge {
     ) {
         if (context == null || mediaId.isNullOrBlank() || trackGeneration <= 0L) return
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
-            putBridgeDeclaration(context)
+        val intent = Intent().apply {
+            putBridgeDeclaration()
             putExtra("source", SOURCE_QQ_MUSIC)
             putExtra("eventType", "trackChanged")
             putExtra("mediaId", mediaId)
@@ -67,11 +62,11 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_QQ_MUSIC)
+            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_QQ_MUSIC)
         }.onSuccess {
             debug("Sent QQ track change, generation=$trackGeneration, id=$mediaId")
         }.onFailure { e ->
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send QQ track change, generation=$trackGeneration", e)
         }
     }
@@ -82,7 +77,7 @@ object SaltLyricBridge {
         val lyricLines = filteredLyricLines(song)
         val rawLyric = toEnhancedLrc(song, lyricLines)
         if (!containsTimedLrc(rawLyric)) {
-            debug("Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
+            debug("Skip direct lyric payload without timed lyric, id=${song.id.orEmpty()}")
             return
         }
 
@@ -93,9 +88,8 @@ object SaltLyricBridge {
         if (!payloadGate.shouldSend(payloadKey, SystemClock.elapsedRealtime())) return
         val trackKey = buildTrackKey(song.name, song.artist)
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
-            putBridgeDeclaration(context)
+        val intent = Intent().apply {
+            putBridgeDeclaration()
             putExtra("source", SOURCE_QQ_MUSIC)
             putExtra("eventType", "lyricReady")
             putExtra("requestId", requestId)
@@ -112,10 +106,10 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_QQ_MUSIC)
+            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_QQ_MUSIC)
         }.onSuccess {
             debug(
-                "Sent QQ bridge payload, generation=$trackGeneration, " +
+                "Sent QQ direct lyric payload, generation=$trackGeneration, " +
                     "id=${song.id.orEmpty()}, " +
                     "lines=${lyricLines.size}/${song.lyrics?.size ?: 0}, " +
                     "rawChars=${rawLyric.length}, transChars=${translationLyric.length}, " +
@@ -123,8 +117,8 @@ object SaltLyricBridge {
             )
         }.onFailure { e ->
             payloadGate.forget(payloadKey)
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
-            Log.w(TAG, "Failed to send QQ bridge payload, id=${song.id.orEmpty()}", e)
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
+            Log.w(TAG, "Failed to send QQ direct lyric payload, id=${song.id.orEmpty()}", e)
         }
     }
 
@@ -156,9 +150,8 @@ object SaltLyricBridge {
             return
         }
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
-            putBridgeDeclaration(context)
+        val intent = Intent().apply {
+            putBridgeDeclaration()
             putExtra("source", SOURCE_QQ_MUSIC)
             putExtra("eventType", "playbackState")
             putExtra("mediaId", mediaId)
@@ -175,10 +168,10 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_QQ_MUSIC)
+            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_QQ_MUSIC)
         }.onFailure { e ->
             playbackStateGate.reset()
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(
                 TAG,
                 "Failed to send QQ playback state, generation=$trackGeneration, " +
@@ -194,9 +187,7 @@ object SaltLyricBridge {
             state == PlaybackState.STATE_REWINDING
     }
 
-    private fun Intent.putBridgeDeclaration(context: Context) {
-        putExtra("protocolVersion", BRIDGE_PROTOCOL_VERSION)
-        putExtra("playerPackage", context.packageName)
+    private fun Intent.putBridgeDeclaration() {
         putExtra("capabilities", BRIDGE_CAPABILITIES)
         putExtra("matchPolicy", BRIDGE_MATCH_POLICY)
     }
@@ -251,15 +242,22 @@ object SaltLyricBridge {
     )
 
     private fun timedWordsInTextOrder(line: RichLyricLine): List<TimedWord> {
-        val words = line.words.orEmpty()
+        val sourceWords = line.words.orEmpty()
             .filter { !it.text.isNullOrEmpty() }
-            .map { word ->
-                TimedWord(
-                    text = word.text.orEmpty(),
-                    begin = normalizeWordTime(line, word.begin)
-                )
-            }
-        if (words.isEmpty()) return emptyList()
+        if (sourceWords.isEmpty()) return emptyList()
+
+        val timeAxis = QQMusicQrcWordTimePolicy.resolveForQQMusicQrc(
+            lineBegin = line.begin,
+            lineEnd = line.end,
+            lineDuration = line.duration,
+            rawWordBegins = sourceWords.map { it.begin }
+        )
+        val words = sourceWords.map { word ->
+            TimedWord(
+                text = word.text.orEmpty(),
+                begin = timeAxis.toAbsolute(word.begin)
+            )
+        }
         val orderedWords = if (hasMeaningfulTimeInversion(words)) {
             synthesizeWordTimes(line, words)
         } else {
@@ -370,23 +368,20 @@ object SaltLyricBridge {
 
     private fun inferLineEnd(line: RichLyricLine): Long {
         var end = max(line.end, line.begin + max(line.duration, 0L))
-        line.words.orEmpty().forEach { word ->
-            val begin = normalizeWordTime(line, word.begin)
-            val wordEnd = normalizeWordTime(line, word.end)
+        val sourceWords = line.words.orEmpty()
+            .filter { !it.text.isNullOrEmpty() }
+        val timeAxis = QQMusicQrcWordTimePolicy.resolveForQQMusicQrc(
+            lineBegin = line.begin,
+            lineEnd = line.end,
+            lineDuration = line.duration,
+            rawWordBegins = sourceWords.map { it.begin }
+        )
+        sourceWords.forEach { word ->
+            val begin = timeAxis.toAbsolute(word.begin)
+            val wordEnd = timeAxis.toAbsolute(word.end)
             end = max(end, max(wordEnd, begin + max(word.duration, 0L)))
         }
         return if (end > line.begin) end else line.begin + 3000L
-    }
-
-    private fun normalizeWordTime(line: RichLyricLine, wordTime: Long): Long {
-        val lineDuration = max(line.duration, line.end - line.begin)
-        if (line.begin > 0L &&
-            wordTime >= 0L &&
-            wordTime <= max(lineDuration + 2000L, 2000L)
-        ) {
-            return line.begin + wordTime
-        }
-        return wordTime
     }
 
     private fun buildRequestId(song: Song, rawLyric: String, translationLyric: String): String {
@@ -441,7 +436,7 @@ object SaltLyricBridge {
     }
 
     private fun debug(message: String) {
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.d(TAG, message)
         }
     }

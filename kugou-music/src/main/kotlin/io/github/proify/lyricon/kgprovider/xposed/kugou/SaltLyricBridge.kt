@@ -11,7 +11,7 @@ import android.content.Intent
 import android.media.session.PlaybackState
 import android.os.SystemClock
 import android.util.Log
-import io.github.proify.extensions.android.BridgeBroadcastSender
+import io.github.proify.extensions.android.SystemUiBroadcastSender
 import io.github.proify.extensions.bridge.BridgeInlineSegmentPolicy
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
@@ -24,10 +24,6 @@ import kotlin.math.max
 object SaltLyricBridge {
     private const val TAG = "Lyricon_KuGouBridge"
     private const val BRIDGE_DIAGNOSTICS_ENABLED = false
-    private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
-        "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
-    private const val SYSTEMUI_PACKAGE = "com.android.systemui"
-    private const val BRIDGE_PROTOCOL_VERSION = 2
     private const val KUGOU_PACKAGE = "com.kugou.android"
     private const val KUGOU_CONCEPT_PACKAGE = "com.kugou.android.lite"
     private const val SOURCE_KUGOU = "lyricprovider/kugou-music"
@@ -52,8 +48,7 @@ object SaltLyricBridge {
     ) {
         if (context == null || metadata == null || trackGeneration <= 0L) return
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
+        val intent = Intent().apply {
             putBridgeDeclaration(context)
             putExtra("source", sourceForPackage(context.packageName))
             putExtra("eventType", "trackChanged")
@@ -68,7 +63,7 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(
+            SystemUiBroadcastSender.submit(
                 context,
                 intent,
                 TAG,
@@ -81,7 +76,7 @@ object SaltLyricBridge {
                     "title=${metadata.title.take(64)} artist=${metadata.artist.take(64)}"
             )
         }.onFailure { e ->
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send KuGou track change, generation=$trackGeneration", e)
         }
     }
@@ -96,7 +91,7 @@ object SaltLyricBridge {
 
         val payload = buildLyricPayload(context.packageName, song)
         if (payload == null) {
-            debug("Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
+            debug("Skip direct lyric payload without timed lyric, id=${song.id.orEmpty()}")
             return
         }
 
@@ -109,8 +104,7 @@ object SaltLyricBridge {
         val payloadKey = "${payload.source}:$trackGeneration:$requestId"
         if (!payloadGate.shouldSend(payloadKey, SystemClock.elapsedRealtime())) return
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
+        val intent = Intent().apply {
             putBridgeDeclaration(context)
             putExtra("source", payload.source)
             putExtra("eventType", "lyricReady")
@@ -129,7 +123,7 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, payload.source)
+            SystemUiBroadcastSender.submit(context, intent, TAG, payload.source)
         }.onSuccess {
             debug(
                 "KG_ALIGN provider lyricReady gen=$trackGeneration " +
@@ -141,14 +135,14 @@ object SaltLyricBridge {
                     "lines=${payload.lyricLines.size}/${song.lyrics?.size ?: 0}"
             )
             debug(
-                "Sent KuGou bridge payload, source=${payload.source}, id=${song.id.orEmpty()}, " +
+                "Sent KuGou direct lyric payload, source=${payload.source}, id=${song.id.orEmpty()}, " +
                     "lines=${payload.lyricLines.size}/${song.lyrics?.size ?: 0}, " +
                     "rawChars=${payload.rawLyric.length}, transChars=${payload.translationLyric.length}"
             )
         }.onFailure { e ->
             payloadGate.forget(payloadKey)
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
-            Log.w(TAG, "Failed to send KuGou bridge payload, id=${song.id.orEmpty()}", e)
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
+            Log.w(TAG, "Failed to send KuGou direct lyric payload, id=${song.id.orEmpty()}", e)
         }
     }
 
@@ -200,8 +194,7 @@ object SaltLyricBridge {
             return
         }
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
+        val intent = Intent().apply {
             putBridgeDeclaration(context)
             putExtra("source", sourceForPackage(context.packageName))
             putExtra("eventType", "playbackState")
@@ -222,7 +215,7 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(
+            SystemUiBroadcastSender.submit(
                 context,
                 intent,
                 TAG,
@@ -238,7 +231,7 @@ object SaltLyricBridge {
             )
         }.onFailure { e ->
             playbackStateGate.reset()
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send KuGou playback state, state=${state.state}", e)
         }
     }
@@ -257,14 +250,6 @@ object SaltLyricBridge {
         }
     }
 
-    private fun playerPackageForPackage(packageName: String?): String {
-        return when (packageName) {
-            KUGOU_CONCEPT_PACKAGE -> KUGOU_CONCEPT_PACKAGE
-            KUGOU_PACKAGE -> KUGOU_PACKAGE
-            else -> KUGOU_PACKAGE
-        }
-    }
-
     private fun capabilitiesForPackage(packageName: String?): String {
         return when (packageName) {
             KUGOU_CONCEPT_PACKAGE -> BRIDGE_CAPABILITIES_WITH_PLAYBACK
@@ -278,8 +263,6 @@ object SaltLyricBridge {
     }
 
     private fun Intent.putBridgeDeclaration(context: Context) {
-        putExtra("protocolVersion", BRIDGE_PROTOCOL_VERSION)
-        putExtra("playerPackage", playerPackageForPackage(context.packageName))
         putExtra("capabilities", capabilitiesForPackage(context.packageName))
         putExtra("matchPolicy", BRIDGE_MATCH_POLICY)
         putExtra("identityConfidence", BRIDGE_IDENTITY_CONFIDENCE)
@@ -294,7 +277,7 @@ object SaltLyricBridge {
     )
 
     private fun buildLyricPayload(packageName: String?, song: Song): BridgeLyricPayload? {
-        val lyricLines = filteredLyricLines(song)
+        val lyricLines = filteredLyricLines(packageName, song)
         val rawLyric = toEnhancedLrc(song, lyricLines)
         if (!containsTimedLrc(rawLyric)) return null
 
@@ -361,10 +344,17 @@ object SaltLyricBridge {
         return builder.toString()
     }
 
-    private fun filteredLyricLines(song: Song): List<RichLyricLine> {
-        return song.lyrics.orEmpty()
+    private fun filteredLyricLines(packageName: String?, song: Song): List<RichLyricLine> {
+        val lines = song.lyrics.orEmpty()
             .filter { !it.text.isNullOrBlank() }
             .sortedBy { it.begin }
+        if (packageName != KUGOU_CONCEPT_PACKAGE) return lines
+
+        // SystemUI drops this timed Lite promotional banner before binding its RecyclerView.
+        // It must not remain in the raw lane, or every following word-timed row is one slot late.
+        return lines.filterNot {
+            KuGouConceptSystemUiLyricPolicy.shouldExcludeTimedPromoLine(it.text)
+        }
     }
 
     private data class TimedWord(

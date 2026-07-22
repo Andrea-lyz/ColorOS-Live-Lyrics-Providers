@@ -13,15 +13,13 @@ import android.os.SystemClock
 import android.util.Log
 import io.github.proify.extensions.bridge.BridgePayloadSizeAction
 import io.github.proify.extensions.bridge.BridgePayloadSizingPolicy
+import io.github.proify.extensions.bridge.ExternalLyricV4Protocol
 import java.util.LinkedHashMap
 
-object BridgeBroadcastSender {
+/** Sends an injected Provider payload directly to SystemUI's static-whitelist v4 ingress. */
+object SystemUiBroadcastSender {
     const val MAX_PARCEL_BYTES = 512 * 1024
 
-    private const val EVENT_LYRIC_READY = "lyricReady"
-    private const val EXTRA_EVENT_TYPE = "eventType"
-    private const val EXTRA_LYRIC = "lyric"
-    private const val EXTRA_RAW_LYRIC = "rawLyric"
     private const val WARNING_THROTTLE_MS = 60_000L
     private const val MAX_WARNING_KEYS = 64
 
@@ -40,16 +38,19 @@ object BridgeBroadcastSender {
         val downgradedWordTiming: Boolean
     )
 
-    fun send(
+    fun submit(
         context: Context,
-        intent: Intent,
+        payloadIntent: Intent,
         logTag: String,
         source: String
     ): Outcome {
-        val originalBytes = parcelDataSize(intent)
-        val plainLyric = intent.getStringExtra(EXTRA_LYRIC).orEmpty()
-        val rawLyric = intent.getStringExtra(EXTRA_RAW_LYRIC).orEmpty()
-        val canDowngrade = intent.getStringExtra(EXTRA_EVENT_TYPE) == EVENT_LYRIC_READY &&
+        prepareDirectBroadcast(context, payloadIntent, source)
+        val originalBytes = parcelDataSize(payloadIntent)
+        val plainLyric = payloadIntent.getStringExtra(ExternalLyricV4Protocol.EXTRA_LYRIC).orEmpty()
+        val rawLyric = payloadIntent.getStringExtra(ExternalLyricV4Protocol.EXTRA_RAW_LYRIC).orEmpty()
+        val canDowngrade =
+            payloadIntent.getStringExtra(ExternalLyricV4Protocol.EXTRA_EVENT_TYPE) ==
+                ExternalLyricV4Protocol.EVENT_LYRIC_READY &&
             plainLyric.isNotBlank() &&
             rawLyric.isNotBlank() &&
             rawLyric != plainLyric
@@ -60,26 +61,26 @@ object BridgeBroadcastSender {
             canDowngradeWordTiming = canDowngrade
         )) {
             BridgePayloadSizeAction.SEND -> {
-                context.sendBroadcast(intent)
+                context.sendBroadcast(payloadIntent)
                 return Outcome(originalBytes, downgradedWordTiming = false)
             }
             BridgePayloadSizeAction.DOWNGRADE_WORD_TIMING -> {
-                intent.putExtra(EXTRA_RAW_LYRIC, plainLyric)
-                val downgradedBytes = parcelDataSize(intent)
+                payloadIntent.putExtra(ExternalLyricV4Protocol.EXTRA_RAW_LYRIC, plainLyric)
+                val downgradedBytes = parcelDataSize(payloadIntent)
                 if (BridgePayloadSizingPolicy.decide(
                         parcelBytes = downgradedBytes,
                         maxParcelBytes = MAX_PARCEL_BYTES,
                         canDowngradeWordTiming = false
                     ) == BridgePayloadSizeAction.SEND
                 ) {
-                    if (Log.isLoggable(logTag, Log.DEBUG)) {
+                    if (Log.isLoggable(logTag, Log.VERBOSE)) {
                         Log.d(
                             logTag,
-                            "Bridge payload downgraded to line timing | source=$source " +
+                            "SystemUI direct broadcast payload downgraded to line timing | source=$source " +
                                 "bytes=$originalBytes->$downgradedBytes"
                         )
                     }
-                    context.sendBroadcast(intent)
+                    context.sendBroadcast(payloadIntent)
                     return Outcome(downgradedBytes, downgradedWordTiming = true)
                 }
                 throw oversized(source, downgradedBytes, downgraded = true)
@@ -91,13 +92,30 @@ object BridgeBroadcastSender {
     }
 
     fun shouldReportFailure(error: Throwable): Boolean {
-        return error !is BridgePayloadRejectedException || error.reportable
+        return error !is SystemUiBroadcastPayloadRejectedException || error.reportable
     }
 
-    private fun parcelDataSize(intent: Intent): Int {
+    private fun prepareDirectBroadcast(context: Context, payloadIntent: Intent, source: String) {
+        val playerPackage = context.packageName
+        payloadIntent.action = ExternalLyricV4Protocol.ACTION_DIRECT_LYRIC_CAPTURED
+        payloadIntent.setPackage(ExternalLyricV4Protocol.SYSTEMUI_PACKAGE)
+        payloadIntent.putExtra(
+            ExternalLyricV4Protocol.EXTRA_PROTOCOL_VERSION,
+            ExternalLyricV4Protocol.PROTOCOL_VERSION
+        )
+        payloadIntent.putExtra(ExternalLyricV4Protocol.EXTRA_SOURCE, source)
+        payloadIntent.putExtra(ExternalLyricV4Protocol.EXTRA_PLAYER_PACKAGE, playerPackage)
+        payloadIntent.putExtra(ExternalLyricV4Protocol.EXTRA_SENDER_PACKAGE, playerPackage)
+        payloadIntent.putExtra(
+            ExternalLyricV4Protocol.EXTRA_SENDER_KIND,
+            ExternalLyricV4Protocol.SENDER_KIND_PROVIDER
+        )
+    }
+
+    private fun parcelDataSize(payloadIntent: Intent): Int {
         val parcel = Parcel.obtain()
         return try {
-            intent.writeToParcel(parcel, 0)
+            payloadIntent.writeToParcel(parcel, 0)
             parcel.dataSize()
         } finally {
             parcel.recycle()
@@ -108,10 +126,10 @@ object BridgeBroadcastSender {
         source: String,
         parcelBytes: Int,
         downgraded: Boolean
-    ): BridgePayloadRejectedException {
+    ): SystemUiBroadcastPayloadRejectedException {
         val key = "$source:${if (downgraded) "line" else "original"}"
-        return BridgePayloadRejectedException(
-            message = "Bridge payload rejected before Binder send | source=$source " +
+        return SystemUiBroadcastPayloadRejectedException(
+            message = "SystemUI direct broadcast payload rejected before send | source=$source " +
                 "bytes=$parcelBytes limit=$MAX_PARCEL_BYTES downgraded=$downgraded",
             reportable = shouldReportWarning(key)
         )
@@ -127,7 +145,7 @@ object BridgeBroadcastSender {
     }
 }
 
-class BridgePayloadRejectedException(
+class SystemUiBroadcastPayloadRejectedException(
     message: String,
     val reportable: Boolean
 ) : IllegalStateException(message)

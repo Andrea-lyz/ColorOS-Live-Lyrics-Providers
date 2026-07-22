@@ -8,8 +8,6 @@
 
     <string-array name="xposed_scope">
         <item>cn.toside.music.mobile</item>
-        <item>com.ikunshare.music.mobile</item>
-        <item>com.lxnetease.music.mobile</item>
         <item>com.lxwalnut.music.mobile</item>
     </string-array>
 

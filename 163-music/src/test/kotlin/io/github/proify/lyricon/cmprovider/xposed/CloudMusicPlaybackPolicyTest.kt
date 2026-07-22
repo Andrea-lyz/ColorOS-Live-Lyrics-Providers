@@ -14,9 +14,46 @@ import org.junit.Test
 class CloudMusicPlaybackPolicyTest {
     @Test
     fun onlyObservedMediaSessionProcessOwnsProvider() {
-        assertTrue(CloudMusicPlaybackPolicy.isPlaybackProcess("com.netease.cloudmusic"))
-        assertFalse(CloudMusicPlaybackPolicy.isPlaybackProcess("com.netease.cloudmusic:play"))
-        assertFalse(CloudMusicPlaybackPolicy.isPlaybackProcess("com.netease.cloudmusic:push"))
+        assertTrue(
+            CloudMusicPlaybackPolicy.isPlaybackProcess(
+                "com.netease.cloudmusic",
+                "com.netease.cloudmusic:play"
+            )
+        )
+        assertTrue(
+            CloudMusicPlaybackPolicy.isPlaybackProcess(
+                "com.hihonor.cloudmusic",
+                "com.hihonor.cloudmusic"
+            )
+        )
+        assertFalse(
+            CloudMusicPlaybackPolicy.isPlaybackProcess(
+                "com.netease.cloudmusic",
+                "com.netease.cloudmusic:push"
+            )
+        )
+        assertFalse(
+            CloudMusicPlaybackPolicy.isPlaybackProcess(
+                "com.hihonor.cloudmusic",
+                "com.hihonor.cloudmusic:play"
+            )
+        )
+    }
+
+    @Test
+    fun historicalNeteasePlayProcessUsesLightweightMode() {
+        assertTrue(
+            CloudMusicPlaybackPolicy.isLightweightPlaybackProcess(
+                "com.netease.cloudmusic",
+                "com.netease.cloudmusic:play"
+            )
+        )
+        assertFalse(
+            CloudMusicPlaybackPolicy.isLightweightPlaybackProcess(
+                "com.hihonor.cloudmusic",
+                "com.hihonor.cloudmusic"
+            )
+        )
     }
 
     @Test

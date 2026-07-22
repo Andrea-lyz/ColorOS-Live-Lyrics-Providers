@@ -11,7 +11,7 @@ import android.content.Intent
 import android.media.session.PlaybackState
 import android.os.SystemClock
 import android.util.Log
-import io.github.proify.extensions.android.BridgeBroadcastSender
+import io.github.proify.extensions.android.SystemUiBroadcastSender
 import io.github.proify.extensions.bridge.BridgeInlineSegmentPolicy
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
@@ -23,10 +23,6 @@ import kotlin.math.max
 
 object SaltLyricBridge {
     private const val TAG = "Lyricon_NeteaseBridge"
-    private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
-        "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
-    private const val SYSTEMUI_PACKAGE = "com.android.systemui"
-    private const val BRIDGE_PROTOCOL_VERSION = 2
     private const val SOURCE_NETEASE_MUSIC = "lyricprovider/netease-cloud-music"
     private const val BRIDGE_CAPABILITIES =
         "playbackState,trackGeneration,translationToggle"
@@ -56,9 +52,8 @@ object SaltLyricBridge {
     ) {
         if (context == null || mediaId.isNullOrBlank() || trackGeneration <= 0L) return
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
-            putBridgeDeclaration(context)
+        val intent = Intent().apply {
+            putBridgeDeclaration()
             putExtra("source", SOURCE_NETEASE_MUSIC)
             putExtra("eventType", "trackChanged")
             putExtra("mediaId", mediaId)
@@ -71,11 +66,11 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_NETEASE_MUSIC)
+            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_NETEASE_MUSIC)
         }.onSuccess {
             debug("Sent Netease track change, generation=$trackGeneration, id=$mediaId")
         }.onFailure { e ->
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(TAG, "Failed to send Netease track change, generation=$trackGeneration", e)
         }
     }
@@ -91,7 +86,7 @@ object SaltLyricBridge {
         val lyricLines = filteredLyricLines(song)
         val lyric = toPlainLrc(song, lyricLines)
         if (!containsTimedLrc(lyric)) {
-            debug("Skip bridge payload without timed lyric, id=${song.id.orEmpty()}")
+            debug("Skip direct lyric payload without timed lyric, id=${song.id.orEmpty()}")
             return
         }
 
@@ -106,9 +101,8 @@ object SaltLyricBridge {
         if (!payloadGate.shouldSend(payloadKey, SystemClock.elapsedRealtime())) return
         val trackKey = buildTrackKey(song.name, song.artist)
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
-            putBridgeDeclaration(context)
+        val intent = Intent().apply {
+            putBridgeDeclaration()
             putExtra("source", SOURCE_NETEASE_MUSIC)
             putExtra("eventType", "lyricReady")
             putExtra("requestId", requestId)
@@ -125,10 +119,10 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_NETEASE_MUSIC)
+            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_NETEASE_MUSIC)
         }.onSuccess {
             debug(
-                "Sent Netease bridge payload, generation=$trackGeneration, " +
+                "Sent Netease direct lyric payload, generation=$trackGeneration, " +
                     "id=${song.id.orEmpty()}, " +
                     "lines=${lyricLines.size}/${song.lyrics?.size ?: 0}, " +
                     "mode=$lyricMode, rawMode=${if (rawLyric == lyric) "plain" else "enhanced"}, " +
@@ -137,8 +131,8 @@ object SaltLyricBridge {
             )
         }.onFailure { e ->
             payloadGate.forget(payloadKey)
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
-            Log.w(TAG, "Failed to send Netease bridge payload, id=${song.id.orEmpty()}", e)
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
+            Log.w(TAG, "Failed to send Netease direct lyric payload, id=${song.id.orEmpty()}", e)
         }
     }
 
@@ -170,9 +164,8 @@ object SaltLyricBridge {
             return
         }
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
-            putBridgeDeclaration(context)
+        val intent = Intent().apply {
+            putBridgeDeclaration()
             putExtra("source", SOURCE_NETEASE_MUSIC)
             putExtra("eventType", "playbackState")
             putExtra("mediaId", mediaId)
@@ -189,10 +182,10 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_NETEASE_MUSIC)
+            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_NETEASE_MUSIC)
         }.onFailure { e ->
             playbackStateGate.reset()
-            if (!BridgeBroadcastSender.shouldReportFailure(e)) return@onFailure
+            if (!SystemUiBroadcastSender.shouldReportFailure(e)) return@onFailure
             Log.w(
                 TAG,
                 "Failed to send Netease playback state, generation=$trackGeneration, " +
@@ -208,15 +201,16 @@ object SaltLyricBridge {
             state == PlaybackState.STATE_REWINDING
     }
 
-    private fun Intent.putBridgeDeclaration(context: Context) {
-        putExtra("protocolVersion", BRIDGE_PROTOCOL_VERSION)
-        putExtra("playerPackage", context.packageName)
+    private fun Intent.putBridgeDeclaration() {
         putExtra("capabilities", BRIDGE_CAPABILITIES)
         putExtra("matchPolicy", BRIDGE_MATCH_POLICY)
     }
 
     private fun shouldSendEnhancedRawLyric(lyricMode: Int): Boolean {
-        return lyricMode == LYRIC_MODE_TRANSLATION || lyricMode == LYRIC_MODE_ROMA
+        // rawLyric is the bridge's primary payload.  It must retain source
+        // word timing even when the user's translation/romanization toggle is
+        // off; that toggle only controls the provider's secondary display.
+        return true
     }
 
     private fun toEnhancedLrc(song: Song, lines: List<RichLyricLine>): String {
@@ -526,7 +520,7 @@ object SaltLyricBridge {
     }
 
     private fun debug(message: String) {
-        if (Log.isLoggable(TAG, Log.DEBUG)) {
+        if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.d(TAG, message)
         }
     }

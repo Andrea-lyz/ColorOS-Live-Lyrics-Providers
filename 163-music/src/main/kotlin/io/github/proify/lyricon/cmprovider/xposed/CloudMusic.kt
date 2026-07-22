@@ -32,6 +32,7 @@ import kotlinx.serialization.json.encodeToStream
 import org.luckypray.dexkit.DexKitBridge
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.zip.ZipFile
 
 /**
  * 网易云音乐模块主入口，根据进程名选择性启用歌词提供者钩子。
@@ -41,9 +42,22 @@ object CloudMusic : YukiBaseHooker() {
     private val providerManager by lazy { LyricProviderManager() }
 
     override fun onHook() {
-        if (CloudMusicPlaybackPolicy.isPlaybackProcess(processName)) {
+        if (CloudMusicPlaybackPolicy.isPlaybackProcess(packageName, processName)) {
             ProviderDiagnostics.debug(TAG) { "Hooking authoritative process $processName" }
-            System.loadLibrary("dexkit")
+            // The historical 9.0.40 APK is LSPatch-wrapped and publishes its
+            // MediaSession from :play.  Its sourceDir points at the wrapper,
+            // not the original dex container; loading/scanning it with DexKit
+            // can abort the process before any hook is installed.  The play
+            // process does not need preference discovery, so keep it in the
+            // lightweight MediaSession/PlayService mode below.
+            if (providerManager.shouldUseDexKit) {
+                runCatching { System.loadLibrary("dexkit") }
+                    .onFailure { error ->
+                        ProviderDiagnostics.debug(TAG) {
+                            "DexKit native library unavailable: ${error.javaClass.simpleName}"
+                        }
+                    }
+            }
             providerManager.onHook()
         } else {
             ProviderDiagnostics.debug(TAG) { "Skipping non-playback process $processName" }
@@ -83,34 +97,99 @@ object CloudMusic : YukiBaseHooker() {
         private var preferencesMonitor: PreferencesMonitor? = null
 
         private var translationType: Int = 114514
+        private var lastMediaSession: MediaSession? = null
+        private var pendingInternalMetadata: Metadata? = null
+        private var internalMetadataHookLoader: ClassLoader? = null
+
+        private val preferenceCallback = object : PreferenceCallback {
+            override fun onTranslationOptionChanged(type: Int) {
+                runOnMainSafely("Translation preference") {
+                    if (translationType == type) return@runOnMainSafely
+                    translationType = type
+                    ProviderDiagnostics.debug(TAG) { "Translation type changed to $type" }
+                    lyricProvider?.player?.setDisplayTranslation(type == 0)
+                    lyricProvider?.player?.setDisplayRoma(type == 1)
+                    sendCurrentBridgeSong(lastBridgeSong)
+                }
+            }
+        }
+
+        private val lightweightPlaybackProcess =
+            CloudMusicPlaybackPolicy.isLightweightPlaybackProcess(packageName, processName)
+
+        /**
+         * The supplied slim APK embeds Dolby's LSPatch module.  That module
+         * contributes its own libdexkit.so to the host APK, with a different
+         * ABI/version from LyricProvider's DexKit.  Android may resolve the
+         * short library name to the host copy, so do not load or scan DexKit
+         * whenever the host already bundles one.
+         */
+        private val hostBundlesDexKit by lazy {
+            runCatching {
+                ZipFile(appInfo.sourceDir).use { zip ->
+                    zip.entries().asSequence().any { entry ->
+                        !entry.isDirectory && entry.name.startsWith("lib/") &&
+                            entry.name.endsWith("/libdexkit.so")
+                    }
+                }
+            }.getOrDefault(false)
+        }
+
+        val shouldUseDexKit: Boolean
+            get() = !lightweightPlaybackProcess && !hostBundlesDexKit
 
         // ---------------------------------- 入口与初始化 ----------------------------------
 
         fun onHook() {
             ProviderDiagnostics.debug(TAG) { "Hooking process=$processName" }
 
-            dexKitBridge = DexKitBridge.create(appInfo.sourceDir)
-            preferencesMonitor = PreferencesMonitor(dexKitBridge!!, object : PreferenceCallback {
-                override fun onTranslationOptionChanged(type: Int) {
-                    runOnMain {
-                        if (translationType == type) return@runOnMain
-                        translationType = type
-                        ProviderDiagnostics.debug(TAG) { "Translation type changed to $type" }
-                        lyricProvider?.player?.setDisplayTranslation(type == 0)
-                        lyricProvider?.player?.setDisplayRoma(type == 1)
-                        sendCurrentBridgeSong(lastBridgeSong)
+            if (shouldUseDexKit) {
+                runCatching {
+                    val bridge = DexKitBridge.create(appInfo.sourceDir)
+                    dexKitBridge = bridge
+                    preferencesMonitor = PreferencesMonitor(bridge, preferenceCallback)
+                }.onFailure { error ->
+                    // A failed optional preference scan must not take down the
+                    // player's process. Fall back to the version-specific
+                    // accessor that does not require a native library.
+                    preferencesMonitor = PreferencesMonitor(null, preferenceCallback)
+                    ProviderDiagnostics.debug(TAG) {
+                        "DexKit preference scan unavailable, using known accessor: " +
+                            error.javaClass.simpleName
                     }
                 }
-            })
-
-            onAppLifecycle {
-                onCreate {
-                    setupProvider()
+            } else {
+                preferencesMonitor = PreferencesMonitor(null, preferenceCallback)
+                ProviderDiagnostics.debug(TAG) {
+                    val reason = when {
+                        lightweightPlaybackProcess -> "historical :play process"
+                        hostBundlesDexKit -> "host APK already bundles libdexkit.so"
+                        else -> "unsupported process"
+                    }
+                    "Skipping DexKit preference scan ($reason)"
                 }
             }
 
-            rehookAfterTinkerLoad(appClassLoader!!)
+            if (!shouldUseDexKit) {
+                appClassLoader?.let { preferencesMonitor?.update(it) }
+            }
+
+            onAppLifecycle {
+                onCreate {
+                    runCatching { setupProvider() }
+                        .onFailure { error ->
+                            ProviderDiagnostics.debug(TAG) {
+                                "Provider setup failed; keeping player alive: ${error.javaClass.simpleName}"
+                            }
+                        }
+                }
+            }
+
+            if (shouldUseDexKit) {
+                rehookAfterTinkerLoad(appClassLoader!!)
+            }
             hookMediaSession()
+            hookInternalMetadata(appClassLoader!!)
         }
 
         /**
@@ -130,6 +209,7 @@ object CloudMusic : YukiBaseHooker() {
                 }
 
             preferencesMonitor?.update(classLoader)
+            hookInternalMetadata(classLoader)
         }
 
         /**
@@ -159,35 +239,96 @@ object CloudMusic : YukiBaseHooker() {
         // ---------------------------------- MediaSession 钩子 ----------------------------------
 
         private fun hookMediaSession() {
-            "android.media.session.MediaSession".toClass()
-                .resolve()
-                .apply {
-                    firstMethod {
-                        name = "setMetadata"
-                        parameters(MediaMetadata::class.java)
-                    }.hook {
-                        after {
-                            val session = instance as? MediaSession ?: return@after
-                            val metadata = args[0] as? MediaMetadata ?: return@after
-                            runOnMain { handleMetadata(session, metadata) }
+            runCatching {
+                "android.media.session.MediaSession".toClass()
+                    .resolve()
+                    .apply {
+                        firstMethod {
+                            name = "setMetadata"
+                            parameters(MediaMetadata::class.java)
+                        }.hook {
+                            after {
+                                val session = instance as? MediaSession ?: return@after
+                                val metadata = args[0] as? MediaMetadata ?: return@after
+                                lastMediaSession = session
+                                runOnMainSafely("MediaSession metadata") {
+                                    handleMetadata(session, metadata)
+                                }
+                            }
                         }
-                    }
 
-                    firstMethod {
-                        name = "setPlaybackState"
-                        parameters(PlaybackState::class.java)
-                    }.hook {
-                        after {
-                            val session = instance as? MediaSession ?: return@after
-                            val state = args[0] as? PlaybackState ?: return@after
-                            runOnMain { handlePlaybackState(session, state) }
+                        firstMethod {
+                            name = "setPlaybackState"
+                            parameters(PlaybackState::class.java)
+                        }.hook {
+                            after {
+                                val session = instance as? MediaSession ?: return@after
+                                val state = args[0] as? PlaybackState ?: return@after
+                                runOnMainSafely("MediaSession playback state") {
+                                    handlePlaybackState(session, state)
+                                }
+                            }
                         }
                     }
+            }.onFailure { error ->
+                ProviderDiagnostics.debug(TAG) {
+                    "MediaSession hooks unavailable: ${error.javaClass.simpleName}"
                 }
+            }
+        }
+
+        /**
+         * MediaSession metadata is not populated consistently by the Honor
+         * build. PlayService still receives a stable BizMusicMeta callback in
+         * both target APKs, so use it as a lyric-local fallback and let the
+         * next MediaSession callback provide the authoritative session token.
+         */
+        private fun hookInternalMetadata(classLoader: ClassLoader) {
+            if (internalMetadataHookLoader === classLoader) return
+            runCatching {
+                "com.netease.cloudmusic.service.PlayService".toClass(classLoader)
+                    .resolve()
+                    .firstMethod {
+                        name = "onMetadataChanged"
+                        parameterCount = 1
+                    }
+                    .hook {
+                        after {
+                            runCatching {
+                                val value = args.firstOrNull() ?: return@runCatching
+                                val data = MediaMetadataCache.saveBiz(value) ?: return@runCatching
+                                runOnMainSafely("PlayService metadata") {
+                                    pendingInternalMetadata = data
+                                    lastMediaSession?.let { session ->
+                                        pendingInternalMetadata = null
+                                        handleMetadata(session, data)
+                                    }
+                                }
+                            }.onFailure { error ->
+                                ProviderDiagnostics.debug(TAG) {
+                                    "PlayService metadata callback ignored: ${error.javaClass.simpleName}"
+                                }
+                            }
+                        }
+                    }
+                internalMetadataHookLoader = classLoader
+                ProviderDiagnostics.debug(TAG) { "PlayService metadata fallback hooked" }
+            }.onFailure { error ->
+                ProviderDiagnostics.debug(TAG) {
+                    "PlayService metadata fallback unavailable: ${error.javaClass.simpleName}"
+                }
+            }
         }
 
         private fun handleMetadata(session: MediaSession, metadata: MediaMetadata) {
-            val data = MediaMetadataCache.save(metadata) ?: return
+            val data = MediaMetadataCache.save(metadata)
+                ?: pendingInternalMetadata?.also { pendingInternalMetadata = null }
+                ?: return
+            handleMetadata(session, data)
+        }
+
+        private fun handleMetadata(session: MediaSession, data: Metadata) {
+            refreshTranslationPreference()
             val currentToken = bridgeTrack.token
             if (currentMusicId == data.id &&
                 currentToken?.sessionIdentity == System.identityHashCode(session)
@@ -230,7 +371,23 @@ object CloudMusic : YukiBaseHooker() {
             onSongChanged(data, token)
         }
 
+        /**
+         * Multiprocess preference implementations do not always dispatch a
+         * listener callback into :play. Re-read on track changes as a cheap
+         * synchronization fallback.
+         */
+        private fun refreshTranslationPreference() {
+            val type = preferencesMonitor?.getTranslationType() ?: return
+            if (type >= 0 && type != translationType) {
+                preferenceCallback.onTranslationOptionChanged(type)
+            }
+        }
+
         private fun handlePlaybackState(session: MediaSession, state: PlaybackState) {
+            pendingInternalMetadata?.let { data ->
+                pendingInternalMetadata = null
+                handleMetadata(session, data)
+            }
             val acceptedTrack = playbackCommitter.observePlaybackState(session, state) ?: return
             val currentTrack = bridgeTrack
             if (currentTrack.token != acceptedTrack) return
@@ -410,6 +567,17 @@ object CloudMusic : YukiBaseHooker() {
 
         private fun runOnMain(action: () -> Unit) {
             if (Looper.myLooper() == Looper.getMainLooper()) action() else mainHandler.post(action)
+        }
+
+        private fun runOnMainSafely(label: String, action: () -> Unit) {
+            runOnMain {
+                runCatching { action() }
+                    .onFailure { error ->
+                        ProviderDiagnostics.debug(TAG) {
+                            "$label ignored: ${error.javaClass.simpleName}"
+                        }
+                    }
+            }
         }
     }
 }

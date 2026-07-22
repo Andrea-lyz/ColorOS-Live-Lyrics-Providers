@@ -111,17 +111,13 @@ SaltLyricBridge.send(appContext, song)
 
 Spotify 当前只按标准行歌词适配。`transliteratedWords` 更接近音译/罗马音，不应当发送到 Bridge 的 `translationLyric`，避免锁屏翻译位被音译污染。
 
-## Bridge 广播协议
+## Bridge Direct v4 协议
 
-provider 通过显式包名广播给 SystemUI：
+Provider 注入到播放器进程后，直接向 SystemUI 发送显式 v4 广播；不经过 Bridge
+应用的 ContentProvider，也不依赖 Bridge 被系统启动。
 
 ```kotlin
-private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
-    "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
-private const val SYSTEMUI_PACKAGE = "com.android.systemui"
-
-val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-    setPackage(SYSTEMUI_PACKAGE)
+val payloadIntent = Intent().apply {
     putExtra("source", "lyricprovider/<module-id>")
     putExtra("requestId", requestId)
     putExtra("mediaId", song.id.orEmpty())
@@ -134,8 +130,13 @@ val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
     putExtra("translationLyric", translationLrc)
     putExtra("capturedAt", System.currentTimeMillis())
 }
-BridgeBroadcastSender.send(context, intent, TAG, "lyricprovider/<module-id>")
+SystemUiBroadcastSender.submit(context, payloadIntent, TAG, "lyricprovider/<module-id>")
 ```
+
+共享 sender 会把 action 设为 `EXTERNAL_LYRIC_DIRECT_V4`、目标包设为
+`com.android.systemui`，并写入 `protocolVersion`、`source`、`playerPackage`、
+`senderPackage` 和 `senderKind`。SystemUI 仅按静态 `source -> playerPackage`
+白名单接收；ColorOS 无法可靠提供广播发送 UID，因此这不是签名或 UID 身份认证。
 
 字段约定：
 
@@ -150,11 +151,11 @@ BridgeBroadcastSender.send(context, intent, TAG, "lyricprovider/<module-id>")
 | `lyric` | 普通 LRC，作为行级兜底。 |
 | `rawLyric` | 优先字段。应尽量提供带 `<mm:ss.xxx>` 的 enhanced LRC / karaoke LRC。 |
 | `translationLyric` | 翻译 LRC，时间戳应与主歌词行对齐。 |
-| `capturedAt` | 发送时间戳，便于 Bridge 侧丢弃旧广播。 |
+| `capturedAt` | 提交时间戳，便于 SystemUI 丢弃旧 payload。 |
 
-不要在广播里携带封面，也不要在 provider 里改 `MediaMetadata` 的 artwork。封面收发应完全沿用播放器和 SystemUI 原链路，避免纯色封面、短暂闪现后被覆盖等问题。
+不要在 direct payload 里携带封面，也不要在 provider 里改 `MediaMetadata` 的 artwork。封面收发应完全沿用播放器和 SystemUI 原链路，避免纯色封面、短暂闪现后被覆盖等问题。
 
-所有 Bridge 广播在发送前必须通过共享 `BridgeBroadcastSender` 使用
+所有 direct payload 在提交前必须通过共享 `SystemUiBroadcastSender` 使用
 `Parcel.dataSize()` 预检。当前保守上限为 512 KiB：逐字歌词超限时先把
 `rawLyric` 降级为行级 `lyric`，保留 `translationLyric`；降级后仍超限则拒绝发送，
 并按来源节流记录警告，避免把超大事务交给 Binder。
@@ -234,8 +235,8 @@ provider 发给 Bridge 前应做轻量清洗：
 
 ```powershell
 adb logcat -c
-adb shell setprop log.tag.Lyricon_SaltBridge DEBUG
-adb shell setprop log.tag.Lyricon_NeteaseBridge DEBUG
+adb shell setprop log.tag.Lyricon_SaltBridge VERBOSE
+adb shell setprop log.tag.Lyricon_NeteaseBridge VERBOSE
 adb logcat -d -v time -s LockscreenLyrics AndroidRuntime Lyricon_SaltBridge Lyricon_NeteaseBridge > logcat.log
 ```
 
@@ -245,8 +246,8 @@ adb logcat -d -v time -s LockscreenLyrics AndroidRuntime Lyricon_SaltBridge Lyri
 adb logcat -v time -s LockscreenLyrics AndroidRuntime Lyricon_SaltBridge Lyricon_NeteaseBridge
 ```
 
-Provider 的正常提交、缓存命中和广播成功日志默认静默，仅在对应 Tag 显式设为
-`DEBUG` 时输出；警告和错误始终保留。抓取结束后用 `setprop log.tag.<Tag> INFO`
+Provider 的正常提交、缓存命中和 direct broadcast 成功日志默认静默，仅在对应 Tag 显式设为
+`VERBOSE` 时输出；警告和错误始终保留。抓取结束后用 `setprop log.tag.<Tag> INFO`
 恢复默认值，避免调试日志持续写入及被 LSPosed 重复镜像。
 
 provider 侧应至少打印：
@@ -259,7 +260,7 @@ provider 侧应至少打印：
 
 Bridge 侧重点看：
 
-- 是否收到 `EXTERNAL_LYRIC_CAPTURED`
+- 是否收到 `Accepted direct external lyric broadcast`
 - 是否命中当前 `trackKey` / `mediaId`
 - parser 使用的是 enhanced LRC、普通 LRC 还是官方 `lyricInfo`
 - 是否丢弃了旧 request

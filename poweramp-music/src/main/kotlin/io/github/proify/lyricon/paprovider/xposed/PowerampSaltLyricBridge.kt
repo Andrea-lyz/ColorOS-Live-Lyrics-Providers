@@ -9,16 +9,13 @@ package io.github.proify.lyricon.paprovider.xposed
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
-import io.github.proify.extensions.android.BridgeBroadcastSender
+import android.util.Log
+import io.github.proify.extensions.android.SystemUiBroadcastSender
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import java.util.Locale
 
 internal object PowerampSaltLyricBridge {
     private const val TAG = "Lyricon_PowerampBridge"
-    private const val ACTION_EXTERNAL_LYRIC_CAPTURED =
-        "io.github.andrealtb.lockscreenlyrics.action.EXTERNAL_LYRIC_CAPTURED"
-    private const val SYSTEMUI_PACKAGE = "com.android.systemui"
-    private const val BRIDGE_PROTOCOL_VERSION = 2
     private const val SOURCE_POWERAMP = "lyricprovider/poweramp-music"
     private const val BRIDGE_CAPABILITIES =
         "trackGeneration,currentTrackAuthority,titleOnlyFallback"
@@ -35,9 +32,8 @@ internal object PowerampSaltLyricBridge {
     ) {
         if (context == null || trackGeneration <= 0L) return
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
-            putBridgeDeclaration(context)
+        val intent = Intent().apply {
+            putBridgeDeclaration()
             putExtra("source", SOURCE_POWERAMP)
             putExtra("eventType", "trackChanged")
             putExtra("mediaId", metadata.id)
@@ -50,14 +46,16 @@ internal object PowerampSaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_POWERAMP)
+            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_POWERAMP)
         }.onSuccess {
-            PowerampLog.debug(
-                tag = TAG,
-                msg = "Sent Poweramp track change, generation=$trackGeneration, id=${metadata.id}"
-            )
+            if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                PowerampLog.debug(
+                    tag = TAG,
+                    msg = "Sent Poweramp track change, generation=$trackGeneration, id=${metadata.id}"
+                )
+            }
         }.onFailure { error ->
-            if (!BridgeBroadcastSender.shouldReportFailure(error)) return@onFailure
+            if (!SystemUiBroadcastSender.shouldReportFailure(error)) return@onFailure
             PowerampLog.error(
                 tag = TAG,
                 msg = "Failed to send Poweramp track change, generation=$trackGeneration",
@@ -76,9 +74,8 @@ internal object PowerampSaltLyricBridge {
         val payloadKey = "$SOURCE_POWERAMP:${payload.trackGeneration}:$requestId"
         if (!payloadGate.shouldSend(payloadKey, SystemClock.elapsedRealtime())) return
 
-        val intent = Intent(ACTION_EXTERNAL_LYRIC_CAPTURED).apply {
-            setPackage(SYSTEMUI_PACKAGE)
-            putBridgeDeclaration(context)
+        val intent = Intent().apply {
+            putBridgeDeclaration()
             putExtra("source", SOURCE_POWERAMP)
             putExtra("eventType", "lyricReady")
             putExtra("requestId", requestId)
@@ -95,16 +92,18 @@ internal object PowerampSaltLyricBridge {
         }
 
         runCatching {
-            BridgeBroadcastSender.send(context, intent, TAG, SOURCE_POWERAMP)
+            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_POWERAMP)
         }.onSuccess {
-            PowerampLog.debug(
-                tag = TAG,
-                msg = "Sent Poweramp lyric payload, generation=${payload.trackGeneration}, " +
-                    "id=${payload.mediaId}, rawChars=${payload.rawLyric.length}"
-            )
+            if (Log.isLoggable(TAG, Log.VERBOSE)) {
+                PowerampLog.debug(
+                    tag = TAG,
+                    msg = "Sent Poweramp lyric payload, generation=${payload.trackGeneration}, " +
+                        "id=${payload.mediaId}, rawChars=${payload.rawLyric.length}"
+                )
+            }
         }.onFailure { error ->
             payloadGate.forget(payloadKey)
-            if (!BridgeBroadcastSender.shouldReportFailure(error)) return@onFailure
+            if (!SystemUiBroadcastSender.shouldReportFailure(error)) return@onFailure
             PowerampLog.error(
                 tag = TAG,
                 msg = "Failed to send Poweramp lyric payload, generation=${payload.trackGeneration}",
@@ -113,9 +112,7 @@ internal object PowerampSaltLyricBridge {
         }
     }
 
-    private fun Intent.putBridgeDeclaration(context: Context) {
-        putExtra("protocolVersion", BRIDGE_PROTOCOL_VERSION)
-        putExtra("playerPackage", context.packageName)
+    private fun Intent.putBridgeDeclaration() {
         putExtra("capabilities", BRIDGE_CAPABILITIES)
         putExtra("matchPolicy", BRIDGE_MATCH_POLICY)
         putExtra("identityConfidence", BRIDGE_IDENTITY_CONFIDENCE)
