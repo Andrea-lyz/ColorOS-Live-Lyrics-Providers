@@ -71,6 +71,7 @@ object CloudMusic : YukiBaseHooker() {
         private var lyricProvider: LyriconProvider? = null
         private var lastSetSong: Song? = null
         private var lastSetTrack: PlaybackTrackToken? = null
+        private var lastLyriconSong: Song? = null
         private var lastBridgeSong: Song? = null
         private var currentMusicId: Long = 0
         private var bridgeTrack = BridgeTrack()
@@ -496,6 +497,7 @@ object CloudMusic : YukiBaseHooker() {
                 }
                 return
             }
+            publishLyriconSong(song)
             if (lastSetSong == song && lastSetTrack == requestedTrack) {
                 sendCurrentBridgeSong(song)
                 return
@@ -505,7 +507,8 @@ object CloudMusic : YukiBaseHooker() {
                 requestedTrack = requestedTrack,
                 responseMediaId = song.id,
                 duration = song.duration.takeIf { it > 0L } ?: currentTrack.duration,
-                setSong = { lyricProvider?.player?.setSong(song) },
+                // Lyricon delivery is deliberately independent from the Bridge commit gate.
+                setSong = {},
                 setPosition = { lyricProvider?.player?.setPosition(it) },
                 replayPlaybackState = { lyricProvider?.player?.setPlaybackState(it) },
                 publishLyricReady = { sendCurrentBridgeSong(song) },
@@ -528,6 +531,13 @@ object CloudMusic : YukiBaseHooker() {
                     ProviderDiagnostics.debug(TAG) { "Song commit rejected as stale" }
                 }
             }
+        }
+
+        private fun publishLyriconSong(song: Song) {
+            if (lastLyriconSong == song) return
+            val player = lyricProvider?.player ?: return
+            player.setSong(song)
+            lastLyriconSong = song
         }
 
         private fun sendCurrentBridgeSong(song: Song?) {

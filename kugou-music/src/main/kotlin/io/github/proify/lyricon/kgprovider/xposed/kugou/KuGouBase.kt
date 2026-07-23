@@ -497,13 +497,26 @@ abstract class KuGouBase : YukiBaseHooker() {
                     parameters(MediaMetadata::class.java)
                 }.hook {
                     before {
+                        val metadata = args[0] as? MediaMetadata ?: return@before
                         if (useOriginalApkLyricPipeline()) {
+                            val incoming = metadataDataFrom(metadata) ?: return@before
+                            if (!shouldIgnoreOriginalCarLyricMetadata(incoming)) {
+                                return@before
+                            }
+                            // Rebuilding the car-lyric metadata with only the stable title/artist
+                            // still publishes its artwork fields (usually none) and clears the real
+                            // album cover from the MediaSession.  The existing session already has
+                            // the stable track metadata, so suppress this transient update entirely.
+                            result = null
+                            diagnoseDebug(
+                                "KG_ORIG suppress car lyric MediaSession metadata (retain artwork): " +
+                                    incoming.title.take(80)
+                            )
                             return@before
                         }
 
                         if (!shouldStabilizeNoisyMetadataIdentity()) return@before
                         if (KuGouLyricInfoPublisher.isSelfPublishing()) return@before
-                        val metadata = args[0] as? MediaMetadata ?: return@before
 
                         val incoming = metadataDataFrom(metadata)
                         if (incoming != null) {
@@ -642,16 +655,12 @@ abstract class KuGouBase : YukiBaseHooker() {
 
         if (current == null || snapshot.generation <= 0L) return false
 
-        val currentTitle = normalizeLocalLyricFileText(current.title)
-        val incomingTitle = normalizeLocalLyricFileText(meta.title)
-        if (incomingTitle.isBlank() || currentTitle == incomingTitle) return false
-
-        val stableMedia = sameStableMedia(current, meta)
-        val sameTrackChurn = looksLikeSameTrackMetadataChurn(current, meta, currentTitle, incomingTitle)
-        val lyricLineForCurrentTrack =
-            hasLyricReadyForGeneration(snapshot.generation) && looksLikeMetadataForTrack(meta, current)
-
-        return stableMedia || sameTrackChurn || lyricLineForCurrentTrack
+        val currentLyrics = LyricsCache.get(current.identityKeys).orEmpty()
+        return KuGouOriginalMediaMetadataPolicy.shouldSuppressCarLyricMetadata(
+            current,
+            meta,
+            currentLyrics.asSequence().map { it.text.orEmpty() }.asIterable()
+        )
     }
 
     private fun metadataDataFrom(metadata: MediaMetadata): MetadataData? {
@@ -1305,6 +1314,9 @@ abstract class KuGouBase : YukiBaseHooker() {
                 "capturedId=${candidate.capturedSongId.orEmpty().take(48)} " +
                 "lines=${candidate.lyrics.size} path=${candidate.path.takeLast(96)}"
         )
+        if (hasForeignLeadingMetadata(candidate)) {
+            return
+        }
         if (tryPromotePendingMetadataForLyricCandidate(candidate, reason)) {
             return
         }
@@ -1325,6 +1337,26 @@ abstract class KuGouBase : YukiBaseHooker() {
             "KG_DIAG pending lyric candidate reason=$reason capturedGen=${candidate.capturedGeneration} " +
                 "capturedId=${candidate.capturedSongId.orEmpty().take(48)}"
         )
+    }
+
+    private fun hasForeignLeadingMetadata(candidate: LyricCandidate): Boolean {
+        val target = synchronized(stateLock) {
+            pendingMetadataIdentity ?: currentMetadata
+        } ?: return false
+        val firstLine = candidate.lyrics.firstOrNull()?.text
+        if (!KuGouOriginalLyricCandidatePolicy.hasForeignLeadingMetadata(
+                firstLine,
+                target.title,
+                target.artist
+            )
+        ) {
+            return false
+        }
+        diagnoseDebug(
+            "KG_DIAG reject lyric candidate with foreign leading metadata " +
+                "target=${target.trackKey.take(80)} line=${firstLine.orEmpty().take(96)}"
+        )
+        return true
     }
 
     private fun shouldDeferLyricCandidateForNoisyMetadata(candidate: LyricCandidate): Boolean {

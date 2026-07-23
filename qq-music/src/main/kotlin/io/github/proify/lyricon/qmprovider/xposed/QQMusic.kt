@@ -102,6 +102,7 @@ object QQMusic : YukiBaseHooker() {
         private var bridgeTrack = BridgeTrack()
         private var lastCommittedSong: Song? = null
         private var lastCommittedTrack: PlaybackTrackToken? = null
+        private var lastLyriconSong: Song? = null
         private var pendingPlaceholder: Runnable? = null
 
         private data class BridgeTrack(
@@ -333,12 +334,14 @@ object QQMusic : YukiBaseHooker() {
                 return
             }
             if (preparedSong == lastCommittedSong && requestedTrack == lastCommittedTrack) return
+            publishLyriconSong(preparedSong)
 
             when (val result = playbackCommitter.commit(
                 requestedTrack = requestedTrack,
                 responseMediaId = preparedSong.id,
                 duration = preparedSong.duration.takeIf { it > 0L } ?: currentTrack.duration,
-                setSong = { lyriconProvider?.player?.setSong(preparedSong) },
+                // Keep the upstream Lyricon delivery outside Bridge-only generation gating.
+                setSong = {},
                 setPosition = { lyriconProvider?.player?.setPosition(it) },
                 replayPlaybackState = { lyriconProvider?.player?.setPlaybackState(it) },
                 publishLyricReady = {
@@ -366,6 +369,13 @@ object QQMusic : YukiBaseHooker() {
                     ProviderDiagnostics.debug(TAG) { "Song commit rejected as stale" }
                 }
             }
+        }
+
+        private fun publishLyriconSong(song: Song) {
+            if (lastLyriconSong == song) return
+            val player = lyriconProvider?.player ?: return
+            player.setSong(song)
+            lastLyriconSong = song
         }
 
         override fun onDownloadFinished(

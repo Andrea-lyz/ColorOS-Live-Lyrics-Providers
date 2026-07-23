@@ -36,6 +36,7 @@ object Spotify : YukiBaseHooker(), DownloadCallback {
     private var bridgeTrack = BridgeTrack()
     private var lastSong: Song? = null
     private var lastSongTrack: PlaybackTrackToken? = null
+    private var lastLyriconSong: Song? = null
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     private val playbackCommitter = PlaybackStateCommitter()
     private val cacheExecutor by lazy {
@@ -242,12 +243,14 @@ object Spotify : YukiBaseHooker(), DownloadCallback {
             return
         }
         if (song == lastSong && requestedTrack == lastSongTrack) return
+        publishLyriconSong(song)
 
         when (val result = playbackCommitter.commit(
             requestedTrack = requestedTrack,
             responseMediaId = song.id,
             duration = song.duration.takeIf { it > 0L } ?: currentTrack.duration,
-            setSong = { lyriconProvider?.player?.setSong(song) },
+            // Keep the upstream Lyricon delivery outside Bridge-only generation gating.
+            setSong = {},
             setPosition = { lyriconProvider?.player?.setPosition(it) },
             replayPlaybackState = { lyriconProvider?.player?.setPlaybackState(it) },
             publishLyricReady = {
@@ -272,6 +275,13 @@ object Spotify : YukiBaseHooker(), DownloadCallback {
                 ProviderDiagnostics.debug(TAG) { "Song commit rejected as stale" }
             }
         }
+    }
+
+    private fun publishLyriconSong(song: Song) {
+        if (lastLyriconSong == song) return
+        val player = lyriconProvider?.player ?: return
+        player.setSong(song)
+        lastLyriconSong = song
     }
 
     private fun sendBridgePlaybackState(

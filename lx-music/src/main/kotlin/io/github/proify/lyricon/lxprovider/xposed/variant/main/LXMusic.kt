@@ -8,6 +8,7 @@ package io.github.proify.lyricon.lxprovider.xposed.variant.main
 
 import android.media.MediaMetadata
 import android.media.session.PlaybackState
+import android.os.SystemClock
 import android.util.Log
 import com.highcapable.kavaref.KavaRef.Companion.resolve
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
@@ -54,6 +55,10 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
     private var translationActionInjectionLogged = false
     private var lastBridgeTrackMetadata: Metadata? = null
     private var bluetoothLyricMetadataProjectionLogged = false
+    private var lastBridgeLyricCaptureProbeKey = ""
+    private var lastBridgeDeferredLyricProbeKey = ""
+    private var lastBridgeNoTrackIdentityProbeKey = ""
+    private var lastBridgePayloadProbeKey = ""
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var syncJob: Job? = null
@@ -74,6 +79,10 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
                 provider.register()
                 injectLyricModule()
                 hookMediaSession()
+                LxMusicLspProbe.event(
+                    "hook-ready",
+                    "player=${LxMusicLspProbe.token(appContext?.packageName)}"
+                )
             }
         }
     }
@@ -188,10 +197,16 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
                 bridgeDebug(
                     "Ignored Bluetooth lyric MediaSession metadata projection; retaining current track"
                 )
+                LxMusicLspProbe.event(
+                    "metadata-projection-ignored",
+                    "stable=${LxMusicLspProbe.track(stable)} " +
+                        "candidate=${LxMusicLspProbe.track(incoming)}"
+                )
             }
             return stable!!
         }
         lastBridgeTrackMetadata = incoming
+        bluetoothLyricMetadataProjectionLogged = false
         return incoming
     }
 
@@ -238,6 +253,7 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
         // LX's third argument is romaji. Bridge must never expose it as a translation lane.
         lastBridgeLyrics = LxMusicBridgeLyrics.from(lyric, trans)
         lastBridgeLyricsTrackIdentity = metadata?.let(::bridgeTrackIdentity).orEmpty()
+        reportBridgeLyricCapture(lastBridgeLyrics, metadata)
         if (lastBridgeLyrics == null) {
             lastBridgePayloadKey = ""
             return
@@ -249,20 +265,37 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
         val context = appContext ?: return
         val source = LxMusicSaltLyricBridge.sourceFor(context.packageName) ?: return
         val identity = bridgeTrackIdentity(metadata)
-        if (identity.isBlank() || identity == bridgeTrackIdentity) return
+        if (identity.isBlank()) {
+            val probeKey = LxMusicLspProbe.track(metadata)
+            if (probeKey != lastBridgeNoTrackIdentityProbeKey) {
+                lastBridgeNoTrackIdentityProbeKey = probeKey
+                LxMusicLspProbe.event(
+                    "track-skipped-no-identity",
+                    "source=$source $probeKey"
+                )
+            }
+            return
+        }
+        if (identity == bridgeTrackIdentity) return
 
         bridgeTrackIdentity = identity
-        bridgeTrackGeneration = if (bridgeTrackGeneration == Long.MAX_VALUE) {
-            1L
-        } else {
-            bridgeTrackGeneration + 1L
-        }
+        bridgeTrackGeneration = LxBridgeTrackGenerationPolicy.next(
+            bridgeTrackGeneration,
+            SystemClock.elapsedRealtime()
+        )
         lastBridgePayloadKey = ""
-        LxMusicSaltLyricBridge.sendTrackChanged(
+        lastBridgeDeferredLyricProbeKey = ""
+        lastBridgeNoTrackIdentityProbeKey = ""
+        val sent = LxMusicSaltLyricBridge.sendTrackChanged(
             context,
             source,
             metadata,
             bridgeTrackGeneration
+        )
+        LxMusicLspProbe.event(
+            "track-dispatched",
+            "source=$source generation=$bridgeTrackGeneration sent=$sent " +
+                LxMusicLspProbe.track(metadata)
         )
     }
 
@@ -282,8 +315,19 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
                 lyricTrackIdentity,
                 metadataTrackIdentity
             )) {
+            val probeKey = "$lyricTrackIdentity|$metadataTrackIdentity"
+            if (probeKey != lastBridgeDeferredLyricProbeKey) {
+                lastBridgeDeferredLyricProbeKey = probeKey
+                LxMusicLspProbe.event(
+                    "lyric-deferred-track-mismatch",
+                    "generation=$bridgeTrackGeneration lyricTrack=" +
+                        LxMusicLspProbe.token(lyricTrackIdentity) +
+                        " metadataTrack=${LxMusicLspProbe.token(metadataTrackIdentity)}"
+                )
+            }
             return
         }
+        lastBridgeDeferredLyricProbeKey = ""
 
         val payloadKey = listOf(
             source,
@@ -293,16 +337,50 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
             lyrics.translationLyric.hashCode()
         ).joinToString("|")
         if (payloadKey == lastBridgePayloadKey) return
-        if (LxMusicSaltLyricBridge.sendLyricReady(
+        val sent = LxMusicSaltLyricBridge.sendLyricReady(
                 context,
                 source,
                 metadata,
                 lyrics,
                 bridgeTrackGeneration
             )
-        ) {
+        val probeKey = "$payloadKey|$sent"
+        if (probeKey != lastBridgePayloadProbeKey) {
+            lastBridgePayloadProbeKey = probeKey
+            LxMusicLspProbe.event(
+                "lyric-dispatched",
+                "source=$source generation=$bridgeTrackGeneration sent=$sent " +
+                    "rawChars=${lyrics.rawLyric.length} displayChars=${lyrics.lyric.length} " +
+                    "translationChars=${lyrics.translationLyric.length} " +
+                    LxMusicLspProbe.track(metadata)
+            )
+        }
+        if (sent) {
             lastBridgePayloadKey = payloadKey
         }
+    }
+
+    private fun reportBridgeLyricCapture(
+        lyrics: LxMusicBridgeLyrics?,
+        metadata: Metadata?
+    ) {
+        val rawChars = lyrics?.rawLyric?.length ?: 0
+        val translationChars = lyrics?.translationLyric?.length ?: 0
+        val probeKey = listOf(
+            metadata?.let(::bridgeTrackIdentity).orEmpty(),
+            rawChars,
+            translationChars,
+            lyrics != null
+        ).joinToString("|")
+        if (probeKey == lastBridgeLyricCaptureProbeKey) return
+
+        lastBridgeLyricCaptureProbeKey = probeKey
+        LxMusicLspProbe.event(
+            if (lyrics == null) "lyric-ignored-untimed" else "lyric-captured",
+            "rawChars=$rawChars translationChars=$translationChars " +
+                "capturedTrack=${LxMusicLspProbe.token(lastBridgeLyricsTrackIdentity)} " +
+                LxMusicLspProbe.track(metadata)
+        )
     }
 
     private fun bridgeTrackIdentity(metadata: Metadata): String {

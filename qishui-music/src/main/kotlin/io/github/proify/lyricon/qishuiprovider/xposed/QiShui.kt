@@ -41,6 +41,7 @@ object QiShui : YukiBaseHooker() {
     private var currentTrackGeneration = 0L
     private var lastSong: Song? = null
     private var lastSongGeneration = 0L
+    private var lastLyriconSong: Song? = null
     private var translationActionInjectionLogged = false
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     private val resolutionExecutor by lazy {
@@ -587,6 +588,7 @@ object QiShui : YukiBaseHooker() {
         rememberMissing: Boolean = false,
         reason: String
     ) {
+        publishLyriconSong(song)
         val songId = song.id?.takeIf { it.isNotBlank() }
         if (songId != null &&
             (songId != curMediaId || trackGeneration != currentTrackGeneration)
@@ -603,10 +605,8 @@ object QiShui : YukiBaseHooker() {
         val playback = resolvePlaybackForCommit(trackGeneration, preparedSong.duration)
         val player = provider?.player
         dispatchQiShuiSongCommit(
-            setSong = {
-                runCatching { player?.setSong(preparedSong) }
-                    .onFailure { QiShuiLog.error("event=setSongFailed", it) }
-            },
+            // The original Lyricon path has already received the unmodified Song above.
+            setSong = {},
             setPosition = playback?.position?.let { position ->
                 {
                     runCatching { player?.setPosition(position) }
@@ -649,6 +649,13 @@ object QiShui : YukiBaseHooker() {
         } else if (rememberMissing) {
             rememberMissingSong(preparedSong)
         }
+    }
+
+    private fun publishLyriconSong(song: Song) {
+        if (lastLyriconSong == song) return
+        val player = provider?.player ?: return
+        player.setSong(song)
+        lastLyriconSong = song
     }
 
     private data class PlaybackCommit(
