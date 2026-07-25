@@ -14,11 +14,12 @@ import android.util.Log
 import io.github.proify.extensions.bridge.BridgePayloadSizeAction
 import io.github.proify.extensions.bridge.BridgePayloadSizingPolicy
 import io.github.proify.extensions.bridge.ExternalLyricV4Protocol
+import io.github.proify.extensions.bridge.LyricLineTruncator
 import java.util.LinkedHashMap
 
 /** Sends an injected Provider payload directly to SystemUI's static-whitelist v4 ingress. */
 object SystemUiBroadcastSender {
-    const val MAX_PARCEL_BYTES = 512 * 1024
+    const val MAX_PARCEL_BYTES = ExternalLyricV4Protocol.MAX_PARCEL_BYTES
 
     private const val WARNING_THROTTLE_MS = 60_000L
     private const val MAX_WARNING_KEYS = 64
@@ -93,6 +94,85 @@ object SystemUiBroadcastSender {
 
     fun shouldReportFailure(error: Throwable): Boolean {
         return error !is SystemUiBroadcastPayloadRejectedException || error.reportable
+    }
+
+    /**
+     * Sends the v4 payload and, if the standard {@link #submit} flow rejects
+     * it as oversized (after the inline line-only downgrade), retries once
+     * after dropping middle lines from the lyric extras via
+     * {@link LyricLineTruncator}. The retry resets the three lyric extras to
+     * the originals provided here so the truncator always sees the full
+     * payload, not the already-downgraded string.
+     *
+     * <p>This path is intentionally Android-only: it lives next to
+     * {@code submit} so callers that already pre-computed their lyric strings
+     * can opt into the line-fallback by passing them in unchanged.</p>
+     */
+    fun submitWithLyricLineFallback(
+        context: Context,
+        payloadIntent: Intent,
+        originalLyric: String,
+        originalRawLyric: String,
+        originalTranslationLyric: String,
+        logTag: String,
+        source: String
+    ): Outcome {
+        val initial = runCatching { submit(context, payloadIntent, logTag, source) }
+        initial.exceptionOrNull()?.let { error ->
+            if (error !is SystemUiBroadcastPayloadRejectedException) throw error
+            return retryAfterLineTruncation(
+                context = context,
+                payloadIntent = payloadIntent,
+                originalLyric = originalLyric,
+                originalRawLyric = originalRawLyric,
+                originalTranslationLyric = originalTranslationLyric,
+                logTag = logTag,
+                source = source
+            )
+        }
+        return initial.getOrThrow()
+    }
+
+    private fun retryAfterLineTruncation(
+        context: Context,
+        payloadIntent: Intent,
+        originalLyric: String,
+        originalRawLyric: String,
+        originalTranslationLyric: String,
+        logTag: String,
+        source: String
+    ): Outcome {
+        val budget = LyricLineTruncator.byteBudget(MAX_PARCEL_BYTES)
+        val truncated = LyricLineTruncator.truncatePayload(
+            lyric = originalLyric,
+            rawLyric = originalRawLyric,
+            translationLyric = originalTranslationLyric,
+            maxBytes = budget
+        )
+        payloadIntent.putExtra(ExternalLyricV4Protocol.EXTRA_LYRIC, truncated.lyric.text)
+        payloadIntent.putExtra(ExternalLyricV4Protocol.EXTRA_RAW_LYRIC, truncated.rawLyric.text)
+        payloadIntent.putExtra(
+            ExternalLyricV4Protocol.EXTRA_TRANSLATION_LYRIC,
+            truncated.translationLyric.text
+        )
+        if (Log.isLoggable(logTag, Log.VERBOSE)) {
+            Log.d(
+                logTag,
+                "SystemUI direct broadcast payload truncated after reject | source=$source " +
+                    "removedLines=lyric:${truncated.lyric.removedLines}," +
+                    "raw:${truncated.rawLyric.removedLines}," +
+                    "translation:${truncated.translationLyric.removedLines} " +
+                    "budget=$budget"
+            )
+        }
+        return try {
+            submit(context, payloadIntent, logTag, source)
+        } catch (error: SystemUiBroadcastPayloadRejectedException) {
+            // A second reject means the metadata alone exceeds the budget; there
+            // is nothing lyric-local we can drop. Surface the original error so
+            // the Provider's runCatching flow logs the failure once.
+            throw error
+        }
     }
 
     private fun prepareDirectBroadcast(context: Context, payloadIntent: Intent, source: String) {

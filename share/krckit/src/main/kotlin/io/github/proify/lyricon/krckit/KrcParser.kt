@@ -6,6 +6,7 @@
 
 package io.github.proify.lyricon.krckit
 
+import io.github.proify.extensions.ProviderDiagnostics
 import io.github.proify.lyricon.lyric.model.LyricLine
 import io.github.proify.lyricon.lyric.model.LyricWord
 import java.util.regex.Pattern
@@ -67,7 +68,9 @@ object KrcParser {
                     try {
                         lines.add(parseLineBody(lineStart, lineDur, lineBody))
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        ProviderDiagnostics.logWarning("krc-line-parse") {
+                            "Failed to parse line body at ${lineStart}ms: ${e.message}"
+                        }
                     }
                 }
                 return@forEach

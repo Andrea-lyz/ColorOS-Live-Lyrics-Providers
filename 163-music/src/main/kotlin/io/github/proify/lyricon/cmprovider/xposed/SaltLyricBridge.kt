@@ -15,10 +15,12 @@ import io.github.proify.extensions.android.SystemUiBroadcastSender
 import io.github.proify.extensions.bridge.BridgeInlineSegmentPolicy
 import io.github.proify.extensions.bridge.BridgePayloadGate
 import io.github.proify.extensions.bridge.BridgePlaybackStateGate
+import io.github.proify.extensions.bridge.LrcTimeFormatter
+import io.github.proify.extensions.bridge.TrackKeyBuilder
+import io.github.proify.extensions.bridge.WordTimeNormalizer
 import io.github.proify.extensions.bridge.retainBridgeLyricLines
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.Song
-import java.util.Locale
 import kotlin.math.max
 
 object SaltLyricBridge {
@@ -119,7 +121,15 @@ object SaltLyricBridge {
         }
 
         runCatching {
-            SystemUiBroadcastSender.submit(context, intent, TAG, SOURCE_NETEASE_MUSIC)
+            SystemUiBroadcastSender.submitWithLyricLineFallback(
+                context = context,
+                payloadIntent = intent,
+                originalLyric = lyric,
+                originalRawLyric = rawLyric,
+                originalTranslationLyric = translationLyric,
+                logTag = TAG,
+                source = SOURCE_NETEASE_MUSIC
+            )
         }.onSuccess {
             debug(
                 "Sent Netease direct lyric payload, generation=$trackGeneration, " +
@@ -226,7 +236,7 @@ object SaltLyricBridge {
             }
 
             builder.append('[')
-                .append(formatLrcTime(line.begin))
+                .append(LrcTimeFormatter.format(line.begin))
                 .append(']')
             words.forEach wordLoop@{ word ->
                 val segment = cleanInlineSegment(word.text)
@@ -234,14 +244,14 @@ object SaltLyricBridge {
                     return@wordLoop
                 }
                 builder.append('<')
-                    .append(formatLrcTime(word.begin))
+                    .append(LrcTimeFormatter.format(word.begin))
                     .append('>')
                     .append(segment)
             }
             val end = inferEnhancedLineEnd(line, words)
             if (end > line.begin) {
                 builder.append('<')
-                    .append(formatLrcTime(end))
+                    .append(LrcTimeFormatter.format(end))
                     .append('>')
             }
             builder.append('\n')
@@ -450,23 +460,14 @@ object SaltLyricBridge {
         val clean = cleanPlainText(text)
         if (clean.isBlank()) return
         builder.append('[')
-            .append(formatLrcTime(timeMillis))
+            .append(LrcTimeFormatter.format(timeMillis))
             .append(']')
             .append(clean)
             .append('\n')
     }
 
-    private fun normalizeWordTime(line: RichLyricLine, wordTime: Long): Long {
-        val lineDuration = max(line.duration, line.end - line.begin)
-        if (line.begin > 0L &&
-            wordTime >= 0L &&
-            wordTime + 250L < line.begin &&
-            wordTime <= max(lineDuration + 2000L, 2000L)
-        ) {
-            return line.begin + wordTime
-        }
-        return wordTime
-    }
+    private fun normalizeWordTime(line: RichLyricLine, wordTime: Long): Long =
+        WordTimeNormalizer.toAbsolute(line, wordTime)
 
     private fun buildRequestId(song: Song, rawLyric: String, translationLyric: String): String {
         val id = song.id.orEmpty().ifBlank { buildTrackKey(song.name, song.artist) }
@@ -474,35 +475,15 @@ object SaltLyricBridge {
         return "netease-cloud-music:$id:$hash"
     }
 
-    private fun buildTrackKey(title: String?, artist: String?): String {
-        val normalizedTitle = normalizeTrackComponent(title)
-        if (normalizedTitle.isBlank()) return ""
-        return normalizedTitle + "|" + normalizeTrackComponent(artist)
-    }
+    private fun buildTrackKey(title: String?, artist: String?): String =
+        TrackKeyBuilder.build(title, artist)
 
     private fun validDuration(duration: Long): Long {
         return if (duration in 1L..MAX_REASONABLE_DURATION_MS) duration else 0L
     }
 
-    private fun normalizeTrackComponent(value: String?): String {
-        if (value == null) return ""
-        val builder = StringBuilder(value.length)
-        var inWhitespace = false
-        value.trim().forEach { raw ->
-            val ch = when (raw) {
-                '\u2018', '\u2019', '\u02bc', '\uff07' -> '\''
-                else -> raw.lowercaseChar()
-            }
-            val whitespace = ch == ' ' || ch == '\t'
-            if (whitespace) {
-                if (!inWhitespace) builder.append(' ')
-            } else {
-                builder.append(ch)
-            }
-            inWhitespace = whitespace
-        }
-        return builder.toString().lowercase(Locale.ROOT)
-    }
+    private fun normalizeTrackComponent(value: String?): String =
+        TrackKeyBuilder.normalizeTrackComponent(value)
 
     private fun cleanInlineSegment(text: String): String {
         return text.replace('\r', ' ').replace('\n', ' ')
@@ -523,13 +504,5 @@ object SaltLyricBridge {
         if (Log.isLoggable(TAG, Log.VERBOSE)) {
             Log.d(TAG, message)
         }
-    }
-
-    private fun formatLrcTime(timeMillis: Long): String {
-        val safeTime = max(0L, timeMillis)
-        val minutes = safeTime / 60000L
-        val seconds = (safeTime % 60000L) / 1000L
-        val millis = safeTime % 1000L
-        return String.format(Locale.ROOT, "%02d:%02d.%03d", minutes, seconds, millis)
     }
 }

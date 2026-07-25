@@ -9,28 +9,62 @@ package io.github.proify.extensions.bridge
 import kotlin.math.abs
 
 class BridgePayloadGate(
-    private val duplicateWindowMs: Long = 30_000L
+    private val duplicateWindowMs: Long = 30_000L,
+    private val maxEntries: Int = 8
 ) {
-    private var lastKey = ""
-    private var lastSentAtMillis = Long.MIN_VALUE
+    private val recent: ArrayDeque<Entry> = ArrayDeque()
 
     @Synchronized
     fun shouldSend(key: String, nowMillis: Long): Boolean {
         if (key.isBlank()) return true
-        val duplicate = key == lastKey && elapsedSince(lastSentAtMillis, nowMillis) < duplicateWindowMs
+        evictExpired(nowMillis)
+        val duplicate = recent.any { entry ->
+            entry.key == key && elapsedSince(entry.sentAtMillis, nowMillis) < duplicateWindowMs
+        }
         if (duplicate) return false
-        lastKey = key
-        lastSentAtMillis = nowMillis
+        if (recent.size >= maxEntries) {
+            recent.removeFirst()
+        }
+        recent.addLast(Entry(key, nowMillis))
         return true
     }
 
     @Synchronized
     fun forget(key: String) {
-        if (key == lastKey) {
-            lastKey = ""
-            lastSentAtMillis = Long.MIN_VALUE
+        if (key.isBlank()) return
+        evictExpired(recent.firstOrNull()?.sentAtMillis ?: Long.MIN_VALUE)
+        val iterator = recent.iterator()
+        while (iterator.hasNext()) {
+            if (iterator.next().key == key) {
+                iterator.remove()
+            }
         }
     }
+
+    @Synchronized
+    fun reset() {
+        recent.clear()
+    }
+
+    /**
+     * Drops entries whose `sentAtMillis` falls outside the duplicate window
+     * relative to [nowMillis]. Without this, the gate would keep suppressing
+     * sends for keys that fell out of the window *before* the next
+     * `shouldSend` arrived.
+     */
+    private fun evictExpired(nowMillis: Long) {
+        if (recent.isEmpty()) return
+        while (recent.isNotEmpty()) {
+            val oldest = recent.first()
+            if (elapsedSince(oldest.sentAtMillis, nowMillis) >= duplicateWindowMs) {
+                recent.removeFirst()
+            } else {
+                break
+            }
+        }
+    }
+
+    private data class Entry(val key: String, val sentAtMillis: Long)
 }
 
 class BridgePlaybackStateGate(

@@ -497,81 +497,72 @@ abstract class KuGouBase : YukiBaseHooker() {
                     parameters(MediaMetadata::class.java)
                 }.hook {
                     before {
-                        val metadata = args[0] as? MediaMetadata ?: return@before
                         if (useOriginalApkLyricPipeline()) {
-                            val incoming = metadataDataFrom(metadata) ?: return@before
-                            if (!shouldIgnoreOriginalCarLyricMetadata(incoming)) {
-                                return@before
-                            }
-                            // Rebuilding the car-lyric metadata with only the stable title/artist
-                            // still publishes its artwork fields (usually none) and clears the real
-                            // album cover from the MediaSession.  The existing session already has
-                            // the stable track metadata, so suppress this transient update entirely.
-                            result = null
-                            diagnoseDebug(
-                                "KG_ORIG suppress car lyric MediaSession metadata (retain artwork): " +
-                                    incoming.title.take(80)
-                            )
+                            // Let the MediaSession receive KuGou's native setMetadata call
+                            // untouched.  Suppressing car-lyric titles here also blocks the
+                            // real artwork update on track change, which left the lock-screen
+                            // cover stuck on the previous track.
                             return@before
                         }
 
-                        if (!shouldStabilizeNoisyMetadataIdentity()) return@before
+                        val metadata = args[0] as? MediaMetadata ?: return@before
                         if (KuGouLyricInfoPublisher.isSelfPublishing()) return@before
 
-                        val incoming = metadataDataFrom(metadata)
-                        if (incoming != null) {
-                            val snapshot = currentTrackSnapshot()
-                            val target = sanitizeTargetForNoisyMetadata(incoming, snapshot)
-                            if (target != null) {
-                                val isSameTitle = normalizeLocalLyricFileText(target.title) == normalizeLocalLyricFileText(incoming.title)
-                                val isSameArtist = normalizeLocalLyricFileText(target.artist) == normalizeLocalLyricFileText(incoming.artist)
-                                if (!isSameTitle || !isSameArtist) {
-                                    if (!shouldUseCarLyricFallback()) {
-                                        diagnose(
-                                            "KG_DIAG block car lyric setMetadata: ${incoming.title}"
-                                        )
-                                        result = null
-                                        return@before
+                        if (shouldStabilizeNoisyMetadataIdentity()) {
+                            val incoming = metadataDataFrom(metadata)
+                            if (incoming != null) {
+                                val snapshot = currentTrackSnapshot()
+                                val target = sanitizeTargetForNoisyMetadata(incoming, snapshot)
+                                if (target != null) {
+                                    val isSameTitle = normalizeLocalLyricFileText(target.title) == normalizeLocalLyricFileText(incoming.title)
+                                    val isSameArtist = normalizeLocalLyricFileText(target.artist) == normalizeLocalLyricFileText(incoming.artist)
+                                    if (!isSameTitle || !isSameArtist) {
+                                        if (!shouldUseCarLyricFallback()) {
+                                            diagnose(
+                                                "KG_DIAG block car lyric setMetadata: ${incoming.title}"
+                                            )
+                                            result = null
+                                            return@before
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        rememberStableArtworkMetadata(metadata)
-                        var patched = sanitizeNoisyOfficialMetadata(metadata)
-                        if (!patched.hasKuGouArtworkBitmap()) {
-                            val incomingData = metadataDataFrom(patched)
-                            if (incomingData != null) {
-                                val snapshot = currentTrackSnapshot()
-                                val current = snapshot.metadata
-                                val pending = synchronized(stateLock) { pendingMetadataIdentity }
-                                val matches = when {
-                                    pending != null && looksLikeMetadataForTrack(incomingData, pending) -> true
-                                    current != null && looksLikeMetadataForTrack(incomingData, current) -> true
-                                    else -> false
-                                }
-                                if (matches) {
-                                    val builder = MediaMetadata.Builder(patched)
-                                    copyCachedArtwork(builder, incomingData)
-                                    patched = builder.build()
+                            rememberStableArtworkMetadata(metadata)
+                            var patched = sanitizeNoisyOfficialMetadata(metadata)
+                            if (!patched.hasKuGouArtworkBitmap()) {
+                                val incomingData = metadataDataFrom(patched)
+                                if (incomingData != null) {
+                                    val snapshot = currentTrackSnapshot()
+                                    val current = snapshot.metadata
+                                    val pending = synchronized(stateLock) { pendingMetadataIdentity }
+                                    val matches = when {
+                                        pending != null && looksLikeMetadataForTrack(incomingData, pending) -> true
+                                        current != null && looksLikeMetadataForTrack(incomingData, current) -> true
+                                        else -> false
+                                    }
+                                    if (matches) {
+                                        val builder = MediaMetadata.Builder(patched)
+                                        copyCachedArtwork(builder, incomingData)
+                                        patched = builder.build()
+                                    }
                                 }
                             }
-                        }
-                        if (patched !== metadata) {
-                            args[0] = patched
+                            if (patched !== metadata) {
+                                args[0] = patched
+                            }
                         }
                     }
                     after {
                         val metadata = args[0] as? MediaMetadata ?: return@after
                         if (useOriginalApkLyricPipeline()) {
                             val incoming = metadataDataFrom(metadata) ?: return@after
-                            if (shouldIgnoreOriginalCarLyricMetadata(incoming)) {
-                                diagnoseDebug(
-                                    "KG_ORIG ignore car lyric metadata: ${incoming.title.take(80)}"
-                                )
-                            } else {
-                                handleOriginalMetadataChange(incoming)
-                            }
+                            // Always refresh the internal track snapshot.  Car-lyric
+                            // titles still arrive here but they no longer gate the
+                            // snapshot update — SystemUI is now in charge of the
+                            // user-facing metadata and Provider only needs the
+                            // track identity to drive KRC lyric resolution.
+                            handleOriginalMetadataChange(incoming)
                             return@after
                         }
                         val session = instance as? MediaSession
@@ -647,20 +638,6 @@ abstract class KuGouBase : YukiBaseHooker() {
             return
         }
         acceptMetadataIdentity(meta)
-    }
-
-    private fun shouldIgnoreOriginalCarLyricMetadata(meta: MetadataData): Boolean {
-        val snapshot = currentTrackSnapshot()
-        val current = snapshot.metadata
-
-        if (current == null || snapshot.generation <= 0L) return false
-
-        val currentLyrics = LyricsCache.get(current.identityKeys).orEmpty()
-        return KuGouOriginalMediaMetadataPolicy.shouldSuppressCarLyricMetadata(
-            current,
-            meta,
-            currentLyrics.asSequence().map { it.text.orEmpty() }.asIterable()
-        )
     }
 
     private fun metadataDataFrom(metadata: MediaMetadata): MetadataData? {
@@ -1345,6 +1322,8 @@ abstract class KuGouBase : YukiBaseHooker() {
         } ?: return false
         val firstLine = candidate.lyrics.firstOrNull()?.text
         if (!KuGouOriginalLyricCandidatePolicy.hasForeignLeadingMetadata(
+                candidate.capturedSongId,
+                target.identityId,
                 firstLine,
                 target.title,
                 target.artist

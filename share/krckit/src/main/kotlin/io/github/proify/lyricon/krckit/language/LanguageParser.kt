@@ -6,6 +6,7 @@
 
 package io.github.proify.lyricon.krckit.language
 
+import io.github.proify.extensions.ProviderDiagnostics
 import kotlinx.serialization.json.Json
 
 object LanguageParser {
@@ -19,7 +20,9 @@ object LanguageParser {
         return try {
             json.decodeFromString<LanguageInfo>(jsonString)
         } catch (e: Exception) {
-            e.printStackTrace()
+            ProviderDiagnostics.logWarning("krc-language-parse") {
+                "Failed to decode language JSON: ${e.message}"
+            }
             null
         }
     }

@@ -8,6 +8,7 @@
 
 package io.github.proify.lyricon.krckit
 
+import io.github.proify.extensions.ProviderDiagnostics
 import io.github.proify.lyricon.krckit.language.LanguageParser
 import io.github.proify.lyricon.lyric.model.LyricLine
 import io.github.proify.lyricon.lyric.model.RichLyricLine
@@ -26,10 +27,14 @@ data class KrcDocument(
         val translates = languageInfo?.getTranslate()?.flatten() ?: emptyList()
 
         if (lines.size != romas.size) {
-            println("romas size not match lines size, sourceSize: ${lines.size}, romaSize: ${romas.size}")
+            ProviderDiagnostics.logWarning("krc-roma-mismatch") {
+                "romas size not match lines size, sourceSize: ${lines.size}, romaSize: ${romas.size}"
+            }
         }
         if (lines.size != translates.size) {
-            println("translates size not match lines size, sourceSize: ${lines.size}, translateSize: ${translates.size}")
+            ProviderDiagnostics.logWarning("krc-translate-mismatch") {
+                "translates size not match lines size, sourceSize: ${lines.size}, translateSize: ${translates.size}"
+            }
         }
 
         lines.mapIndexed { index, line ->
@@ -56,7 +61,9 @@ data class KrcDocument(
             val decoded = Base64.decode(value)
             String(decoded, Charsets.UTF_8)
         }.onFailure {
-            it.printStackTrace()
+            ProviderDiagnostics.logWarning("krc-language-decode") {
+                "Failed to base64-decode language metadata: ${it.message}"
+            }
         }.getOrNull() ?: value
 
         decode

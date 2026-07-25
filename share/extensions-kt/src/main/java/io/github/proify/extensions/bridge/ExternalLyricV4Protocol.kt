@@ -46,4 +46,18 @@ object ExternalLyricV4Protocol {
 
     const val CAPABILITY_TRACK_GENERATION = "trackGeneration"
     const val CAPABILITY_TRANSLATION_TOGGLE = "translationToggle"
+
+    // -- Size limits (mirror values in io.github.andrealtb.lockscreenlyrics
+    // .protocol.ExternalLyricProtocol). Keeping a single source of truth per
+    // side avoids the case where one side rejects a payload the other side
+    // would still accept. Bridge-side checks are character-based because the
+    // SystemUI receiver inspects string lengths before deserialization;
+    // Provider-side checks are byte-based because Parcel.dataSize() measures
+    // the marshalled bundle. The numeric gap is intentional: 1.5 MB of
+    // characters (UTF-16) can comfortably marshal under 512 KiB once the
+    // extras are added.
+    const val MAX_PARCEL_BYTES = 512 * 1024
+    const val MAX_LYRIC_FIELD_CHARS = 1_500_000
+    const val MAX_TOTAL_LYRIC_CHARS = 3_000_000
+    const val MAX_METADATA_FIELD_CHARS = 16_384
 }

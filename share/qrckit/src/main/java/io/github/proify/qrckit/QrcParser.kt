@@ -68,13 +68,15 @@ object QrcParser {
             val bodyEnd = if (i + 1 < lineMatches.size) {
                 lineMatches[i + 1].range.first
             } else {
-                // 处理最后一行，QRC 结尾可能带有额外的 ']'
-                val lastIdx = content.lastIndexOf(']')
-                if (lastIdx > bodyStart) lastIdx else content.length
+                // 末行：以换行为边界，避免命中 ID3 meta 残留里的 ']'。
+                val newlineIdx = content.indexOf('\n', bodyStart)
+                val candidate = if (newlineIdx >= 0) newlineIdx else content.length
+                if (candidate > bodyStart) candidate else content.length
             }
 
             if (bodyStart < bodyEnd) {
-                val lineBody = content.substring(bodyStart, bodyEnd)
+                var lineBody = content.substring(bodyStart, bodyEnd)
+                if (lineBody.endsWith('\r')) lineBody = lineBody.dropLast(1)
                 lines.add(parseLineBody(lineStart, lineDur, lineBody))
             }
         }

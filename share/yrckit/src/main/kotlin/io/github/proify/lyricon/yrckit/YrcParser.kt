@@ -52,12 +52,25 @@ object YrcParser {
                     )
                 }
 
-                val sorted = words.sortedBy { it.begin }
+                val safeLineBegin = lineStart.coerceAtLeast(0L)
+                val safeLineDuration = lineDuration.coerceAtLeast(0L)
+                val safeLineEnd = (safeLineBegin + safeLineDuration).coerceAtLeast(safeLineBegin)
+                val sorted = words
+                    .map { word ->
+                        val clampedBegin = word.begin.coerceAtLeast(safeLineBegin)
+                        val clampedDuration = word.duration.coerceAtLeast(0L)
+                        word.copy(
+                            begin = clampedBegin,
+                            duration = clampedDuration,
+                            end = (clampedBegin + clampedDuration).coerceAtLeast(clampedBegin)
+                        )
+                    }
+                    .sortedBy { it.begin }
                 entries.add(
                     LyricLine(
-                        begin = lineStart,
-                        end = lineEnd,
-                        duration = lineDuration,
+                        begin = safeLineBegin,
+                        end = safeLineEnd,
+                        duration = safeLineDuration,
                         text = sorted.joinToString("") { it.text.orEmpty() },
                         words = sorted
                     )
