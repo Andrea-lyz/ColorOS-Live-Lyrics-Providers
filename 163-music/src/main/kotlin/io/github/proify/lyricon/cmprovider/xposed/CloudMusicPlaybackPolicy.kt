@@ -31,12 +31,12 @@ object CloudMusicPlaybackPolicy {
     }
 
     /**
-     * The 9.0.40 historical build is LSPatch-wrapped.  Its :play process is
-     * only used for playback callbacks and must not run DexKit against the
-     * wrapper APK's sourceDir.
+     * Upstream discovers showLyricSetting with DexKit in both the package and
+     * :play processes. Preserve that behavior unless the host APK already
+     * contains a conflicting native DexKit library.
      */
-    fun isLightweightPlaybackProcess(packageName: String?, processName: String?): Boolean =
-        packageName == NETEASE_PACKAGE && processName == NETEASE_PACKAGE + PLAY_PROCESS_SUFFIX
+    fun allowsDexKitPreferenceDiscovery(hostBundlesDexKit: Boolean): Boolean =
+        !hostBundlesDexKit
 
     /** Compatibility overload used by lightweight policy tests/callers. */
     fun isPlaybackProcess(processName: String?): Boolean =

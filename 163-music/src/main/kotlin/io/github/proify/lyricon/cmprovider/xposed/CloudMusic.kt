@@ -44,12 +44,10 @@ object CloudMusic : YukiBaseHooker() {
     override fun onHook() {
         if (CloudMusicPlaybackPolicy.isPlaybackProcess(packageName, processName)) {
             ProviderDiagnostics.debug(TAG) { "Hooking authoritative process $processName" }
-            // The historical 9.0.40 APK is LSPatch-wrapped and publishes its
-            // MediaSession from :play.  Its sourceDir points at the wrapper,
-            // not the original dex container; loading/scanning it with DexKit
-            // can abort the process before any hook is installed.  The play
-            // process does not need preference discovery, so keep it in the
-            // lightweight MediaSession/PlayService mode below.
+            // Match upstream LyricProvider behavior by discovering the
+            // showLyricSetting accessor in every playback process, including
+            // :play. The only exception is an APK that already bundles a
+            // conflicting libdexkit.so (for example an LSPatch wrapper).
             if (providerManager.shouldUseDexKit) {
                 runCatching { System.loadLibrary("dexkit") }
                     .onFailure { error ->
@@ -115,9 +113,6 @@ object CloudMusic : YukiBaseHooker() {
             }
         }
 
-        private val lightweightPlaybackProcess =
-            CloudMusicPlaybackPolicy.isLightweightPlaybackProcess(packageName, processName)
-
         /**
          * The supplied slim APK embeds Dolby's LSPatch module.  That module
          * contributes its own libdexkit.so to the host APK, with a different
@@ -137,7 +132,7 @@ object CloudMusic : YukiBaseHooker() {
         }
 
         val shouldUseDexKit: Boolean
-            get() = !lightweightPlaybackProcess && !hostBundlesDexKit
+            get() = CloudMusicPlaybackPolicy.allowsDexKitPreferenceDiscovery(hostBundlesDexKit)
 
         // ---------------------------------- 入口与初始化 ----------------------------------
 
@@ -162,12 +157,8 @@ object CloudMusic : YukiBaseHooker() {
             } else {
                 preferencesMonitor = PreferencesMonitor(null, preferenceCallback)
                 ProviderDiagnostics.debug(TAG) {
-                    val reason = when {
-                        lightweightPlaybackProcess -> "historical :play process"
-                        hostBundlesDexKit -> "host APK already bundles libdexkit.so"
-                        else -> "unsupported process"
-                    }
-                    "Skipping DexKit preference scan ($reason)"
+                    "Skipping DexKit preference scan " +
+                        "(host APK already bundles libdexkit.so)"
                 }
             }
 
@@ -220,6 +211,12 @@ object CloudMusic : YukiBaseHooker() {
             val application = appContext ?: return
             lyricProvider?.destroy()
 
+            // LSPatch's outer wrapper class loader cannot see NetEase's
+            // obfuscated preference accessor. By Application.onCreate the
+            // original APK class loader is available, so resolve the known
+            // accessor again before reading showLyricSetting.
+            preferencesMonitor?.update(application.classLoader)
+
             lyricProvider = LyriconFactory.createProvider(
                 context = application,
                 providerPackageName = PROVIDER_PACKAGE_NAME,
@@ -234,7 +231,9 @@ object CloudMusic : YukiBaseHooker() {
                 register()
             }
 
-            ProviderDiagnostics.debug(TAG) { "Provider registered" }
+            ProviderDiagnostics.debug(TAG) {
+                "Provider registered, translationType=$translationType"
+            }
         }
 
         // ---------------------------------- MediaSession 钩子 ----------------------------------

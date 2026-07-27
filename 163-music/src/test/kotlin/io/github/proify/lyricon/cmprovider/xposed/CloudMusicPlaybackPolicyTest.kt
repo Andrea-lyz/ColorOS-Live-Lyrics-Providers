@@ -41,19 +41,9 @@ class CloudMusicPlaybackPolicyTest {
     }
 
     @Test
-    fun historicalNeteasePlayProcessUsesLightweightMode() {
-        assertTrue(
-            CloudMusicPlaybackPolicy.isLightweightPlaybackProcess(
-                "com.netease.cloudmusic",
-                "com.netease.cloudmusic:play"
-            )
-        )
-        assertFalse(
-            CloudMusicPlaybackPolicy.isLightweightPlaybackProcess(
-                "com.hihonor.cloudmusic",
-                "com.hihonor.cloudmusic"
-            )
-        )
+    fun originalPreferenceDiscoveryIsOnlyDisabledForConflictingHostDexKit() {
+        assertTrue(CloudMusicPlaybackPolicy.allowsDexKitPreferenceDiscovery(false))
+        assertFalse(CloudMusicPlaybackPolicy.allowsDexKitPreferenceDiscovery(true))
     }
 
     @Test
