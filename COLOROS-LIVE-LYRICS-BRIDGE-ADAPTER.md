@@ -234,16 +234,26 @@ provider 发给 Bridge 前应做轻量清洗：
 推荐抓取：
 
 ```powershell
+$tags = @(
+    'LockscreenLyrics',
+    'LockscreenLyricsParse',
+    'AndroidRuntime',
+    '<ProviderCoreTag>',
+    '<ProviderBridgeTag>'
+)
+foreach ($tag in $tags) {
+    adb shell setprop "log.tag.$tag" VERBOSE
+}
 adb logcat -c
-adb shell setprop log.tag.Lyricon_SaltBridge VERBOSE
-adb shell setprop log.tag.Lyricon_NeteaseBridge VERBOSE
-adb logcat -d -v time -s LockscreenLyrics AndroidRuntime Lyricon_SaltBridge Lyricon_NeteaseBridge > logcat.log
+adb logcat -b all -v threadtime -s $tags |
+    Tee-Object -FilePath 'provider-log.txt'
 ```
 
 实时观察：
 
 ```powershell
-adb logcat -v time -s LockscreenLyrics AndroidRuntime Lyricon_SaltBridge Lyricon_NeteaseBridge
+$tags = @('LockscreenLyrics', 'LockscreenLyricsParse', 'AndroidRuntime', '<ProviderCoreTag>', '<ProviderBridgeTag>')
+adb logcat -b all -v threadtime -s $tags
 ```
 
 Provider 的正常提交、缓存命中和 direct broadcast 成功日志默认静默，仅在对应 Tag 显式设为
@@ -326,3 +336,26 @@ build/all-apks/debug/
 ```
 
 如果 release 侧需要和 ColorOS Live Lyrics Bridge 保持同签名，确保对应模块的 `signingConfigs.release` 可用；本地 debug 验证可以保留 release keystore 不存在时回退 debug signing 的逻辑。
+
+## Provider 运行时冒烟检查与常见阻断
+
+Provider 适配不能只确认“歌词搜索成功”。每次首次播放和切歌测试都要按下面的顺序检查完整链路：
+
+1. **Hook 初始化**：先看到 `Hooked ...` 和 `Lyricon provider registered=true`。如果没有这些日志，先检查类初始化异常；不要在 Provider `object` / 静态字段初始化阶段创建 `Handler(Looper.getMainLooper())`、读取 Application、访问播放器类或执行依赖主线程的 API。YukiHookAPI 可能在 `initZygote` 阶段实例化 Hooker，此时应用主 Looper 尚未准备好。主线程对象应延迟到真实应用回调中创建。
+2. **曲目识别**：确认 `Track changed` 携带正确的 `mediaId`、标题、歌手、时长和 generation。异步搜索必须绑定该 generation，并在回调提交前再次确认仍是当前曲目。
+3. **搜索与发送分层**：`Got lyrics from ...` 只证明搜索器返回了结果；随后必须出现 `Lyrics found ...` 和 `Sent <Provider> lyrics ...`。发送前的清洗、正则、LRC 转换、Parcel 预算或广播异常都可能让“搜索成功”变成“没有广播”。不要只看搜索日志。
+4. **异常逐阶段定位**：重点搜索 `Exception`、`PatternSyntaxException`、`NoClassDefFoundError`、`SecurityException`、`Failed to send`。如果异常出现在 `SaltLyricBridge.send` 之前，Bridge 不会收到歌词；如果异常出现在 `send` 之后，再检查 v4 准入和 Bridge 日志。
+5. **Bridge 接收和渲染**：Provider 侧应有 `Sent ... lyrics`，Bridge 侧依次确认 `Accepted bridge lyricInfo`、`Promoted external lyric document`、`Synthesized SystemUI lyricInfo`、`Replayed SystemUI metadata lyric load after external promotion`，最后检查 `Prepared lyric surface render pass` 的 `itemCount` 是否非零以及 `Primed LyricsRecyclerView`。缺少哪一层，就只排查该层及其上一层。
+
+逐字歌词还必须额外检查数据源格式，不能把 `parser=lyrics-core` 当作逐字证据：
+
+- Provider 成功日志应明确输出 `timing=word|line`，发送日志应给出行内 `<mm:ss.xxx>` 标签数量。`rawLyric` 与 `lyric` 字符数相同通常意味着两条 lane 都只是逐行 LRC，需要继续核对源格式。
+- 同一数据源若同时提供逐行与逐字下载格式，逐字 lane 必须优先取逐字格式。例如 KuGou 的 `fmt=lrc` 只有行时间，Metrolist Provider 应优先下载 `fmt=krc`，经 `share:krckit` 解密、解析后生成 `[line]<word-time>text...<line-end>`；仅在 KRC 失败时回退 LRC。
+- TTML 转 enhanced LRC 时要先识别单词边界，再追加最后一个 word 的结束标签。Apple/BetterLyrics TTML 以 span 之间的空白文本节点表示拉丁单词边界；无空白的相邻拉丁 span 是同一单词的音节。由于 Bridge 的 enhanced-LRC parser 会把相邻 ASCII 时间段视为独立单词并补空格，Provider 必须先把这些音节合并为一个定时单词；CJK span 仍保留独立时间。`audio lyricOffset` 必须同时应用到行和 span 时间。发送前 sanitizer 必须有定向测试证明保留下来的标签数量和时间值不变。
+- Bridge 是否保留逐字模型要用解析后的 syllable/word 数验证；`Cached SystemUI word lyric model, parser=lyrics-core` 只表示统一解析器返回了模型，普通逐行 LRC 也可能走该解析器。
+- 复刻宿主的供应商优先级时，必须先从宿主源码确认 DataStore 名称、键类型和默认值，再按正式 protobuf 结构读取，不能猜测文件名或扫描可打印字节。供应商请求参数也要与宿主保持一致，包括专辑名等可选匹配条件；否则日志即使显示“先尝试首选供应商”，首选请求也可能因参数缺失而失败并错误降级到后续供应商。Metrolist 的实际文件是 `files/datastore/settings.preferences_pb`，顺序键是 `lyricsProviderOrder`，BetterLyrics 还需要转发 `album` 为 `al`。
+- 顺序搜索必须设置逐供应商超时，并让当前网络调用真正响应协程取消；仅在阻塞 `execute()` 外包一层 `withTimeout` 不能及时停止请求。切歌取消旧任务时，旧供应商请求也应同步取消，避免过期歌词继续占用连接或在新曲之后返回。建议把顺序调度、供应商实现、宿主设置读取和格式解析拆为可独立测试的职责。
+
+已验证的 Metrolist 反例：歌词已从 KuGou 返回，但 `SaltLyricBridge.sanitizeExtendedLrc` 中未转义右花括号的正则抛出 `PatternSyntaxException`，导致没有 `Sent Metrolist lyrics`。这类发送前异常必须记录为 Provider 发布阶段失败，不能误判为歌词源搜索失败。
+
+Bridge 与所有 Provider 的完整 Tag 注册表、`setprop` 开启规则、统一抓取脚本和分层验收顺序见工作区根目录的 `LOGGING-DEBUG-CAPTURE.md`。
