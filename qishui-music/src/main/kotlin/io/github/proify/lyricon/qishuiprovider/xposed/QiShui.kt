@@ -652,7 +652,11 @@ object QiShui : YukiBaseHooker() {
     }
 
     private fun publishLyriconSong(song: Song) {
-        if (lastLyriconSong == song) return
+        // Only re-publish when lyric content actually changes. Metadata-only
+        // updates (name/artist/duration) must not reset the Lyricon overlay;
+        // doing so causes visible flickering and lost transition animations.
+        val last = lastLyriconSong
+        if (last != null && last.id == song.id && last.lyrics == song.lyrics) return
         val player = provider?.player ?: return
         player.setSong(song)
         lastLyriconSong = song

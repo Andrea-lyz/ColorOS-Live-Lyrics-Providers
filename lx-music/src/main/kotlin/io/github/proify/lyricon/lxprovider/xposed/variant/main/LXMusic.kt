@@ -158,10 +158,10 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
                             }
                         }
                     }
-                    after {
-                        val state = args[0] as? PlaybackState
-                        provider.player.setPlaybackState(state)
-                    }
+                    // Lyricon position/state is driven exclusively by the LyricModule play/pause
+                    // hooks and the anchor-based sync loop. Do NOT forward the platform
+                    // PlaybackState here; it conflicts with the manual position calculation
+                    // and causes lyric overlay flickering / progress mismatch (issue #19).
                 }
 
                 firstMethod {
@@ -174,12 +174,10 @@ open class LXMusic(private vararg val lyricModuleClasses: String) :
                         val metadata = selectBridgeMetadata(incomingMetadata)
                         publishBridgeTrack(metadata)
                         publishBridgeLyrics(metadata)
-                        // 如果已有歌词信息，更新歌曲信息
-                        lastRichLyric?.let { richLyric ->
-                            lastSongId?.let { songId ->
-                                provider.player.setSong(richLyric.toSong(songId, metadata))
-                            }
-                        }
+                        // Lyricon setSong is driven exclusively by LyricModule.setLyric via updateLyric().
+                        // Re-publishing on every MediaSession metadata change causes the overlay
+                        // to reset and flicker (issue #19). Bridge track/lyric publishing above
+                        // is unaffected.
                     }
                 }
             }
