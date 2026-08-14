@@ -58,6 +58,7 @@ abstract class KuGouBase : YukiBaseHooker() {
         private const val LOCAL_LYRIC_FILE_FALLBACK_RETRY_COUNT = 3
         private const val LOCAL_LYRIC_FILE_FALLBACK_RETRY_INTERVAL_MS = 2_000L
         private const val MAX_PENDING_LYRIC_CANDIDATES = 8
+        private const val MAX_STABLE_METADATA_ENTRIES = 64
         private const val PLAYBACK_STATE_THROTTLE_MS = 300L
         private const val PLAYBACK_STATE_TRACK_CHANGE_SUPPRESS_MS = 600L
         private const val MAX_ARTWORK_CACHE_ENTRIES = 16
@@ -97,6 +98,12 @@ abstract class KuGouBase : YukiBaseHooker() {
         object : LinkedHashMap<String, MediaMetadata>(MAX_ARTWORK_CACHE_ENTRIES, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MediaMetadata>?): Boolean {
                 return size > MAX_ARTWORK_CACHE_ENTRIES
+            }
+        }
+    private val lastStableMetadataByIdentity =
+        object : LinkedHashMap<String, MetadataData>(MAX_STABLE_METADATA_ENTRIES, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MetadataData>?): Boolean {
+                return size > MAX_STABLE_METADATA_ENTRIES
             }
         }
     private var pendingLyricCandidateBindJob: Job? = null
@@ -782,13 +789,53 @@ abstract class KuGouBase : YukiBaseHooker() {
         builder.copyKuGouArtworkFrom(artwork)
     }
 
+    private fun sanitizeCarLyricIdentity(meta: MetadataData): MetadataData {
+        if (!shouldUseCarLyricFallback()) return meta
+        val identityId = meta.identityId
+        val derived = KuGouMetadataIdentityPolicy.carLyricDerivedIdentity(meta.title, meta.artist)
+        if (derived == null) {
+            if (identityId.isNotBlank()) {
+                synchronized(stateLock) { lastStableMetadataByIdentity[identityId] = meta }
+            }
+            return meta
+        }
+
+        synchronized(stateLock) {
+            lastStableMetadataByIdentity[identityId]?.let { stable ->
+                if (identityId.isNotBlank()) {
+                    diagnoseDebug(
+                        "KG_DIAG restore stable metadata on car lyric churn id=" + identityId.take(48) +
+                            " title=" + meta.title.take(32) + " -> " + stable.title.take(32)
+                    )
+                    return stable
+                }
+            }
+        }
+
+        val restored = MetadataData(
+            title = derived.realTitle,
+            artist = derived.realArtist,
+            album = meta.album,
+            duration = meta.duration,
+            mediaId = meta.mediaId,
+            mediaUri = meta.mediaUri
+        )
+        diagnoseDebug(
+            "KG_DIAG derive stable metadata on car lyric churn title=" + meta.title.take(32) +
+                " -> " + derived.realTitle.take(32) +
+                " artist=" + derived.realArtist.take(32)
+        )
+        return restored
+    }
+
     private fun acceptMetadataIdentity(meta: MetadataData, resolveLyrics: Boolean = true): Long {
-        val songId = meta.identityId
+        val sanitizedMeta = sanitizeCarLyricIdentity(meta)
+        val songId = sanitizedMeta.identityId
 
         val now = SystemClock.elapsedRealtime()
         val generation: Long
         val trackChanged: Boolean
-        var effectiveMeta = meta
+        var effectiveMeta = sanitizedMeta
         var lyricAlreadyReadyForGeneration = false
         var retainedStableRefresh = false
         synchronized(stateLock) {
@@ -804,7 +851,7 @@ abstract class KuGouBase : YukiBaseHooker() {
                     now + PLAYBACK_STATE_TRACK_CHANGE_SUPPRESS_MS
                 lastArtworkMetadata = null
                 lastArtworkIdentityId = ""
-                currentMetadata = meta
+                currentMetadata = effectiveMeta
             } else {
                 val currentGeneration = currentTrackGeneration
                 lyricAlreadyReadyForGeneration =
@@ -812,14 +859,14 @@ abstract class KuGouBase : YukiBaseHooker() {
                 val current = currentMetadata
                 if (shouldRetainStableMetadataRefresh(
                         current,
-                        meta,
+                        effectiveMeta,
                         lyricAlreadyReadyForGeneration
                     )
                 ) {
                     effectiveMeta = current!!
                     retainedStableRefresh = true
                 } else {
-                    currentMetadata = meta
+                    currentMetadata = effectiveMeta
                 }
             }
             generation = currentTrackGeneration
@@ -837,7 +884,7 @@ abstract class KuGouBase : YukiBaseHooker() {
         } else if (retainedStableRefresh) {
             diagnoseDebug(
                 "KG_DIAG keep stable metadata refresh gen=$generation " +
-                    "current=${effectiveMeta.trackKey.take(80)} incoming=${meta.trackKey.take(80)}"
+                    "current=${effectiveMeta.trackKey.take(80)} incoming=${effectiveMeta.trackKey.take(80)}"
             )
         } else {
             diagnoseDebug(
@@ -1262,11 +1309,25 @@ abstract class KuGouBase : YukiBaseHooker() {
         return value.replace(KUGOU_HASH_SUFFIX_REGEX, "")
     }
 
+    private fun isForeignLyricCandidateForTrack(
+        candidate: LyricCandidate,
+        meta: MetadataData
+    ): Boolean {
+        val identity = KuGouOriginalLyricCandidatePolicy.fileIdentityFromPath(candidate.path)
+            ?: return false
+        return KuGouOriginalLyricCandidatePolicy.isForeignFileIdentity(
+            fileArtist = identity.artist,
+            fileTitle = identity.title,
+            expectedTitle = meta.title,
+            expectedArtist = meta.artist
+        )
+    }
+
     private fun normalizeLocalLyricFileText(value: String?): String {
         if (value.isNullOrBlank()) return ""
         val builder = StringBuilder(value.length)
         value.trim().lowercase().forEach { ch ->
-            if (ch.isLetterOrDigit() || ch.code > 0x7F) {
+            if (ch.isLetterOrDigit()) {
                 builder.append(ch)
             }
         }
@@ -1390,6 +1451,7 @@ abstract class KuGouBase : YukiBaseHooker() {
             val candidate = pendingLyricCandidates
                 .asSequence()
                 .filter { isCandidateNearMetadataChange(it, startedAt) }
+                .filter { !isForeignLyricCandidateForTrack(it, pending) }
                 .maxWithOrNull(compareBy<LyricCandidate> { it.completedAtElapsed })
                 ?: return false
             pendingLyricCandidates.remove(candidate)
@@ -1414,6 +1476,14 @@ abstract class KuGouBase : YukiBaseHooker() {
         reason: String
     ): Boolean {
         if (!shouldStabilizeNoisyMetadataIdentity()) return false
+        val pendingMeta = synchronized(stateLock) { pendingMetadataIdentity } ?: return false
+        if (isForeignLyricCandidateForTrack(candidate, pendingMeta)) {
+            diagnoseDebug(
+                "KG_DIAG reject foreign file identity for pending metadata reason=" + reason +
+                    " path=" + candidate.path.takeLast(96)
+            )
+            return false
+        }
         val pending = synchronized(stateLock) {
             val meta = pendingMetadataIdentity ?: return false
             val startedAt = pendingMetadataIdentityStartedAtElapsed
@@ -1452,6 +1522,7 @@ abstract class KuGouBase : YukiBaseHooker() {
     private fun rememberPendingLyricCandidate(candidate: LyricCandidate) {
         synchronized(stateLock) {
             prunePendingLyricCandidatesLocked(SystemClock.elapsedRealtime())
+            pendingLyricCandidates.removeAll { it.path == candidate.path }
             pendingLyricCandidates.addLast(candidate)
             while (pendingLyricCandidates.size > MAX_PENDING_LYRIC_CANDIDATES) {
                 pendingLyricCandidates.removeFirst()
@@ -1481,7 +1552,7 @@ abstract class KuGouBase : YukiBaseHooker() {
             pendingLyricCandidates
                 .asSequence()
                 .map { it to lyricCandidateScore(it, snapshot, meta) }
-                .filter { it.second > 0 }
+                .filter { it.second > 0 && !isForeignLyricCandidateForTrack(it.first, meta) }
                 .maxWithOrNull(compareBy<Pair<LyricCandidate, Int>> { it.second }
                     .thenBy { it.first.completedAtElapsed })
                 ?.first
@@ -1497,6 +1568,15 @@ abstract class KuGouBase : YukiBaseHooker() {
     private fun bindLyricCandidateToCurrent(candidate: LyricCandidate, reason: String): Boolean {
         val snapshot = currentTrackSnapshot()
         val meta = snapshot.metadata ?: return false
+        if (isForeignLyricCandidateForTrack(candidate, meta)) {
+            diagnoseDebug(
+                "KG_DIAG reject foreign file identity reason=" + reason +
+                    " capturedGen=" + candidate.capturedGeneration +
+                    " currentGen=" + snapshot.generation +
+                    " path=" + candidate.path.takeLast(96)
+            )
+            return false
+        }
         val score = lyricCandidateScore(candidate, snapshot, meta)
         if (score <= 0) {
             diagnoseDebug(

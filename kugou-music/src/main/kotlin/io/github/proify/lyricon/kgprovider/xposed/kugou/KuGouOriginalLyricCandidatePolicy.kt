@@ -65,12 +65,119 @@ internal object KuGouOriginalLyricCandidatePolicy {
         return candidateTitleKey.isNotEmpty() && !candidateTitleKey.contains(expectedTitleKey)
     }
 
+    data class FileIdentity(
+        val artist: String,
+        val title: String
+    )
+
+    private val KUGOU_HASH_SUFFIX_REGEX = Regex("[0-9a-fA-F]{16,}$")
+    private val TOKEN_REGEX = Regex("[\\p{L}\\p{N}]+")
+
+    /**
+     * Parses the song identity out of a KuGou lyric file name.
+     *
+     * KuGou names downloaded lyric files "Artist - Title-<hash>.krc" (CJK names
+     * sometimes omit the spaces: "Artist-Title-<hash>.krc").  Returns null when
+     * the name does not carry a separable artist/title pair, so callers keep the
+     * legacy behavior for unparseable files.
+     */
+    fun fileIdentityFromPath(path: String): FileIdentity? {
+        val fileName = path.substringAfterLast('/').substringBeforeLast('.')
+        val stem = fileName.replace(KUGOU_HASH_SUFFIX_REGEX, "").trim().trim('-')
+        if (stem.isBlank()) return null
+
+        val spacedSeparator = stem.indexOf(" - ")
+        val separator = if (spacedSeparator > 0) {
+            spacedSeparator
+        } else {
+            val plain = stem.lastIndexOf('-')
+            if (plain <= 0) return null else plain
+        }
+        if (separator >= stem.length - 1) return null
+
+        val artist = stem.substring(0, separator).trim()
+        val title = stem.substring(separator + if (spacedSeparator > 0) 3 else 1).trim()
+        if (artist.isBlank() || title.isBlank()) return null
+        return FileIdentity(artist, title)
+    }
+
+    /**
+     * Rejects a candidate whose KRC file belongs to another song.
+     *
+     * The file stem carries the song identity independently of the captured track
+     * snapshot.  A candidate is foreign only when it gives a decisive mismatch:
+     * the file title matches neither the expected title nor the expected artist
+     * (car-lyric churn mixes "Artist-Title" into the artist slot), and the titles
+     * share no significant token (script-mixed titles like
+     * "BANG BANG BANG (뱅뱅행행)" fail plain containment but share words).  An
+     * artist-only match rescues only when the metadata title is unusable, so a
+     * same-artist next track ("Lukas Graham - 7 Years" while "Good Times" is
+     * current) is still rejected.
+     */
+    fun isForeignFileIdentity(
+        fileArtist: String,
+        fileTitle: String,
+        expectedTitle: String?,
+        expectedArtist: String?
+    ): Boolean {
+        val title = normalize(expectedTitle.orEmpty())
+        val artist = normalize(expectedArtist.orEmpty())
+        if (title.isEmpty() && artist.isEmpty()) return false
+
+        val fileTitleKey = normalize(fileTitle)
+        if (fileTitleKey.isEmpty()) return false
+        val fileArtistKey = normalize(fileArtist)
+
+        val artistConsistent = artist.isEmpty() ||
+            fileArtistKey.isEmpty() ||
+            fileArtistKey.contains(artist) ||
+            artist.contains(fileArtistKey)
+
+        val titleContained = title.isNotEmpty() &&
+            (fileTitleKey.contains(title) || title.contains(fileTitleKey))
+        if (titleContained && artistConsistent) return false
+
+        // Car-lyric churn: the artist slot mixes "Artist-Title" and the file title
+        // is embedded in it, so the file belongs to the current track.
+        if (artist.isNotEmpty() && artist.contains(fileTitleKey)) return false
+
+        // Script-mixed titles fail plain containment; accept on a shared
+        // significant token while the artist stays consistent.
+        if (title.isNotEmpty() && artistConsistent &&
+            sharesSignificantToken(fileTitle, expectedTitle.orEmpty())
+        ) {
+            return false
+        }
+
+        // Artist-only rescue when the metadata title is unusable (blank).
+        if (title.isEmpty() && artist.isNotEmpty() && fileArtistKey.isNotEmpty() &&
+            (fileArtistKey.contains(artist) || artist.contains(fileArtistKey))
+        ) {
+            return false
+        }
+
+        return true
+    }
+
+    private fun sharesSignificantToken(fileTitle: String, expectedTitle: String): Boolean {
+        val fileTokens = significantTokens(fileTitle)
+        if (fileTokens.isEmpty()) return false
+        return significantTokens(expectedTitle).any { fileTokens.contains(it) }
+    }
+
+    private fun significantTokens(value: String): Set<String> {
+        return TOKEN_REGEX.findAll(value.lowercase())
+            .map { it.value }
+            .filter { it.length >= 4 }
+            .toSet()
+    }
+
     private fun firstNonBlank(value: String?): String = value.orEmpty().trim()
 
     private fun normalize(value: String): String {
         return buildString(value.length) {
             value.lowercase().forEach { character ->
-                if (character.isLetterOrDigit() || character.code > 0x7F) {
+                if (character.isLetterOrDigit()) {
                     append(character)
                 }
             }
