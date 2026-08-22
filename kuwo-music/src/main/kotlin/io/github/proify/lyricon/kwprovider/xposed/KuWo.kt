@@ -7,6 +7,7 @@
 package io.github.proify.lyricon.kwprovider.xposed
 
 import android.media.MediaMetadata
+import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -18,9 +19,13 @@ import de.robv.android.xposed.XposedBridge
 import io.github.proify.extensions.android.AndroidUtils
 import io.github.proify.extensions.toRichLyricLines
 import io.github.proify.lrckit.LrcParser
+import io.github.proify.lyricon.kwprovider.BuildConfig
 import io.github.proify.lyricon.lyric.model.RichLyricLine
 import io.github.proify.lyricon.lyric.model.LyricWord
 import io.github.proify.lyricon.lyric.model.Song
+import io.github.proify.lyricon.provider.LyriconFactory
+import io.github.proify.lyricon.provider.LyriconProvider
+import io.github.proify.lyricon.provider.ProviderLogo
 import java.lang.reflect.Method
 import java.lang.ref.WeakReference
 
@@ -31,9 +36,18 @@ import java.lang.ref.WeakReference
  * hook cn.kuwo.mod.lyrics.e0.f(Music, boolean, Music) 的 after：
  *   -> LyricsInfo.lyricsData（明文 LRC/LRCX）
  *   -> 串歌校验（请求时的 Music 与当前曲目比对）
- *   -> LRC/LRCX 解析 -> Song -> KuWo 原生 MediaSession lyricInfo
+ *   -> LRC/LRCX 解析 -> Song -> Lyricon + KuWo 原生 MediaSession lyricInfo
  */
 open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
+    @Volatile
+    private var lyriconProvider: LyriconProvider? = null
+
+    @Volatile
+    private var latestLyriconSong: Song? = null
+
+    @Volatile
+    private var latestPlaybackState: PlaybackState? = null
+
     @Volatile
     private var currentTrackKey: String? = null
 
@@ -67,12 +81,31 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     @Volatile
     private var mainHandler: Handler? = null
 
+    @Volatile
+    private var resolvedLyricFetchMethod: Method? = null
+
     private val pendingLyrics = LinkedHashMap<String, Song>(16, 0.75f, true)
 
     override fun onHook() {
         AndroidUtils.openBluetoothA2dpOn(appClassLoader)
         YLog.debug(tag = tag, msg = "进程: $processName")
         mainHandler = createMainHandler()
+        resolveKuWoInternals()
+        if (processName == packageName) {
+            onAppLifecycle {
+                onCreate {
+                    initLyriconProvider()
+                }
+                onTerminate {
+                    destroyLyriconProvider()
+                }
+            }
+        } else {
+            YLog.debug(
+                tag = tag,
+                msg = "KuWo Lyricon provider skipped in secondary process: $processName"
+            )
+        }
         hookMediaSession()
         hookKuWoLyric()
     }
@@ -81,8 +114,79 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
         return runCatching { Handler(Looper.getMainLooper()) }.getOrNull()
     }
 
+    private fun resolveKuWoInternals() {
+        runCatching {
+            KuWoDexKitResolver.resolve(appInfo.sourceDir, appClassLoader)
+        }.onSuccess { targets ->
+            resolvedLyricFetchMethod = targets?.lyricFetchMethod
+            KuWoOfficialLrcxAdapter.setResolvedParserMethod(targets?.lrcxParserMethod)
+            debugProbe(
+                "KuWo DexKit resolved internals: lyric=" +
+                    (targets?.lyricFetchMethod?.let(::describeMethod) ?: "fallback") +
+                    " lrcx=" +
+                    (targets?.lrcxParserMethod?.let(::describeMethod) ?: "fallback")
+            )
+        }.onFailure { throwable ->
+            YLog.error(
+                tag = tag,
+                msg = "KuWo DexKit resolution failed, using known-name fallback: $throwable"
+            )
+        }
+    }
+
+    private fun describeMethod(method: Method): String =
+        method.declaringClass.name + "#" + method.name
+
+    private fun initLyriconProvider() {
+        val context = appContext ?: return
+        runCatching {
+            LyriconFactory.createProvider(
+                context = context,
+                providerPackageName = Constants.PROVIDER_PACKAGE_NAME,
+                playerPackageName = context.packageName,
+                logo = ProviderLogo.fromBase64(Constants.ICON)
+            ).also { provider ->
+                lyriconProvider = provider
+                provider.player.setDisplayTranslation(true)
+                provider.register()
+                latestLyriconSong?.let(::publishLyriconSong)
+                latestPlaybackState?.let(provider.player::setPlaybackState)
+            }
+        }.onSuccess {
+            debugProbe("KuWo Lyricon provider registered in $processName")
+        }.onFailure { throwable ->
+            YLog.error(tag = tag, msg = "KuWo Lyricon provider registration failed: $throwable")
+        }
+    }
+
+    private fun destroyLyriconProvider() {
+        val provider = lyriconProvider ?: return
+        lyriconProvider = null
+        runCatching { provider.destroy() }
+            .onFailure { throwable ->
+                YLog.error(tag = tag, msg = "KuWo Lyricon provider destroy failed: $throwable")
+            }
+    }
+
     private fun hookMediaSession() {
         "android.media.session.MediaSession".toClass().resolve().apply {
+            firstMethod {
+                name = "setPlaybackState"
+                parameters(PlaybackState::class.java)
+            }.hook {
+                after {
+                    val state = args[0] as? PlaybackState
+                    latestPlaybackState = state
+                    runCatching { lyriconProvider?.player?.setPlaybackState(state) }
+                        .onFailure { throwable ->
+                            YLog.error(
+                                tag = tag,
+                                msg = "KuWo Lyricon playback update failed: $throwable"
+                            )
+                        }
+                }
+            }
+
             firstMethod {
                 name = "setMetadata"
                 parameters("android.media.MediaMetadata")
@@ -126,6 +230,13 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
                         lastEmittedLineCount = 0
                         lastEmittedSongId = null
                         lastEmittedGeneration = 0L
+                        publishLyriconSong(
+                            Song(
+                                id = mediaId.orEmpty(),
+                                name = title,
+                                artist = artist
+                            )
+                        )
                         emitPendingLyrics(stableId, mediaId)
                     }
                 }
@@ -136,7 +247,7 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     private fun hookKuWoLyric() {
         val method = findLyricFetchMethod()
         if (method == null) {
-            YLog.error(tag = tag, msg = "Failed to find KuWo lyric fetch method e0.f")
+            YLog.error(tag = tag, msg = "Failed to find KuWo lyric fetch method")
             return
         }
         XposedBridge.hookMethod(method, object : XC_MethodHook() {
@@ -146,13 +257,14 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
                 handleLyricsInfo(result, music)
             }
         })
-        YLog.info(tag = tag, msg = "Hooked KuWo lyric fetch e0.f")
+        debugProbe("Hooked KuWo lyric fetch: ${describeMethod(method)}")
     }
 
     /**
      * 字面名优先；后续混淆名变化时在此追加 DexKit 结构兜底。
      */
     private fun findLyricFetchMethod(): Method? {
+        resolvedLyricFetchMethod?.let { return it }
         return runCatching {
             val clazz = appClassLoader?.loadClass("cn.kuwo.mod.lyrics.e0")
                 ?: return null
@@ -258,19 +370,18 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
         lastEmittedLineCount = song.lyrics?.size ?: 0
         lastEmittedSongId = songId
         lastEmittedGeneration = generation
+        publishLyriconSong(song)
         KuWoLyricInfoPublisher.onLyricReady(song, generation)
         scheduleImmediateLyricPublish(generation)
         logLyricTimingSample(song)
-        YLog.info(
-            tag = tag,
-            msg = "KuWo lyric ready: lines=" + (song.lyrics?.size ?: 0) +
+        debugProbe(
+            "KuWo lyric ready: lines=" + (song.lyrics?.size ?: 0) +
                 if (lyricsType.isNullOrBlank()) "" else (" type=" + lyricsType)
         )
     }
 
     private fun scheduleImmediateLyricPublish(generation: Long) {
-        val session = latestSessionRef?.get()
-        val metadata = latestHostMetadata ?: return
+        if (latestSessionRef?.get() == null || latestHostMetadata == null) return
         val handler = mainHandler
         if (handler == null) {
             YLog.debug(
@@ -285,7 +396,7 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
             val hostMetadata = latestHostMetadata
             if (target == null || hostMetadata == null) return@postDelayed
             try {
-                YLog.info(tag = tag, msg = "KuWo lyric immediate publish gen=$generation")
+                debugProbe("KuWo lyric immediate publish gen=$generation")
                 target.setMetadata(hostMetadata)
             } catch (throwable: Throwable) {
                 YLog.error(
@@ -297,12 +408,13 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     }
 
     private fun logLyricTimingSample(song: Song) {
+        if (!BuildConfig.DEBUG) return
         val lines = song.lyrics.orEmpty().take(3)
         lines.forEachIndexed { lineIndex, line ->
             val words = line.words.orEmpty().take(6).joinToString(separator=", ") { word ->
                 "${word.begin}-${word.end}:${word.text}"
             }
-            YLog.info(
+            YLog.debug(
                 tag = tag,
                 msg = "KuWo lyric timing sample line=$lineIndex" +
                     " line=${line.begin}-${line.end}" +
@@ -312,17 +424,52 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     }
 
     private fun logInvalidLrcxSourceSample(raw: String?) {
+        if (!BuildConfig.DEBUG) return
         val lines = raw.orEmpty().lineSequence().toList()
         val headers = lines.takeWhile { !it.startsWith("[00") && !it.startsWith("[01") }
             .take(12)
         val timed = lines.drop(headers.size).take(8)
-        YLog.error(
+        YLog.debug(
             tag = tag,
             msg = "KuWo LRCX invalid word-span source sample" +
                 " rawChars=${raw?.length ?: 0}" +
                 " headers=${headers.joinToString(separator=" ⏎ ")}" +
                 " timed=${timed.joinToString(separator=" ⏎ ")}"
         )
+    }
+
+    private fun publishLyriconSong(song: Song) {
+        val lyriconSong = KuWoLyriconSongNormalizer.normalize(song)
+        latestLyriconSong = lyriconSong
+        val provider = lyriconProvider
+        if (provider == null) {
+            if (!lyriconSong.lyrics.isNullOrEmpty()) {
+                YLog.debug(tag = tag, msg = "KuWo Lyricon song cached until provider registration")
+            }
+            return
+        }
+        runCatching { provider.player.setSong(lyriconSong) }
+            .onSuccess {
+                val lines = lyriconSong.lyrics.orEmpty()
+                val lineCount = lines.size
+                if (lineCount > 0) {
+                    val first = lines.first()
+                    debugProbe(
+                        "KuWo Lyricon song published in $processName: " +
+                            "id=${lyriconSong.id.orEmpty()} lines=$lineCount " +
+                            "firstSpan=${first.begin}-${first.end}"
+                    )
+                }
+            }
+            .onFailure { throwable ->
+                YLog.error(tag = tag, msg = "KuWo Lyricon song publish failed: $throwable")
+            }
+    }
+
+    private fun debugProbe(message: String) {
+        if (BuildConfig.DEBUG) {
+            YLog.debug(tag = tag, msg = message)
+        }
     }
 
     private fun buildSong(

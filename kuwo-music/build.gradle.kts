@@ -22,8 +22,8 @@ configure<ApplicationExtension> {
         applicationId = "io.github.proify.lyricon.kwprovider"
         minSdk = 27
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
-        versionCode = 10
-        versionName = "1.1.5"
+        versionCode = 11
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -82,6 +82,7 @@ dependencies {
     implementation(libs.yukihookapi.api)
     implementation(libs.kavaref.core)
     implementation(libs.kavaref.extension)
+    implementation(libs.dexkit)
     compileOnly(libs.xposed.api)
     ksp(libs.yukihookapi.ksp.xposed)
 

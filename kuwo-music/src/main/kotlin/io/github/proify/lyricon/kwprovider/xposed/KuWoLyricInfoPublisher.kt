@@ -9,6 +9,7 @@ package io.github.proify.lyricon.kwprovider.xposed
 import android.media.MediaMetadata
 import android.util.Log
 import io.github.proify.extensions.bridge.TrackKeyBuilder
+import io.github.proify.lyricon.kwprovider.BuildConfig
 import io.github.proify.lyricon.lyric.model.Song
 import java.util.Locale
 
@@ -28,7 +29,7 @@ import java.util.Locale
 object KuWoLyricInfoPublisher {
     private const val TAG = "KuWoProvider"
     private const val METADATA_KEY_LYRIC_INFO = "lyricInfo"
-    private const val DIAGNOSTICS_ENABLED = true
+    private val DIAGNOSTICS_ENABLED = BuildConfig.DEBUG
     private val WHITESPACE_REGEX = Regex("\\s+")
 
     private val lock = Any()

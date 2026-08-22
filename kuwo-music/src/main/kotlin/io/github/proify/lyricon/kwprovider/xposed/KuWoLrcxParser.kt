@@ -83,6 +83,15 @@ object KuWoLrcxParser {
             val current = ordered[index]
             val next = ordered.getOrNull(index + 1)
             if (next != null &&
+                current.begin < next.begin &&
+                hasWordTimings(current) &&
+                !hasWordTimings(next)
+            ) {
+                merged.add(current.copy(translation = next.text))
+                index += 2
+                continue
+            }
+            if (next != null &&
                 current.begin == next.begin &&
                 shouldAttachAsTranslation(current, next)
             ) {

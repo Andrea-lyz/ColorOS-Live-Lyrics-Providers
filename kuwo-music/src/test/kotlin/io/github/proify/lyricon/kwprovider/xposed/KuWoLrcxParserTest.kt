@@ -108,4 +108,19 @@ class KuWoLrcxParserTest {
         assertEquals("It's pretty clear that I'm not over you", lines[2].text)
         assertEquals(null, lines[2].translation)
     }
+
+    @Test
+    fun attachesTrailingNonWordTranslationToPreviousCjkPrimary() {
+        val raw = """
+            [kuwo:21]
+            [01:45.19]<0,100>一切从未改,未改......
+            [01:52.66]Et ça ne changera jamais, jamais...
+        """.trimIndent()
+
+        val lines = KuWoLrcxParser.parse(raw)
+
+        assertEquals(1, lines.size)
+        assertEquals("一切从未改,未改......", lines[0].text)
+        assertEquals("Et ça ne changera jamais, jamais...", lines[0].translation)
+    }
 }
