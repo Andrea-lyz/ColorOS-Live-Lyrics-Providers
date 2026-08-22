@@ -24,7 +24,7 @@ open class HookEntry : IYukiHookXposedInit {
         super.onInit()
         YukiHookAPI.configs {
             debugLog {
-                tag = "KuGouMusicProvider"
+                tag = "KuWoMusicProvider"
             }
         }
     }

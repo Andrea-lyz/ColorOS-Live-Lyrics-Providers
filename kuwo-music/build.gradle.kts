@@ -22,8 +22,8 @@ configure<ApplicationExtension> {
         applicationId = "io.github.proify.lyricon.kwprovider"
         minSdk = 27
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
-        versionCode = 4
-        versionName = "1.0.0"
+        versionCode = 10
+        versionName = "1.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -61,6 +61,12 @@ configure<ApplicationExtension> {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = false
+            isReturnDefaultValues = true
+        }
+    }
     buildFeatures {
         buildConfig = true
     }
@@ -68,6 +74,7 @@ configure<ApplicationExtension> {
 
 dependencies {
     implementation(project(":share:extensions-android"))
+    implementation(project(":share:lrckit"))
 
     implementation(libs.lyricon.provider)
     implementation(libs.kotlinx.serialization.json)
