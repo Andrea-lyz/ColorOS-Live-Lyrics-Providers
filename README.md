@@ -27,7 +27,7 @@
 | 🐧 **QQ 音乐 HD**    | `qq-music-hd`       | 支持逐字歌词、翻译歌词          |
 | 🧊 **LX 音乐**       | `lx-music`          | 支持翻译歌词显示             |
 | 🐶 **酷狗音乐/概念版**    | `kugou-music`       | 支持逐字歌词、翻译歌词，可转发 Bridge |
-| 📻 **酷我音乐**        | `kuwo-music`        | 直接推送完整逐行/逐字歌词，无需开启车载歌词模式 |
+| 📻 **酷我音乐**        | `kuwo-music`        | 从酷我官方歌词对象解析 LRC/LRCX，并将完整逐行、逐字和翻译歌词写入原生 `MediaSession` 的 `lyricInfo`，同时送入 Lyricon；无需开启车载歌词模式，保留原生封面与媒体元数据 |
 | 🎧 **Spotify**     | `spotify-music`     | 目前仅支持标准歌词            |
 | ⚡ **Poweramp**     | `poweramp-music`    | 支持网络匹配及本地内嵌歌词        |
 | 🧂 **Salt 音乐**     | `salt-player-music` | 基于魅族标准歌词接口适配         |
@@ -45,7 +45,8 @@
 ### 💡 已原生适配的应用
 
 - [**光锥音乐**](https://coneplayer.trantor.ink/)
-- **Flamingo**
+- **Halcyon**：原生 `lyricInfo`，并提供 `lyricprovider/halcyon` v4 直达回退
+- **Flamingo**：通过 `yos.music.player` 的 `lyricprovider/flamingo` 原生 v4 接入
 - [**BBPlayer**](https://bbplayer.roitium.com/)
 - **MobiMusic**
 - [**Kanade**](https://github.com/rcmiku/Kanade)

@@ -25,7 +25,7 @@
 | 🐧 **QQ Music HD**                   | `qq-music-hd`       | Supports dynamic lyrics, translated lyrics         |
 | 🧊 **LX Music**                      | `lx-music`          | Supports translated lyrics display                 |
 | 🐶 **Kugou Music / Concept Edition** | `kugou-music`       | Supports word-timed and translated lyrics; can send to SystemUI |
-| 📻 **Kuwo Music**                    | `kuwo-music`        | Pushes complete line/word-timed lyrics without car lyrics mode |
+| 📻 **Kuwo Music**                    | `kuwo-music`        | Parses KuWo's official LRC/LRCX lyric object, writes complete line-timed, word-timed, and translated lyrics to the native `MediaSession` `lyricInfo`, and publishes the same timeline to Lyricon; no car lyrics mode is required, and original artwork/metadata are preserved |
 | 🎧 **Spotify**                       | `spotify-music`     | Currently only supports standard lyrics            |
 | ⚡ **Poweramp**                       | `poweramp-music`    | Supports online matching and embedded local lyrics |
 | 🧂 **Salt Music**                    | `salt-player-music` | Adapted based on Meizu standard lyric interface    |
@@ -45,7 +45,8 @@
 The following players have natively integrated this protocol and can be used directly with Lyricon:
 
 * **Cone Music**: [Official Website](https://coneplayer.trantor.ink/)
-* **Flamingo**
+* **Halcyon**: native `lyricInfo` with a direct v4 fallback (`lyricprovider/halcyon`)
+* **Flamingo**: native v4 integration from `yos.music.player` (`lyricprovider/flamingo`)
 
 ---
 
