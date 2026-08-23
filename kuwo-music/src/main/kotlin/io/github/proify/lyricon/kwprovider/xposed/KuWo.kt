@@ -27,6 +27,9 @@ import io.github.proify.lyricon.provider.LyriconFactory
 import io.github.proify.lyricon.provider.LyriconProvider
 import io.github.proify.lyricon.provider.ProviderLogo
 import java.lang.reflect.Method
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import java.lang.ref.WeakReference
 
 /**
@@ -85,6 +88,16 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     private var resolvedLyricFetchMethod: Method? = null
 
     private val pendingLyrics = LinkedHashMap<String, Song>(16, 0.75f, true)
+
+    private val lyricRetryPolicy = KuWoLyricFetchRetryPolicy()
+
+    private val lyricRetryExecutor: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "KuWoLyricRetry").apply { isDaemon = true }
+        }
+
+    @Volatile
+    private var lastFetchInvoke: KuWoLyricFetchRetryPolicy.FetchInvoke? = null
 
     override fun onHook() {
         AndroidUtils.openBluetoothA2dpOn(appClassLoader)
@@ -162,6 +175,7 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     private fun destroyLyriconProvider() {
         val provider = lyriconProvider ?: return
         lyriconProvider = null
+        runCatching { lyricRetryExecutor.shutdownNow() }
         runCatching { provider.destroy() }
             .onFailure { throwable ->
                 YLog.error(tag = tag, msg = "KuWo Lyricon provider destroy failed: $throwable")
@@ -226,6 +240,10 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
                             SystemClock.elapsedRealtime()
                         )
                         KuWoLyricInfoPublisher.onTrackChanged(currentTrackGeneration)
+                        scheduleLyricFetchRetry(
+                            lyricRetryPolicy.noteTrackChanged(stableId, mediaId),
+                            "track-changed"
+                        )
                         lastEmittedSignature = ""
                         lastEmittedLineCount = 0
                         lastEmittedSongId = null
@@ -252,9 +270,27 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
         }
         XposedBridge.hookMethod(method, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
-                val result = param.result ?: return
                 val music = param.args.getOrNull(0)
-                handleLyricsInfo(result, music)
+                val fetchCall = KuWoLyricFetchRetryPolicy.FetchCall(
+                    rid = music?.let { readMusicString(it, "getRid") },
+                    trackKey = music?.let { readMusicTrackKey(it) }
+                )
+                lastFetchInvoke = KuWoLyricFetchRetryPolicy.FetchInvoke(
+                    method = method,
+                    instance = param.thisObject,
+                    args = param.args.copyOf(),
+                    call = fetchCall
+                )
+                val result = param.result
+                if (result != null && isAvailableLyricsInfo(result)) {
+                    lyricRetryPolicy.noteFetchSucceeded(fetchCall)
+                    handleLyricsInfo(result, music)
+                    return
+                }
+                scheduleLyricFetchRetry(
+                    lyricRetryPolicy.noteFetchFailed(fetchCall),
+                    "fetch-unavailable"
+                )
             }
         })
         debugProbe("Hooked KuWo lyric fetch: ${describeMethod(method)}")
@@ -316,6 +352,49 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     }
 
 
+    private fun isAvailableLyricsInfo(lyricsInfo: Any): Boolean {
+        val info = KuWo.LyricsInfoReader.read(lyricsInfo) ?: return false
+        return info.isAvailable && !info.lyricsData.isNullOrBlank()
+    }
+
+    private fun scheduleLyricFetchRetry(delayMs: Long?, reason: String) {
+        if (delayMs == null) return
+        YLog.debug(
+            tag = tag,
+            msg = "KuWo lyric fetch retry scheduled attempt=" +
+                lyricRetryPolicy.pendingAttempts() +
+                " delay=${delayMs}ms reason=$reason"
+        )
+        lyricRetryExecutor.schedule(
+            ::runLyricFetchRetry,
+            delayMs,
+            TimeUnit.MILLISECONDS
+        )
+    }
+
+    private fun runLyricFetchRetry() {
+        val call = lyricRetryPolicy.takeRetryCall() ?: return
+        val invoke = lastFetchInvoke ?: return
+        if (invoke.call != call) return
+        val result = runCatching {
+            invoke.method.invoke(invoke.instance, *invoke.args)
+        }.getOrNull()
+        if (result != null && isAvailableLyricsInfo(result)) {
+            YLog.debug(
+                tag = tag,
+                msg = "KuWo lyric fetch retry succeeded attempt=" +
+                    lyricRetryPolicy.pendingAttempts()
+            )
+            lyricRetryPolicy.noteFetchSucceeded(call)
+            handleLyricsInfo(result, invoke.args.getOrNull(0))
+            return
+        }
+        scheduleLyricFetchRetry(
+            lyricRetryPolicy.noteFetchFailed(call),
+            "retry-unavailable"
+        )
+    }
+
     private fun cachePendingSong(song: Song, rid: String?, trackKey: String?) {
         val keys = linkedSetOf<String>()
         if (!rid.isNullOrBlank()) keys.add("rid:" + rid)
@@ -367,6 +446,12 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
             return
         }
         lastEmittedSignature = signature
+        if (!song.lyrics.isNullOrEmpty()) {
+            lyricRetryPolicy.noteLyricsEmitted(
+                songId,
+                buildTrackKey(song.name, song.artist)
+            )
+        }
         lastEmittedLineCount = song.lyrics?.size ?: 0
         lastEmittedSongId = songId
         lastEmittedGeneration = generation
