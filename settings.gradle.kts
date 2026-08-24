@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 Proify, Tomakino
+ * Copyright 2026 Proify, Tomakino, Andrea-TB
  * Licensed under the Apache License, Version 2.0
  * http://www.apache.org/licenses/LICENSE-2.0
  */
@@ -31,22 +31,27 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "LyricProvider"
+rootProject.name = "ColorOS-Live-Lyrics-Providers"
+
+// 4.0 Infrastructure & Parser Modules
+include(":provider-core")
+include(":reflection-core")
+include(":parser-lrc")
+include(":parser-qrc")
+include(":parser-yrc")
+include(":parser-krc")
+include(":parser-ttml")
+
+// Legacy share modules
 include(":share:extensions-kt")
 include(":share:extensions-android")
-
 include(":share:qrckit")
 include(":share:lrckit")
 include(":share:yrckit")
 include(":share:krckit")
 include(":share:cloudlyric")
-include(":share:meizu-provider")
-include(":share:car-provider")
 
-include(":cloud-provider")
-include(":meizu-provider")
-include(":car-provider")
-
+// Player provider modules (Phase 2 - 4 migration targets)
 include(":apple-music")
 include(":163-music")
 include(":qq-music")

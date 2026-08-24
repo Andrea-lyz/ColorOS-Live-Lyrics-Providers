@@ -14,6 +14,8 @@
 
 .DS_Store
 /.codex-build/
+build/
+**/build/
 /build
 /captures
 .externalNativeBuild

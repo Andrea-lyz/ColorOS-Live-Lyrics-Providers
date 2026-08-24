@@ -69,7 +69,6 @@ configure<ApplicationExtension> {
 
 dependencies {
     implementation(project(":share:extensions-android"))
-    implementation(project(":share:meizu-provider"))
 
     implementation(libs.lyricon.provider)
     implementation(libs.kotlinx.serialization.json)
