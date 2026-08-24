@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="npatch_marker" translatable="false">coloros-live-lyrics-provider-v5</string>
+    <bool name="provider_debug_enabled">false</bool>
+</resources>

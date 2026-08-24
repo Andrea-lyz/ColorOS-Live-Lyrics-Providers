@@ -6,6 +6,7 @@
 
 package io.github.andrealtb.coloroslyrics.provider.core.diagnostics
 
+import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeMode
 import java.util.concurrent.CopyOnWriteArrayList
 
 object StructuredDiagnostics {
@@ -20,6 +21,19 @@ object StructuredDiagnostics {
 
     var isDebugEnabled: Boolean = false
 
+    fun configure(debugEnabled: Boolean, additionalSinks: List<DiagnosticSink> = emptyList()) {
+        sinks.clear()
+        sinks.add(LogcatSink())
+        additionalSinks.forEach(::addSink)
+        throttler.clear()
+        isDebugEnabled = debugEnabled
+    }
+
+    fun configureForRuntime(mode: RuntimeMode, debugEnabled: Boolean) {
+        val frameworkSinks = if (mode == RuntimeMode.ROOT_MODULE) listOf(XposedSink()) else emptyList()
+        configure(debugEnabled, frameworkSinks)
+    }
+
     fun addSink(sink: DiagnosticSink) {
         if (!sinks.contains(sink)) {
             sinks.add(sink)
@@ -30,29 +44,34 @@ object StructuredDiagnostics {
         sinks.remove(sink)
     }
 
-    fun logDebug(eventKey: String, tag: String = DEFAULT_TAG, throwable: Throwable? = null, msg: () -> String) {
+    fun logDebug(event: DiagnosticEvent, tag: String = DEFAULT_TAG, throwable: Throwable? = null) {
         if (!isDebugEnabled) return
-        if (!throttler.shouldLog(eventKey)) return
-        val redacted = SensitiveFieldRedactor.redact(msg())
-        dispatch(DiagnosticSink.LEVEL_DEBUG, tag, "[$eventKey] $redacted", throwable)
+        log(DiagnosticSink.LEVEL_DEBUG, "DEBUG", event, tag, throwable)
     }
 
-    fun logInfo(eventKey: String, tag: String = DEFAULT_TAG, throwable: Throwable? = null, msg: () -> String) {
-        if (!throttler.shouldLog(eventKey)) return
-        val redacted = SensitiveFieldRedactor.redact(msg())
-        dispatch(DiagnosticSink.LEVEL_INFO, tag, "[$eventKey] $redacted", throwable)
+    fun logInfo(event: DiagnosticEvent, tag: String = DEFAULT_TAG, throwable: Throwable? = null) {
+        log(DiagnosticSink.LEVEL_INFO, "INFO", event, tag, throwable)
     }
 
-    fun logWarning(eventKey: String, tag: String = DEFAULT_TAG, throwable: Throwable? = null, msg: () -> String) {
-        if (!throttler.shouldLog(eventKey)) return
-        val redacted = SensitiveFieldRedactor.redact(msg())
-        dispatch(DiagnosticSink.LEVEL_WARN, tag, "[$eventKey] $redacted", throwable)
+    fun logWarning(event: DiagnosticEvent, tag: String = DEFAULT_TAG, throwable: Throwable? = null) {
+        log(DiagnosticSink.LEVEL_WARN, "WARN", event, tag, throwable)
     }
 
-    fun logError(eventKey: String, tag: String = DEFAULT_TAG, throwable: Throwable? = null, msg: () -> String) {
-        if (!throttler.shouldLog(eventKey)) return
-        val redacted = SensitiveFieldRedactor.redact(msg())
-        dispatch(DiagnosticSink.LEVEL_ERROR, tag, "[$eventKey] $redacted", throwable)
+    fun logError(event: DiagnosticEvent, tag: String = DEFAULT_TAG, throwable: Throwable? = null) {
+        log(DiagnosticSink.LEVEL_ERROR, "ERROR", event, tag, throwable)
+    }
+
+    private fun log(
+        level: Int,
+        levelName: String,
+        event: DiagnosticEvent,
+        tag: String,
+        throwable: Throwable?
+    ) {
+        val throttleKey = "${event.component}|${event.area}|${event.event}|${event.session.orEmpty()}"
+        if (!throttler.shouldLog(throttleKey)) return
+        val formatted = DiagnosticEventFormatter.format(levelName, event)
+        dispatch(level, tag, SensitiveFieldRedactor.redact(formatted), throwable)
     }
 
     private fun dispatch(level: Int, tag: String, message: String, throwable: Throwable?) {

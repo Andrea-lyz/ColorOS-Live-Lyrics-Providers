@@ -9,6 +9,7 @@ package io.github.andrealtb.coloroslyrics.provider.core.mode
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 
 /**
@@ -37,18 +38,32 @@ object RuntimeModeResolver {
         val hostPkg = context?.packageName ?: "unknown.host"
         val procName = getProcessName(context)
 
-        val resolution = evaluate(context, hostPkg, procName)
+        val resolution = evaluateSignals(collectSignals(context, hostPkg, procName))
         cachedResolution = resolution
 
         if (resolution.mode == RuntimeMode.UNKNOWN) {
-            StructuredDiagnostics.logWarning("runtime-mode-unknown") {
-                "RuntimeMode resolved to UNKNOWN for $hostPkg in process $procName (marker=${resolution.markerSource}). " +
-                    "Failing closed - provider will not publish lyrics."
-            }
+            StructuredDiagnostics.logWarning(
+                DiagnosticEvent(
+                    component = "provider/core",
+                    area = "bootstrap",
+                    event = "RUNTIME_MODE_UNKNOWN",
+                    mode = resolution.mode,
+                    process = procName,
+                    reason = resolution.markerSource,
+                    message = "Provider transport is disabled."
+                )
+            )
         } else {
-            StructuredDiagnostics.logInfo("runtime-mode-resolved") {
-                "RuntimeMode resolved to ${resolution.mode} for $hostPkg ($procName) via ${resolution.markerSource}."
-            }
+            StructuredDiagnostics.logInfo(
+                DiagnosticEvent(
+                    component = "provider/core",
+                    area = "bootstrap",
+                    event = "RUNTIME_MODE_RESOLVED",
+                    mode = resolution.mode,
+                    process = procName,
+                    reason = resolution.markerSource
+                )
+            )
         }
 
         return resolution
@@ -56,10 +71,10 @@ object RuntimeModeResolver {
 
     fun currentResolution(): RuntimeModeResolution? = cachedResolution
 
-    private fun evaluate(context: Context?, hostPkg: String, procName: String): RuntimeModeResolution {
-        // 1. Check NPatch embedded signals
+    private fun collectSignals(context: Context?, hostPkg: String, procName: String): RuntimeModeSignals {
+        var manifestMarker = false
+        var resourceMarker: String? = null
         if (context != null) {
-            // A. Check Manifest metadata
             try {
                 val appInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     context.packageManager.getApplicationInfo(
@@ -71,47 +86,68 @@ object RuntimeModeResolver {
                     context.packageManager.getApplicationInfo(hostPkg, PackageManager.GET_META_DATA)
                 }
                 if (appInfo.metaData?.getBoolean(META_NPATCH_MARKER, false) == true) {
-                    return RuntimeModeResolution(
-                        mode = RuntimeMode.NPATCH_EMBEDDED,
-                        hostPackage = hostPkg,
-                        processName = procName,
-                        markerSource = "manifest:meta-data:$META_NPATCH_MARKER"
-                    )
+                    manifestMarker = true
                 }
             } catch (_: Exception) {}
 
-            // B. Check string resource marker
             try {
                 val resId = context.resources.getIdentifier(RES_NPATCH_MARKER, "string", hostPkg)
                 if (resId != 0) {
                     val value = context.resources.getString(resId)
                     if (value.isNotBlank()) {
-                        return RuntimeModeResolution(
-                            mode = RuntimeMode.NPATCH_EMBEDDED,
-                            hostPackage = hostPkg,
-                            processName = procName,
-                            markerSource = "resource:string:$RES_NPATCH_MARKER=$value"
-                        )
+                        resourceMarker = value
                     }
                 }
             } catch (_: Exception) {}
         }
 
-        // 2. Check Xposed / LSPosed hook active signal
-        if (isXposedActive) {
+        return RuntimeModeSignals(
+            hostPackage = hostPkg,
+            processName = procName,
+            xposedActive = isXposedActive,
+            manifestNpatchMarker = manifestMarker,
+            resourceNpatchMarker = resourceMarker
+        )
+    }
+
+    internal fun evaluateSignals(signals: RuntimeModeSignals): RuntimeModeResolution {
+        val hasNpatchMarker = signals.manifestNpatchMarker || !signals.resourceNpatchMarker.isNullOrBlank()
+        if (signals.xposedActive && hasNpatchMarker) {
+            return RuntimeModeResolution(
+                mode = RuntimeMode.UNKNOWN,
+                hostPackage = signals.hostPackage,
+                processName = signals.processName,
+                markerSource = "conflict:xposed+npatch"
+            )
+        }
+
+        if (hasNpatchMarker) {
+            val source = if (signals.manifestNpatchMarker) {
+                "manifest:meta-data:$META_NPATCH_MARKER"
+            } else {
+                "resource:string:$RES_NPATCH_MARKER=${signals.resourceNpatchMarker}"
+            }
+            return RuntimeModeResolution(
+                mode = RuntimeMode.NPATCH_EMBEDDED,
+                hostPackage = signals.hostPackage,
+                processName = signals.processName,
+                markerSource = source
+            )
+        }
+
+        if (signals.xposedActive) {
             return RuntimeModeResolution(
                 mode = RuntimeMode.ROOT_MODULE,
-                hostPackage = hostPkg,
-                processName = procName,
+                hostPackage = signals.hostPackage,
+                processName = signals.processName,
                 markerSource = "xposed:hook-active"
             )
         }
 
-        // 3. Fail closed to UNKNOWN
         return RuntimeModeResolution(
             mode = RuntimeMode.UNKNOWN,
-            hostPackage = hostPkg,
-            processName = procName,
+            hostPackage = signals.hostPackage,
+            processName = signals.processName,
             markerSource = "none"
         )
     }
@@ -129,3 +165,11 @@ object RuntimeModeResolver {
         isXposedActive = false
     }
 }
+
+internal data class RuntimeModeSignals(
+    val hostPackage: String,
+    val processName: String,
+    val xposedActive: Boolean = false,
+    val manifestNpatchMarker: Boolean = false,
+    val resourceNpatchMarker: String? = null
+)

@@ -34,4 +34,39 @@ class RuntimeModeResolverTest {
         assertTrue(resolution.mode.isSupported)
         assertEquals("xposed:hook-active", resolution.markerSource)
     }
+
+    @Test
+    fun resolvesNpatchFromManifestOrResourceMarker() {
+        val manifest = RuntimeModeResolver.evaluateSignals(
+            RuntimeModeSignals("com.test.player", "com.test.player", manifestNpatchMarker = true)
+        )
+        assertEquals(RuntimeMode.NPATCH_EMBEDDED, manifest.mode)
+        assertTrue(manifest.markerSource.startsWith("manifest:"))
+
+        val resource = RuntimeModeResolver.evaluateSignals(
+            RuntimeModeSignals(
+                "com.test.player",
+                "com.test.player",
+                resourceNpatchMarker = "coloros-live-lyrics-provider-v5"
+            )
+        )
+        assertEquals(RuntimeMode.NPATCH_EMBEDDED, resource.mode)
+        assertTrue(resource.markerSource.startsWith("resource:"))
+    }
+
+    @Test
+    fun simultaneousRootAndNpatchSignalsFailClosed() {
+        val resolution = RuntimeModeResolver.evaluateSignals(
+            RuntimeModeSignals(
+                "com.test.player",
+                "com.test.player",
+                xposedActive = true,
+                manifestNpatchMarker = true
+            )
+        )
+
+        assertEquals(RuntimeMode.UNKNOWN, resolution.mode)
+        assertFalse(resolution.mode.isSupported)
+        assertEquals("conflict:xposed+npatch", resolution.markerSource)
+    }
 }

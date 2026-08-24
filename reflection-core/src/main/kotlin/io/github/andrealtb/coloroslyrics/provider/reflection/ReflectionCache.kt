@@ -14,29 +14,37 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Thread-safe reflection cache bound to a specific ClassLoader.
- * Automatically invalidates if the target ClassLoader changes or is garbage collected.
+ * Invalidates when the caller observes a different ClassLoader or host version.
  */
 class ReflectionCache(
     classLoader: ClassLoader,
-    val hostVersion: String? = null
+    hostVersion: String? = null
 ) {
     private var classLoaderRef: WeakReference<ClassLoader> = WeakReference(classLoader)
+    @Volatile
+    private var cachedHostVersion: String? = hostVersion
+
+    val hostVersion: String?
+        get() = cachedHostVersion
 
     private val classCache = ConcurrentHashMap<String, Class<*>>()
     private val methodCache = ConcurrentHashMap<String, Method>()
     private val fieldCache = ConcurrentHashMap<String, Field>()
     private val constructorCache = ConcurrentHashMap<String, Constructor<*>>()
 
-    fun isValid(currentClassLoader: ClassLoader): Boolean {
+    fun isValid(currentClassLoader: ClassLoader, currentHostVersion: String? = cachedHostVersion): Boolean {
         val cachedLoader = classLoaderRef.get()
-        return cachedLoader != null && cachedLoader === currentClassLoader
+        return cachedLoader != null &&
+            cachedLoader === currentClassLoader &&
+            cachedHostVersion == currentHostVersion
     }
 
     @Synchronized
-    fun ensureValid(currentClassLoader: ClassLoader) {
-        if (!isValid(currentClassLoader)) {
+    fun ensureValid(currentClassLoader: ClassLoader, currentHostVersion: String? = cachedHostVersion) {
+        if (!isValid(currentClassLoader, currentHostVersion)) {
             clear()
             classLoaderRef = WeakReference(currentClassLoader)
+            cachedHostVersion = currentHostVersion
         }
     }
 

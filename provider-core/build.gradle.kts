@@ -21,6 +21,8 @@ configure<LibraryExtension> {
         minSdk = 27
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
+        manifestPlaceholders["colorosLyricsNpatchEmbedded"] = "false"
+        manifestPlaceholders["colorosLyricsProviderDebugEnabled"] = "false"
     }
 
     buildTypes {

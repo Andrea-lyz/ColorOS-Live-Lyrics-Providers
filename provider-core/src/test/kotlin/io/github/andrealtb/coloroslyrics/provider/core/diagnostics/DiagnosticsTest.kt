@@ -6,12 +6,19 @@
 
 package io.github.andrealtb.coloroslyrics.provider.core.diagnostics
 
+import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeMode
+import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DiagnosticsTest {
+
+    @After
+    fun tearDown() {
+        StructuredDiagnostics.resetForTesting()
+    }
 
     @Test
     fun testThrottlerThrottlesRepeatedKeysWithinWindow() {
@@ -33,5 +40,66 @@ class DiagnosticsTest {
         assertTrue(redacted.contains("<REDACTED_TOKEN>"))
         assertTrue(redacted.contains("<REDACTED_COOKIE>"))
         assertTrue(redacted.contains("<REDACTED_PWD>"))
+    }
+
+    @Test
+    fun structuredEventUsesStableFieldOrderAndEscaping() {
+        val formatted = DiagnosticEventFormatter.format(
+            "INFO",
+            DiagnosticEvent(
+                component = "provider/salt",
+                area = "track",
+                event = "TRACK_BOUND",
+                mode = RuntimeMode.ROOT_MODULE,
+                process = "com.salt.music",
+                generation = 42L,
+                reason = "new track"
+            )
+        )
+
+        assertEquals(
+            "[CLL] level=INFO component=provider/salt area=track event=TRACK_BOUND " +
+                "mode=ROOT_MODULE process=com.salt.music generation=42 reason=\"new track\"",
+            formatted
+        )
+    }
+
+    @Test
+    fun allConfiguredSinksReceiveTheSameRedactedEvent() {
+        val first = RecordingSink()
+        val second = RecordingSink()
+        StructuredDiagnostics.configure(debugEnabled = true, additionalSinks = listOf(first, second))
+
+        StructuredDiagnostics.logDebug(
+            DiagnosticEvent(
+                component = "provider/salt",
+                area = "reflection",
+                event = "TARGET_FOUND",
+                message = "token=abc123def456ghi789"
+            )
+        )
+
+        assertEquals(1, first.messages.size)
+        assertEquals(first.messages, second.messages)
+        assertFalse(first.messages.single().contains("abc123def456ghi789"))
+        assertTrue(first.messages.single().contains("<REDACTED_TOKEN>"))
+    }
+
+    @Test
+    fun diagnosticTrackHashIsStableAndDoesNotExposeIdentity() {
+        val first = DiagnosticHasher.sha256("track-id|private title|private artist|180")
+        val second = DiagnosticHasher.sha256("track-id|private title|private artist|180")
+
+        assertEquals(first, second)
+        assertTrue(first.startsWith("sha256:"))
+        assertFalse(first.contains("private"))
+    }
+
+    private class RecordingSink : DiagnosticSink {
+        val messages = mutableListOf<String>()
+
+        override fun log(level: Int, tag: String, message: String, throwable: Throwable?) {
+            messages += message
+        }
     }
 }

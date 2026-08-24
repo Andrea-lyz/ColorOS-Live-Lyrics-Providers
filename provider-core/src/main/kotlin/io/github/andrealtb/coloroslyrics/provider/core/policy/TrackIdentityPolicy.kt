@@ -16,7 +16,7 @@ object TrackIdentityPolicy {
         if (previous.isBlank || current.isBlank) return false
 
         if (!previous.id.isNullOrBlank() && !current.id.isNullOrBlank()) {
-            if (previous.id.trim() == current.id.trim()) return true
+            return previous.id.trim() == current.id.trim()
         }
 
         val titleMatch = normalizeString(previous.title) == normalizeString(current.title)

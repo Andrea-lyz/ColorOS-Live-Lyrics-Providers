@@ -14,6 +14,15 @@ import kotlin.test.assertTrue
 class TrackIdentityPolicyTest {
 
     @Test
+    fun differentStableIdsNeverFallBackToMatchingTitleAndArtist() {
+        val previous = TrackIdentity(id = "track-1", title = "Same", artist = "Artist")
+        val current = TrackIdentity(id = "track-2", title = "Same", artist = "Artist")
+
+        assertFalse(TrackIdentityPolicy.isSameTrack(previous, current))
+        assertTrue(TrackIdentityPolicy.hasTrackChanged(previous, current))
+    }
+
+    @Test
     fun sameIdMatches() {
         val t1 = TrackIdentity(id = "12345", title = "Song A", artist = "Artist A")
         val t2 = TrackIdentity(id = "12345", title = "Different Title", artist = "Different Artist")
