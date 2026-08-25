@@ -16,200 +16,123 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class SaltMediaSessionRegistryTest {
-    private fun track(id: String, title: String = "Same", artist: String = "Artist", durationMs: Long = 0L) =
-        TrackIdentity(id = id, title = title, artist = artist, durationMs = durationMs)
+    private fun track(id: String, title: String = "Title", artist: String = "Artist") =
+        TrackIdentity(id = id, title = title, artist = artist, durationMs = 180000L)
 
-    @Test fun uniqueActiveMatchingSessionIsSelectedAndAuxiliaryIsExcluded() {
-        val registry = SaltMediaSessionRegistry(); val main = Any(); val auxiliary = Any(); val wanted = track("1")
-        registry.onConstructed(main, "Salt playback"); registry.onHostMetadata(main, wanted)
-        registry.onPlaybackState(main, PlaybackState.STATE_PLAYING); registry.onActive(main, true)
-        registry.onConstructed(auxiliary, "notification"); registry.onHostMetadata(auxiliary, track("other"))
-        registry.onPlaybackState(auxiliary, PlaybackState.STATE_PLAYING); registry.onActive(auxiliary, true)
+    @Test
+    fun uniqueActiveMatchingSessionIsSelectedAndAuxiliaryIsExcluded() {
+        val registry = SaltMediaSessionRegistry()
+        val main = Any()
+        val auxiliary = Any()
+        val wanted = track("1")
+        activate(registry, main, wanted, "main-metadata")
+        activate(registry, auxiliary, track("other"), "aux-metadata")
+
         assertSame(main, registry.selectUnique(wanted))
+        assertSame("main-metadata", registry.hostMetadata(main))
     }
 
-    @Test fun sameTrackSessionAmbiguityFailsOpenAndReleasedSessionIsIgnored() {
-        val registry = SaltMediaSessionRegistry(); val first = Any(); val second = Any(); val wanted = track("1")
-        listOf(first, second).forEach { session ->
-            registry.onConstructed(session, "tag"); registry.onHostMetadata(session, wanted)
-            registry.onPlaybackState(session, PlaybackState.STATE_PAUSED); registry.onActive(session, true)
-        }
-        assertNull(registry.selectUnique(wanted)); registry.onReleased(second)
+    @Test
+    fun sameTrackSessionAmbiguityFailsOpenAndReleasedSessionIsIgnored() {
+        val registry = SaltMediaSessionRegistry()
+        val first = Any()
+        val second = Any()
+        val wanted = track("1")
+        activate(registry, first, wanted, "first")
+        activate(registry, second, wanted, "second")
+
+        assertNull(registry.selectUnique(wanted))
+        registry.onReleased(second)
         assertSame(first, registry.selectUnique(wanted))
     }
 
-    @Test fun hostMetadataDrivesGenerationAndOldCallbackIsRejectedAfterSwitch() {
-        val registry = SaltMediaSessionRegistry(); val session = Any()
-        registry.onConstructed(session, "main"); registry.onPlaybackState(session, PlaybackState.STATE_PLAYING)
-        registry.onActive(session, true); val controller = SaltHostGenerationController(registry)
-        val oldTrack = track("old"); registry.onHostMetadata(session, oldTrack)
+    @Test
+    fun stableResolvedIdentityPreventsRelayLineGenerationChurn() {
+        val registry = SaltMediaSessionRegistry()
+        val session = Any()
+        val resolved = track("song-1", "Broken", "William Black/Fairlane")
+        activate(registry, session, resolved, "relay-line-1")
+        val controller = SaltHostGenerationController(registry)
+        val firstGeneration = controller.observeUniqueHostMainTrack()
+
+        registry.onHostMetadata(session, resolved, "relay-line-2")
+        val secondGeneration = controller.observeUniqueHostMainTrack()
+        registry.onHostMetadata(session, resolved, "relay-line-3")
+        val thirdGeneration = controller.observeUniqueHostMainTrack()
+
+        assertEquals(1L, firstGeneration)
+        assertEquals(firstGeneration, secondGeneration)
+        assertEquals(firstGeneration, thirdGeneration)
+        assertSame("relay-line-3", registry.hostMetadata(session))
+    }
+
+    @Test
+    fun realTrackChangeAdvancesGenerationAndRejectsOldCallback() {
+        val registry = SaltMediaSessionRegistry()
+        val session = Any()
+        activate(registry, session, track("old"), "old-metadata")
+        val controller = SaltHostGenerationController(registry)
         val oldGeneration = controller.observeUniqueHostMainTrack()!!
-        assertTrue(controller.acceptsPublication(oldTrack, oldGeneration))
-        val newTrack = track("new"); registry.onHostMetadata(session, newTrack)
+
+        val current = track("new", "New Title", "New Artist")
+        registry.onHostMetadata(session, current, "new-metadata")
         val newGeneration = controller.observeUniqueHostMainTrack()!!
+
         assertTrue(newGeneration > oldGeneration)
-        assertFalse(controller.acceptsPublication(oldTrack, oldGeneration))
-        assertTrue(controller.acceptsPublication(newTrack, newGeneration))
+        assertFalse(controller.acceptsPublication(track("old"), oldGeneration))
+        assertTrue(controller.acceptsPublication(current, newGeneration))
     }
 
-    @Test fun sameTrackRelayKeepsGenerationUnchangedAndDoesNotOverwriteStableMetadata() {
+    @Test
+    fun pendingPublicationBecomesPublishableAfterFirstResolvedMetadata() {
         val registry = SaltMediaSessionRegistry()
         val session = Any()
         registry.onConstructed(session, "main")
         registry.onPlaybackState(session, PlaybackState.STATE_PLAYING)
         registry.onActive(session, true)
         val controller = SaltHostGenerationController(registry)
+        val wanted = track("song-1", "Broken", "William Black/Fairlane")
 
-        val stableTrack = track("1", "Broken", "William Black/Fairlane", 180000L)
-        val stableMeta = "StableMetadataObject1"
-        registry.onHostMetadata(session, stableTrack, stableMeta)
-        val initialGeneration = controller.observeUniqueHostMainTrack()!!
-        assertEquals(1L, initialGeneration)
-        assertSame(stableMeta, registry.stableMetadata(session))
+        assertEquals(
+            SaltPendingPublicationPolicy.Decision.PENDING,
+            SaltPendingPublicationPolicy.decide(wanted, null, false, false, false)
+        )
 
-        // Relay line 1
-        val relayIdentity1 = SaltBluetoothLyricRelayPolicy.parseRelayIdentity("William Black/Fairlane - Broken")!!
-        assertTrue(SaltBluetoothLyricRelayPolicy.matchesStable(stableTrack, relayIdentity1.title, relayIdentity1.artist, 180000L))
-        registry.onRelayMetadata(session, "RelayMetaLine1")
-
-        val generationAfterRelay1 = controller.observeUniqueHostMainTrack()!!
-        assertEquals(initialGeneration, generationAfterRelay1)
-        assertSame(stableMeta, registry.stableMetadata(session))
-        assertTrue(controller.acceptsPublication(stableTrack, generationAfterRelay1))
-
-        // Relay line 2
-        registry.onRelayMetadata(session, "RelayMetaLine2")
-        val generationAfterRelay2 = controller.observeUniqueHostMainTrack()!!
-        assertEquals(initialGeneration, generationAfterRelay2)
-        assertSame(stableMeta, registry.stableMetadata(session))
+        registry.onHostMetadata(session, wanted, "first-relay-metadata")
+        val generation = controller.observeUniqueHostMainTrack()!!
+        assertEquals(
+            SaltPendingPublicationPolicy.Decision.PUBLISH,
+            SaltPendingPublicationPolicy.decide(
+                wanted,
+                controller.policy.currentTrack,
+                controller.acceptsPublication(wanted, generation),
+                registry.selectUnique(wanted) === session,
+                registry.hostMetadata(session) != null
+            )
+        )
     }
 
-    @Test fun firstPacketRelayWithoutStableIsRejectedAndDoesNotDriveGeneration() {
+    @Test
+    fun moduleWriteGuardIsReentrantAndRestored() {
         val registry = SaltMediaSessionRegistry()
-        val session = Any()
-        registry.onConstructed(session, "main")
-        registry.onPlaybackState(session, PlaybackState.STATE_PLAYING)
-        registry.onActive(session, true)
-        val controller = SaltHostGenerationController(registry)
-
-        // First packet arrives as relay (no prior stable metadata)
-        val relayIdentity = SaltBluetoothLyricRelayPolicy.parseRelayIdentity("William Black/Fairlane - Broken")
-        val stable = registry.stableMetadata(session)
-        assertNull(stable)
-        // Relay policy fails open without recording stable or advancing generation
-        assertNull(controller.observeUniqueHostMainTrack())
-        assertNull(registry.stableMetadata(session))
-    }
-
-    @Test fun verifiedPendingTrackCanEstablishStableIdentityFromFirstRelay() {
-        val registry = SaltMediaSessionRegistry()
-        val session = Any()
-        registry.onConstructed(session, "main")
-        registry.onPlaybackState(session, PlaybackState.STATE_PLAYING)
-        registry.onActive(session, true)
-        val controller = SaltHostGenerationController(registry)
-        val pendingTrack = track(
-            "song-1",
-            "Broken",
-            "William Black/Fairlane",
-            180000L
-        )
-
-        registry.onRecoveredStableMetadata(
-            session,
-            pendingTrack,
-            "RecoveredStableMetadata",
-            "RelayLineMetadata"
-        )
-
-        assertEquals(1L, controller.observeUniqueHostMainTrack())
-        assertEquals(pendingTrack, controller.policy.currentTrack)
-        assertSame("RecoveredStableMetadata", registry.stableMetadata(session))
-        assertSame("RelayLineMetadata", registry.hostMetadata(session))
-    }
-
-    @Test fun realTrackChangeAdvancesGenerationAndClearsOldPublicationAcceptance() {
-        val registry = SaltMediaSessionRegistry()
-        val session = Any()
-        registry.onConstructed(session, "main")
-        registry.onPlaybackState(session, PlaybackState.STATE_PLAYING)
-        registry.onActive(session, true)
-        var trackChangedFired = false
-        val controller = SaltHostGenerationController(registry) { trackChangedFired = true }
-
-        val track1 = track("1", "Broken", "William Black/Fairlane", 180000L)
-        registry.onHostMetadata(session, track1, "Stable1")
-        val gen1 = controller.observeUniqueHostMainTrack()!!
-        assertEquals(1L, gen1)
-
-        // Relay on Track 1
-        registry.onRelayMetadata(session, "RelayLine1")
-        assertEquals(gen1, controller.observeUniqueHostMainTrack()!!)
-        assertFalse(trackChangedFired)
-
-        // Real track switch to Track 2
-        val track2 = track("2", "Easy On Me", "Adele", 224000L)
-        registry.onHostMetadata(session, track2, "Stable2")
-        val gen2 = controller.observeUniqueHostMainTrack()!!
-        assertTrue(gen2 > gen1)
-        assertTrue(trackChangedFired)
-        assertSame("Stable2", registry.stableMetadata(session))
-        assertFalse(controller.acceptsPublication(track1, gen1))
-        assertTrue(controller.acceptsPublication(track2, gen2))
-    }
-
-    @Test fun pendingPublicationDrainsAfterStableMetadataIsEstablished() {
-        val registry = SaltMediaSessionRegistry()
-        val session = Any()
-        registry.onConstructed(session, "main")
-        registry.onPlaybackState(session, PlaybackState.STATE_PLAYING)
-        registry.onActive(session, true)
-        val controller = SaltHostGenerationController(registry)
-
-        val track = track("1", "Broken", "William Black/Fairlane", 180000L)
-        val publication = SaltPublication(
-            songId = "1", title = "Broken", artist = "William Black/Fairlane",
-            album = "Album", durationMs = 180000L, sourceName = "EMBEDDED",
-            timedLyric = "Lyric", rawCandidate = "", lines = emptyList()
-        )
-
-        // Publication arrives before host metadata
-        val decisionBefore = SaltPendingPublicationPolicy.decide(
-            publicationTrack = track,
-            currentHostTrack = controller.policy.currentTrack,
-            generationValid = controller.acceptsPublication(track),
-            uniqueSessionReady = registry.selectUnique(track) != null,
-            metadataReady = registry.stableMetadata(session) != null
-        )
-        assertEquals(SaltPendingPublicationPolicy.Decision.PENDING, decisionBefore)
-
-        val store = SaltPendingPublicationStore()
-        store.replace(publication)
-        assertSame(publication, store.peek())
-
-        // Host metadata arrives
-        registry.onHostMetadata(session, track, "StableMetadataObj")
-        val gen = controller.observeUniqueHostMainTrack()!!
-        assertEquals(1L, gen)
-
-        val decisionAfter = SaltPendingPublicationPolicy.decide(
-            publicationTrack = track,
-            currentHostTrack = controller.policy.currentTrack,
-            generationValid = controller.acceptsPublication(track, gen),
-            uniqueSessionReady = registry.selectUnique(track) != null,
-            metadataReady = registry.stableMetadata(session) != null
-        )
-        assertEquals(SaltPendingPublicationPolicy.Decision.PUBLISH, decisionAfter)
-        assertSame(publication, store.take())
-        assertNull(store.peek())
-    }
-
-    @Test fun moduleWriteGuardIsReentrantAndRestored() {
-        val registry = SaltMediaSessionRegistry(); assertFalse(registry.isModuleWrite())
+        assertFalse(registry.isModuleWrite())
         registry.withModuleWrite {
-            assertTrue(registry.isModuleWrite()); registry.withModuleWrite { assertTrue(registry.isModuleWrite()) }
+            assertTrue(registry.isModuleWrite())
+            registry.withModuleWrite { assertTrue(registry.isModuleWrite()) }
             assertTrue(registry.isModuleWrite())
         }
         assertFalse(registry.isModuleWrite())
+    }
+
+    private fun activate(
+        registry: SaltMediaSessionRegistry,
+        session: Any,
+        track: TrackIdentity,
+        metadata: Any
+    ) {
+        registry.onConstructed(session, "main")
+        registry.onHostMetadata(session, track, metadata)
+        registry.onPlaybackState(session, PlaybackState.STATE_PLAYING)
+        registry.onActive(session, true)
     }
 }

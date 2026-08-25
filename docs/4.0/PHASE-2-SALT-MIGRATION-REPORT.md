@@ -34,45 +34,30 @@
   classLoader/version 变化时清空。
 - `reflection-core.DexKitBridge` 在创建 native bridge 前线程安全、一次性加载 `dexkit`。
 
-## 车载/蓝牙歌词中继（Relay）与 Generation 1→13 根因修复
+## 车载/蓝牙歌词 metadata 源码边界
 
-- 取证日志：`logs/salt-phase2-root-01.txt`。
-- 根因分析：
-  - Salt 播放器内置车载/蓝牙歌词中继（Relay）功能。开启后，Salt 会周期性调用 `MediaSession#setMetadata`，
-    将 `METADATA_KEY_ARTIST` 改写为 `<Artist> -|–|— <Title>`（取第一个分隔符），并将 `METADATA_KEY_TITLE`
-    改写为当前动态播放的歌词文本行。
-  - 在初版 Phase 2 实现中，`SaltPlayerHooker.setMetadata` 的 before hook 未对 relay metadata 进行隔离，
-    每次传入均由 `trackFrom(incoming)` 提取出包含动态歌词标题的虚假新 TrackIdentity，并触发
-    `observeUniqueHostMainTrack() -> policy.onTrackObserved(track)`。
-  - 这导致每更新一行歌词，track generation 便递增一次，在日志中出现从 generation 1 持续递增至 generation 13
-    （`SALT_FINAL_STALE generation=13`）。随之产生的后果是：未就绪的 pending 歌词被判定为换曲而丢弃
-    （`PENDING_DROPPED_TRACK_CHANGE`），后续真实歌词发布也因 generation 过期被丢弃（`STALE`）。
-- 修复策略与隔离边界：
-  1. `SaltBluetoothLyricRelayPolicy.parseRelayIdentity` 基于 Bridge v4 真实格式规则，检测 `<Artist> -|–|— <Title>`
-     复合艺术家字符串并提取原始曲目身份。
-  2. `SaltPlayerHooker.setMetadata` before hook 拦截 relay metadata：
-     - 若 registry 中存在该 session 的 `stableMetadata`，且解析出的 relay 身份（曲名、歌手、时长）与 stable 匹配，
-       则接受为 relay，调用 `sessions.onRelayMetadata(session, incoming)`。
-     - 禁止调用 `onHostMetadata`，禁止调用 `observeGenerationFromHostMainSession()` 推进 generation。
-     - relay 更新不得覆盖 `stableMetadata`，保持 generation 与 stable base metadata 稳定。
-     - 有界 replay 仍会将模块生成的 `lyricInfo` 附着在 incoming metadata 上，使 ColorOS SystemUI 能正常显示歌词，
-       同时不修改 incoming 的动态标题/复合艺术家，确保车载蓝牙设备显示正常。
-     - 若无 stable metadata（如冷启动首包即为 relay）或身份不匹配，记录 `SALT_RELAY_METADATA_REJECTED` 并保持 fail-open，
-       不写入 stable metadata 且不推进 generation。
-  3. 真实换曲时（非 relay 正常 metadata），更新 `stableMetadata`、推进 generation、重置 replay 快照并在 stable 建立后
-     drain pending publication。
+- 取证日志：`logs/salt-phase2-root-01.txt`、`salt-phase2-root-02.txt`、`salt-phase2-root-03.txt`。
+- Salt 源码 `androidx.media3.RunnableC0300` 的 metadata 构建链确认：车载/蓝牙歌词与普通播放共用同一个主
+  `MediaSession`。开启车载歌词时，Salt 在每一行更新中直接设置：
 
-### 冷启动首包 Relay 补充修复
+  ```text
+  TITLE  = 当前动态歌词行
+  ARTIST = 原歌手 + 分隔符 + 原曲名
+  ```
 
-- `logs/salt-phase2-root-02.txt` 进一步确认：Salt 冷启动后第一份 metadata 就可能是 relay，日志持续出现
-  `SALT_RELAY_METADATA_REJECTED reason=NO_STABLE_TRACK`，同时歌词停留在
-  `SALT_FINAL_PENDING_STORED/PENDING_REPLACED generation=0`。因此仅等待普通 stable metadata 会永久阻塞发布。
-- 当首包 relay 的 `<Artist> - <Title>` 与已经捕获的 pending Salt publication 身份、时长一致时，Provider 现在：
-  1. 从 pending publication 恢复 stable track identity；
-  2. 只在 registry 中保存由 relay metadata 还原出的 stable base，不覆盖 Salt 正在提交的动态 relay metadata；
-  3. 建立 host-driven generation；
-  4. 将 pending 歌词直接附着到当前 relay metadata 后交给原始 `setMetadata` 调用，保留车载/蓝牙动态标题。
-- 无 pending publication、身份不一致或时长不兼容时继续 fail-open，不借用旧曲身份。
+  部分版本同时通过 `DISPLAY_TITLE` / `DISPLAY_SUBTITLE` 保留原曲名和歌手，随后调用同一个
+  `MediaSession#setMetadata`。因此不存在可通过 session 分流解决的独立“车载 Session”。
+- `salt-phase2-root-03.txt` 证明基于上一份 stable metadata 的 relay 状态机仍会遇到交替
+  `SALT_RELAY_METADATA_NORMALIZED` / `TRACK_MISMATCH`，不能作为稳定数据边界。
+- 最终实现改为无状态 identity resolver：
+  1. 优先从 `DISPLAY_TITLE` / `DISPLAY_SUBTITLE` 获取稳定曲目身份；
+  2. display 字段不可用时，从 `<Artist> -|–|— <Title>` 复合 ARTIST 恢复身份；
+  3. 普通 metadata 才直接使用标准 TITLE / ARTIST；
+  4. 动态歌词 TITLE 永不进入 `TrackGenerationPolicy`，同曲逐行更新只刷新当前 host metadata；
+  5. 真实 ID、原曲名或歌手变化仍推进 generation；
+  6. 首次发布、pending drain 和 replay 始终复制 Salt 当前 metadata，仅追加 `lyricInfo`，不改写车载动态字段。
+- 该边界不再缓存或合成另一份 stable metadata，也不依赖前一包 relay 是否被接受，从源头隔离车载歌词展示字段与
+  锁屏歌词曲目身份。
 
 ## Salt 取证 fixture
 
@@ -93,18 +78,19 @@
 执行：
 
 ```text
-scripts\gradle-ascii.cmd :player-salt:testDebugUnitTest :player-salt:assembleDebug :player-salt:assembleNpatch :player-salt:assembleNpatchDebug --rerun-tasks --no-configuration-cache
+scripts\gradle-ascii.cmd :player-salt:testDebugUnitTest :player-salt:assembleDebug --rerun-tasks --no-configuration-cache
+scripts\gradle-ascii.cmd :player-salt:assembleNpatch :player-salt:assembleNpatchDebug --no-configuration-cache
 ```
 
-结果：`BUILD SUCCESSFUL`，262 个 task 执行。JUnit XML 共 11 suites、45 tests，0 failures、0 errors、0 skipped。
+结果：两次命令均 `BUILD SUCCESSFUL`。JUnit XML 共 11 suites、43 tests，0 failures、0 errors、0 skipped。
 
 最终 APK：
 
 | Variant | 绝对路径 | SHA-256 | NPATCH | Debug marker |
 |---|---|---|---|---|
-| debug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\debug\player-salt-1.0.4-debug.apk` | `B5E83A88E08053C8F5499020ABD93E9FE35E26B308A2747162F533121E4D69C5` | false | false |
-| npatch | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatch\player-salt-1.0.4-npatch.apk` | `97FA4862EA9CB4A580FAD8A754B8244106B252D9FD918B76BE56F3E4CF6E8BAD` | true | false |
-| npatchDebug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatchDebug\player-salt-1.0.4-npatchDebug.apk` | `7015E6F848563F597FD67AFADB2CA6068E264A562EE025F2C9C8C36144F7FD14` | true | true |
+| debug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\debug\player-salt-1.0.4-debug.apk` | `F11147A18D687674472E98454E1548AC9A3C59511D32E2D02E1E99595312098E` | false | false |
+| npatch | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatch\player-salt-1.0.4-npatch.apk` | `744F038F3EDDA8FB64A454634BF92B1D91D1FD527CFB4F37B3EB1D26B053C318` | true | false |
+| npatchDebug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatchDebug\player-salt-1.0.4-npatchDebug.apk` | `2909E47308140F6426E4C2D779FC1712025FCED624DD8A9EB0603D8442BEC9D0` | true | true |
 
 三种 APK 的 package 均为 `io.github.andrealtb.coloroslyrics.provider.salt`，versionCode=5、
 versionName=1.0.4。解包扫描均未发现 `LyriconFactory`、`LyriconProvider`、
@@ -112,6 +98,6 @@ versionName=1.0.4。解包扫描均未发现 `LyriconFactory`、`LyriconProvider
 
 ## 未验证门禁
 
-以上为源码、单元测试、Gradle 构建和 APK 静态验证。`logs/salt-phase2-root-01.txt` 与
-`logs/salt-phase2-root-02.txt` 对应的 Root 与 NPatch
+以上为源码、单元测试、Gradle 构建和 APK 静态验证。`logs/salt-phase2-root-01.txt`、
+`logs/salt-phase2-root-02.txt` 与 `logs/salt-phase2-root-03.txt` 对应的 Root 与 NPatch
 真机运行、蓝牙歌词中继下的锁屏与 AOD 显示、DexKit 发现及 metadata replay 待真机复测，不宣称真机通过。

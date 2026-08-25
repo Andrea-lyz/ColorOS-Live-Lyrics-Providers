@@ -165,93 +165,23 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
                     if (sessions.isModuleWrite()) return@before
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
-                    val incomingArtist = incoming.getString(MediaMetadata.METADATA_KEY_ARTIST)
-                    val relayIdentity = SaltBluetoothLyricRelayPolicy.parseRelayIdentity(incomingArtist)
-                    if (relayIdentity != null) {
-                        val stable = sessions.stableMetadata(session) as? MediaMetadata
-                        val incomingDuration = incoming.getLong(MediaMetadata.METADATA_KEY_DURATION)
-                        val isRelayAccepted = stable != null && SaltBluetoothLyricRelayPolicy.matchesStable(
-                            stable,
-                            relayIdentity.title,
-                            relayIdentity.artist,
-                            incomingDuration
-                        )
-                        if (isRelayAccepted) {
-                            SaltBluetoothLyricRelayPolicy.logNormalized(stable, relayIdentity)
-                            sessions.onRelayMetadata(session, incoming)
-                            attachPendingToRelayMetadata(session, incoming)?.let { args[0] = it }
-                            val snapshot = synchronized(publicationLock) { replaySnapshot }
-                            val stableTrack = SaltMediaSessionRegistry.trackFrom(stable)
-                            val selected = stableTrack?.let(sessions::selectUnique)
-                            val replayBase = args.getOrNull(0) as? MediaMetadata ?: incoming
-                            val incomingLyricInfo = replayBase.getString("lyricInfo")
-                            val alreadyOwned = SaltReplayPolicy.isModuleOwned(incomingLyricInfo)
-                            if (!alreadyOwned && SaltReplayPolicy.shouldReplay(
-                                    snapshot, selected, stableTrack, generationPolicy.currentTrack,
-                                    generationPolicy.generation,
-                                    snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
-                                    incomingLyricInfo
-                                )) {
-                                SaltNativePublisher.buildReplayMetadata(replayBase, snapshot!!, generationPolicy)
-                                    .second?.let { args[0] = it }
-                            }
-                            return@before
-                        } else {
-                            if (stable == null) {
-                                val pending = pendingStore.peek()
-                                val recoveredTrack = pending?.let {
-                                    SaltBluetoothLyricRelayPolicy.recoverTrackFromPending(
-                                        it.trackIdentity(),
-                                        relayIdentity,
-                                        incomingDuration
-                                    )
-                                }
-                                if (pending != null && recoveredTrack != null) {
-                                    val recoveredMetadata =
-                                        SaltBluetoothLyricRelayPolicy.recoverStableMetadata(
-                                            incoming,
-                                            relayIdentity,
-                                            recoveredTrack
-                                        )
-                                    sessions.onRecoveredStableMetadata(
-                                        session,
-                                        recoveredTrack,
-                                        recoveredMetadata,
-                                        incoming
-                                    )
-                                    observeGenerationFromHostMainSession()
-                                    SaltBluetoothLyricRelayPolicy.logNormalized(
-                                        recoveredTrack,
-                                        relayIdentity
-                                    )
-                                    attachPendingToRelayMetadata(session, incoming)?.let {
-                                        args[0] = it
-                                    }
-                                    return@before
-                                }
-                            }
-                            SaltBluetoothLyricRelayPolicy.logRejected(
-                                if (stable == null) "NO_STABLE_OR_PENDING_TRACK" else "TRACK_MISMATCH"
-                            )
-                            return@before
-                        }
-                    }
-
-                    val incomingTrack = SaltMediaSessionRegistry.trackFrom(incoming)
-                    sessions.onHostMetadata(session, incomingTrack, incoming)
+                    val resolved = SaltBluetoothLyricRelayPolicy.resolve(incoming) ?: return@before
+                    SaltBluetoothLyricRelayPolicy.logResolved(resolved)
+                    sessions.onHostMetadata(session, resolved.track, incoming)
                     observeGenerationFromHostMainSession()
-                    drainPendingPublication()
+                    attachPendingToHostMetadata(session, incoming)?.let { args[0] = it }
                     val snapshot = synchronized(publicationLock) { replaySnapshot }
-                    val selected = incomingTrack?.let(sessions::selectUnique)
-                    val incomingLyricInfo = incoming.getString("lyricInfo")
+                    val selected = sessions.selectUnique(resolved.track)
+                    val replayBase = args.getOrNull(0) as? MediaMetadata ?: incoming
+                    val incomingLyricInfo = replayBase.getString("lyricInfo")
                     val alreadyOwned = SaltReplayPolicy.isModuleOwned(incomingLyricInfo)
                     if (!alreadyOwned && SaltReplayPolicy.shouldReplay(
-                            snapshot, selected, incomingTrack, generationPolicy.currentTrack,
+                            snapshot, selected, resolved.track, generationPolicy.currentTrack,
                             generationPolicy.generation,
                             snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
                             incomingLyricInfo
                         )) {
-                        SaltNativePublisher.buildReplayMetadata(incoming, snapshot!!, generationPolicy)
+                        SaltNativePublisher.buildReplayMetadata(replayBase, snapshot!!, generationPolicy)
                             .second?.let { args[0] = it }
                     }
                 }
@@ -293,7 +223,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
         val currentTrack = generationPolicy.currentTrack
         val generation = generationPolicy.generation
         val session = sessions.selectUnique(track) as? MediaSession
-        val metadata = session?.let { (sessions.stableMetadata(it) ?: sessions.hostMetadata(it)) as? MediaMetadata }
+        val metadata = session?.let { sessions.hostMetadata(it) as? MediaMetadata }
         val decision = SaltPendingPublicationPolicy.decide(
             publicationTrack = track,
             currentHostTrack = currentTrack,
@@ -328,7 +258,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
         }
     }
 
-    private fun attachPendingToRelayMetadata(
+    private fun attachPendingToHostMetadata(
         session: MediaSession,
         incoming: MediaMetadata
     ): MediaMetadata? {
@@ -353,8 +283,8 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
                 component = "provider/salt",
-                area = "relay",
-                event = "SALT_RELAY_LYRIC_INFO_ATTACHED",
+                area = "publisher",
+                event = "SALT_HOST_METADATA_LYRIC_INFO_ATTACHED",
                 generation = generation
             )
         )
@@ -373,7 +303,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
             return
         }
         val session = sessions.selectUnique(track) as? MediaSession ?: return
-        val metadata = (sessions.stableMetadata(session) ?: sessions.hostMetadata(session)) as? MediaMetadata ?: return
+        val metadata = sessions.hostMetadata(session) as? MediaMetadata ?: return
         if (!generationController.acceptsPublication(track)) return
         pendingStore.take()
         logPublicationResult("PENDING_DRAINED", generationPolicy.generation)

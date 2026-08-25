@@ -6,7 +6,7 @@
 
 package io.github.andrealtb.coloroslyrics.provider.salt
 
-import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
+import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
 import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -17,116 +17,116 @@ import kotlin.test.assertTrue
 class SaltBluetoothLyricRelayPolicyTest {
 
     @Test
-    fun parseRelayIdentityMatchesThreeBridgeFixtures() {
-        // Fixture 1: William Black/Fairlane - Broken
-        val fixture1 = SaltBluetoothLyricRelayPolicy.parseRelayIdentity("William Black/Fairlane - Broken")
-        assertNotNull(fixture1)
-        assertEquals("William Black/Fairlane", fixture1.artist)
-        assertEquals("Broken", fixture1.title)
+    fun parseRelayIdentityMatchesBridgeFixtures() {
+        val first = SaltBluetoothLyricRelayPolicy.parseRelayIdentity(
+            "William Black/Fairlane - Broken"
+        )
+        assertNotNull(first)
+        assertEquals("William Black/Fairlane", first.artist)
+        assertEquals("Broken", first.title)
 
-        // Fixture 2: Porter Robinson - Kitsune Maison Freestyle - Live (preserves extra separators in title)
-        val fixture2 = SaltBluetoothLyricRelayPolicy.parseRelayIdentity(
+        val second = SaltBluetoothLyricRelayPolicy.parseRelayIdentity(
             "Porter Robinson - Kitsune Maison Freestyle - Live"
         )
-        assertNotNull(fixture2)
-        assertEquals("Porter Robinson", fixture2.artist)
-        assertEquals("Kitsune Maison Freestyle - Live", fixture2.title)
-
-        // Fixture 3: Adele - All I Ask
-        val fixture3 = SaltBluetoothLyricRelayPolicy.parseRelayIdentity("Adele - All I Ask")
-        assertNotNull(fixture3)
-        assertEquals("Adele", fixture3.artist)
-        assertEquals("All I Ask", fixture3.title)
-    }
-
-    @Test
-    fun parseRelayIdentityHandlesAllSupportedSeparators() {
-        val hyphen = SaltBluetoothLyricRelayPolicy.parseRelayIdentity("Artist - Title")
-        assertNotNull(hyphen)
-        assertEquals("Artist", hyphen.artist)
-        assertEquals("Title", hyphen.title)
-
-        val enDash = SaltBluetoothLyricRelayPolicy.parseRelayIdentity("Artist – Title")
-        assertNotNull(enDash)
-        assertEquals("Artist", enDash.artist)
-        assertEquals("Title", enDash.title)
-
-        val emDash = SaltBluetoothLyricRelayPolicy.parseRelayIdentity("Artist — Title")
-        assertNotNull(emDash)
-        assertEquals("Artist", emDash.artist)
-        assertEquals("Title", emDash.title)
-    }
-
-    @Test
-    fun parseRelayIdentityRejectsNonRelayAndInvalidInputs() {
-        assertNull(SaltBluetoothLyricRelayPolicy.parseRelayIdentity(null))
-        assertNull(SaltBluetoothLyricRelayPolicy.parseRelayIdentity(""))
-        assertNull(SaltBluetoothLyricRelayPolicy.parseRelayIdentity("   "))
-        assertNull(SaltBluetoothLyricRelayPolicy.parseRelayIdentity("Taylor Swift"))
-        assertNull(SaltBluetoothLyricRelayPolicy.parseRelayIdentity("SingleArtistWithoutSeparator"))
-        assertNull(SaltBluetoothLyricRelayPolicy.parseRelayIdentity(" - Broken"))
-        assertNull(SaltBluetoothLyricRelayPolicy.parseRelayIdentity("Artist - "))
-    }
-
-    @Test
-    fun matchesStableChecksTrackIdentityAndDuration() {
-        val stable = TrackIdentity(
-            id = "1",
-            title = "Broken",
-            artist = "William Black/Fairlane",
-            durationMs = 180000L
-        )
-
-        assertTrue(SaltBluetoothLyricRelayPolicy.matchesStable(stable, "Broken", "William Black/Fairlane", 180000L))
-        assertTrue(SaltBluetoothLyricRelayPolicy.matchesStable(stable, "Broken", "William Black/Fairlane", 0L))
-        assertTrue(
-            SaltBluetoothLyricRelayPolicy.matchesStable(
-                stable.copy(durationMs = 0L),
-                "Broken",
-                "William Black/Fairlane",
-                180000L
-            )
-        )
-
-        assertFalse(SaltBluetoothLyricRelayPolicy.matchesStable(stable, "Other Title", "William Black/Fairlane", 180000L))
-        assertFalse(SaltBluetoothLyricRelayPolicy.matchesStable(stable, "Broken", "Other Artist", 180000L))
-        assertFalse(SaltBluetoothLyricRelayPolicy.matchesStable(stable, "Broken", "William Black/Fairlane", 240000L))
-        assertFalse(SaltBluetoothLyricRelayPolicy.matchesStable(null, "Broken", "William Black/Fairlane", 180000L))
-    }
-
-    @Test
-    fun firstRelayRecoversOnlyFromMatchingPendingTrack() {
-        val relay = SaltBluetoothLyricRelayPolicy.parseRelayIdentity(
-            "William Black/Fairlane - Broken"
-        )!!
-        val matching = TrackIdentity(
-            id = "song-1",
-            title = "Broken",
-            artist = "William Black/Fairlane",
-            durationMs = 180000L
-        )
+        assertNotNull(second)
+        assertEquals("Porter Robinson", second.artist)
+        assertEquals("Kitsune Maison Freestyle - Live", second.title)
 
         assertEquals(
-            matching,
-            SaltBluetoothLyricRelayPolicy.recoverTrackFromPending(
-                matching,
-                relay,
-                180000L
-            )
+            "All I Ask",
+            SaltBluetoothLyricRelayPolicy.parseRelayIdentity("Adele — All I Ask")?.title
         )
-        assertNull(
-            SaltBluetoothLyricRelayPolicy.recoverTrackFromPending(
-                matching.copy(id = "song-2", title = "Other"),
-                relay,
-                180000L
-            )
-        )
-        assertNull(
-            SaltBluetoothLyricRelayPolicy.recoverTrackFromPending(
-                null,
-                relay,
-                180000L
-            )
-        )
+        assertNull(SaltBluetoothLyricRelayPolicy.parseRelayIdentity("Adele"))
     }
+
+    @Test
+    fun displayIdentityWinsOverDynamicRelayTitle() {
+        val resolved = SaltBluetoothLyricRelayPolicy.resolveFields(
+            mediaId = "song-1",
+            title = "Current lyric line",
+            artist = "William Black/Fairlane - Broken",
+            displayTitle = "Broken",
+            displaySubtitle = "William Black/Fairlane",
+            album = "Album",
+            durationMs = 180000L
+        )
+
+        assertNotNull(resolved)
+        assertTrue(resolved.relay)
+        assertEquals("display", resolved.source)
+        assertEquals("song-1", resolved.track.id)
+        assertEquals("Broken", resolved.track.title)
+        assertEquals("William Black/Fairlane", resolved.track.artist)
+    }
+
+    @Test
+    fun compositeArtistRestoresIdentityWithoutDisplayFields() {
+        val resolved = SaltBluetoothLyricRelayPolicy.resolveFields(
+            mediaId = null,
+            title = "Another lyric line",
+            artist = "William Black/Fairlane - Broken",
+            displayTitle = null,
+            displaySubtitle = null,
+            album = "Album",
+            durationMs = 180000L
+        )
+
+        assertNotNull(resolved)
+        assertTrue(resolved.relay)
+        assertEquals("relay-artist", resolved.source)
+        assertEquals("Broken", resolved.track.title)
+        assertEquals("William Black/Fairlane", resolved.track.artist)
+    }
+
+    @Test
+    fun changingLyricLinesDoesNotChangeResolvedTrack() {
+        val first = resolveRelay("First line")
+        val second = resolveRelay("Second line")
+
+        assertTrue(TrackIdentityPolicy.isSameTrack(first.track, second.track))
+        assertEquals(first.track.buildStableKey(), second.track.buildStableKey())
+    }
+
+    @Test
+    fun realSongChangeStillChangesResolvedTrack() {
+        val first = resolveRelay("First line")
+        val second = SaltBluetoothLyricRelayPolicy.resolveFields(
+            mediaId = "song-2",
+            title = "New lyric",
+            artist = "Adele - All I Ask",
+            displayTitle = "All I Ask",
+            displaySubtitle = "Adele",
+            album = "25",
+            durationMs = 240000L
+        )!!
+
+        assertFalse(TrackIdentityPolicy.isSameTrack(first.track, second.track))
+    }
+
+    @Test
+    fun ordinaryMetadataRemainsOrdinary() {
+        val resolved = SaltBluetoothLyricRelayPolicy.resolveFields(
+            mediaId = "song-1",
+            title = "Broken",
+            artist = "William Black/Fairlane",
+            displayTitle = null,
+            displaySubtitle = null,
+            album = "Album",
+            durationMs = 180000L
+        )
+        assertNotNull(resolved)
+        assertFalse(resolved.relay)
+        assertEquals("standard", resolved.source)
+    }
+
+    private fun resolveRelay(line: String) =
+        SaltBluetoothLyricRelayPolicy.resolveFields(
+            mediaId = "song-1",
+            title = line,
+            artist = "William Black/Fairlane - Broken",
+            displayTitle = "Broken",
+            displaySubtitle = "William Black/Fairlane",
+            album = "Album",
+            durationMs = 180000L
+        )!!
 }

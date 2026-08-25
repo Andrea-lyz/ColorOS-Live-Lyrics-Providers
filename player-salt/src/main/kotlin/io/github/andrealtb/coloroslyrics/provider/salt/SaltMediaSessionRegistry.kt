@@ -19,7 +19,6 @@ class SaltMediaSessionRegistry {
         val tag: String,
         var track: TrackIdentity? = null,
         var hostMetadata: Any? = null,
-        var stableMetadata: Any? = null,
         var playbackState: Int = PlaybackState.STATE_NONE,
         var active: Boolean = false,
         var released: Boolean = false
@@ -37,36 +36,8 @@ class SaltMediaSessionRegistry {
         ensure(session).apply {
             this.track = track?.takeUnless { it.isBlank }
             this.hostMetadata = metadata
-            if (metadata != null) {
-                this.stableMetadata = metadata
-            }
         }
     }
-
-    @Synchronized fun onRelayMetadata(session: Any, metadata: Any?) {
-        ensure(session).apply {
-            if (metadata != null) this.hostMetadata = metadata
-        }
-    }
-
-    @Synchronized fun onRecoveredStableMetadata(
-        session: Any,
-        track: TrackIdentity,
-        stableMetadata: Any,
-        relayMetadata: Any
-    ) {
-        ensure(session).apply {
-            this.track = track
-            this.hostMetadata = relayMetadata
-            this.stableMetadata = stableMetadata
-        }
-    }
-
-    @Synchronized fun markStableMetadataPublished(session: Any, metadata: Any?) {
-        ensure(session).stableMetadata = metadata
-    }
-
-    @Synchronized fun stableMetadata(session: Any): Any? = entry(session)?.stableMetadata
 
     @Synchronized fun onPlaybackState(session: Any, state: Int) {
         ensure(session).playbackState = state

@@ -47,7 +47,7 @@ object SaltNativePublisher {
             album = publication.album.takeIf { it.isNotBlank() },
             durationMs = publication.durationMs
         )
-        val baseTrack = SaltMediaSessionRegistry.trackFrom(metadata)
+        val baseTrack = SaltBluetoothLyricRelayPolicy.resolve(metadata)?.track
         if (!TrackIdentityPolicy.isSameTrack(baseTrack, track)) {
             return NativeLyricInfoPublisher.Result.STALE_GENERATION
         }
@@ -69,7 +69,6 @@ object SaltNativePublisher {
             }.isSuccess
             val commitResult = classifyCommit(result, committed)
             if (commitResult.isPublished) {
-                registry.markStableMetadataPublished(session, patched)
                 StructuredDiagnostics.logInfo(
                     DiagnosticEvent(
                         component = "provider/salt",
