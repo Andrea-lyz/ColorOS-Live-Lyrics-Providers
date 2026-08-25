@@ -69,6 +69,7 @@ object SaltNativePublisher {
             }.isSuccess
             val commitResult = classifyCommit(result, committed)
             if (commitResult.isPublished) {
+                registry.markStableMetadataPublished(session, patched)
                 StructuredDiagnostics.logInfo(
                     DiagnosticEvent(
                         component = "provider/salt",
@@ -100,10 +101,6 @@ object SaltNativePublisher {
         snapshot: SaltReplaySnapshot,
         generationPolicy: TrackGenerationPolicy
     ): Pair<NativeLyricInfoPublisher.Result, MediaMetadata?> {
-        val incomingTrack = SaltMediaSessionRegistry.trackFrom(metadata)
-        if (!TrackIdentityPolicy.isSameTrack(incomingTrack, snapshot.track)) {
-            return NativeLyricInfoPublisher.Result.STALE_GENERATION to null
-        }
         val builder = MediaMetadata.Builder(metadata)
         val result = NativeLyricInfoPublisher.publishToPlatformMetadata(
             builder = builder,

@@ -1,3 +1,9 @@
+/*
+ * Copyright 2026 Andrea-TB
+ * Licensed under the Apache License, Version 2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
+ */
+
 package io.github.andrealtb.coloroslyrics.provider.salt
 
 import android.media.MediaMetadata
@@ -13,6 +19,7 @@ class SaltMediaSessionRegistry {
         val tag: String,
         var track: TrackIdentity? = null,
         var hostMetadata: Any? = null,
+        var stableMetadata: Any? = null,
         var playbackState: Int = PlaybackState.STATE_NONE,
         var active: Boolean = false,
         var released: Boolean = false
@@ -30,8 +37,23 @@ class SaltMediaSessionRegistry {
         ensure(session).apply {
             this.track = track?.takeUnless { it.isBlank }
             this.hostMetadata = metadata
+            if (metadata != null) {
+                this.stableMetadata = metadata
+            }
         }
     }
+
+    @Synchronized fun onRelayMetadata(session: Any, metadata: Any?) {
+        ensure(session).apply {
+            if (metadata != null) this.hostMetadata = metadata
+        }
+    }
+
+    @Synchronized fun markStableMetadataPublished(session: Any, metadata: Any?) {
+        ensure(session).stableMetadata = metadata
+    }
+
+    @Synchronized fun stableMetadata(session: Any): Any? = entry(session)?.stableMetadata
 
     @Synchronized fun onPlaybackState(session: Any, state: Int) {
         ensure(session).playbackState = state

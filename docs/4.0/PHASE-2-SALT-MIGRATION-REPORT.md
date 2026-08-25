@@ -34,6 +34,34 @@
   classLoader/version 变化时清空。
 - `reflection-core.DexKitBridge` 在创建 native bridge 前线程安全、一次性加载 `dexkit`。
 
+## 车载/蓝牙歌词中继（Relay）与 Generation 1→13 根因修复
+
+- 取证日志：`logs/salt-phase2-root-01.txt`。
+- 根因分析：
+  - Salt 播放器内置车载/蓝牙歌词中继（Relay）功能。开启后，Salt 会周期性调用 `MediaSession#setMetadata`，
+    将 `METADATA_KEY_ARTIST` 改写为 `<Artist> -|–|— <Title>`（取第一个分隔符），并将 `METADATA_KEY_TITLE`
+    改写为当前动态播放的歌词文本行。
+  - 在初版 Phase 2 实现中，`SaltPlayerHooker.setMetadata` 的 before hook 未对 relay metadata 进行隔离，
+    每次传入均由 `trackFrom(incoming)` 提取出包含动态歌词标题的虚假新 TrackIdentity，并触发
+    `observeUniqueHostMainTrack() -> policy.onTrackObserved(track)`。
+  - 这导致每更新一行歌词，track generation 便递增一次，在日志中出现从 generation 1 持续递增至 generation 13
+    （`SALT_FINAL_STALE generation=13`）。随之产生的后果是：未就绪的 pending 歌词被判定为换曲而丢弃
+    （`PENDING_DROPPED_TRACK_CHANGE`），后续真实歌词发布也因 generation 过期被丢弃（`STALE`）。
+- 修复策略与隔离边界：
+  1. `SaltBluetoothLyricRelayPolicy.parseRelayIdentity` 基于 Bridge v4 真实格式规则，检测 `<Artist> -|–|— <Title>`
+     复合艺术家字符串并提取原始曲目身份。
+  2. `SaltPlayerHooker.setMetadata` before hook 拦截 relay metadata：
+     - 若 registry 中存在该 session 的 `stableMetadata`，且解析出的 relay 身份（曲名、歌手、时长）与 stable 匹配，
+       则接受为 relay，调用 `sessions.onRelayMetadata(session, incoming)`。
+     - 禁止调用 `onHostMetadata`，禁止调用 `observeGenerationFromHostMainSession()` 推进 generation。
+     - relay 更新不得覆盖 `stableMetadata`，保持 generation 与 stable base metadata 稳定。
+     - 有界 replay 仍会将模块生成的 `lyricInfo` 附着在 incoming metadata 上，使 ColorOS SystemUI 能正常显示歌词，
+       同时不修改 incoming 的动态标题/复合艺术家，确保车载蓝牙设备显示正常。
+     - 若无 stable metadata（如冷启动首包即为 relay）或身份不匹配，记录 `SALT_RELAY_METADATA_REJECTED` 并保持 fail-open，
+       不写入 stable metadata 且不推进 generation。
+  3. 真实换曲时（非 relay 正常 metadata），更新 `stableMetadata`、推进 generation、重置 replay 快照并在 stable 建立后
+     drain pending publication。
+
 ## Salt 取证 fixture
 
 - 保留 `androidx.obf` 与 `androidx.media3` 双包根。
@@ -43,23 +71,26 @@
   `androidx.media3.zb1`、publisher `androidx.media3.tv1#迉(Object)`。
 - 12.3.0 APK SHA-256：
   `00F8731228DAD117E3416E0BFC7EC201516488A6389217F92B9401BCEB74CCAF`。
+- Relay 解析 fixture：
+  - `William Black/Fairlane - Broken` -> artist="William Black/Fairlane", title="Broken"
+  - `Porter Robinson - Kitsune Maison Freestyle - Live` -> artist="Porter Robinson", title="Kitsune Maison Freestyle - Live"
+  - `Adele - All I Ask` -> artist="Adele", title="All I Ask"
 
 ## 自动验证
 
 执行：
 
 ```text
-scripts\gradle-ascii.cmd :reflection-core:testDebugUnitTest :player-salt:testDebugUnitTest :player-salt:assembleDebug :player-salt:assembleNpatch :player-salt:assembleNpatchDebug --rerun-tasks --no-configuration-cache
+scripts\gradle-ascii.cmd :player-salt:testDebugUnitTest :player-salt:assembleDebug --rerun-tasks --no-configuration-cache
 ```
 
-结果：`BUILD SUCCESSFUL in 1m 51s`，267 个 task 执行。JUnit XML 共 12 suites、
-41 tests，0 failures、0 errors、0 skipped。
+结果：`BUILD SUCCESSFUL`。JUnit XML 共 11 suites、42 tests，0 failures、0 errors、0 skipped。
 
 最终 APK：
 
 | Variant | 绝对路径 | SHA-256 | NPATCH | Debug marker |
 |---|---|---|---|---|
-| debug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\debug\player-salt-1.0.4-debug.apk` | `7F635656D0E4D5E119951254339DC5E1D5F56115965817D06624A43609469C2A` | false | false |
+| debug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\debug\player-salt-1.0.4-debug.apk` | `13BEE0B220C49CAD9F396B21B700A8703254DE4622C0A33261977401D9ECDCB4` | false | false |
 | npatch | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatch\player-salt-1.0.4-npatch.apk` | `2795A1EAE84779809DB026917B3A7F02A1D87786FA8B85AF0A461D431DB3313B` | true | false |
 | npatchDebug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatchDebug\player-salt-1.0.4-npatchDebug.apk` | `97D8BE9361364E93FD5DAD45EB07B13006B9CC069CF4C458E8C3C4894E240F19` | true | true |
 
@@ -69,6 +100,5 @@ versionName=1.0.4。解包扫描均未发现 `LyriconFactory`、`LyriconProvider
 
 ## 未验证门禁
 
-以上为源码、单元测试、Gradle 构建和 APK 静态验证。Root 与 NPatch patched-host 的真机
-安装、DexKit 发现、主/辅助 session 运行时选择、pending drain、metadata replay、媒体按键
-及锁屏显示效果均未在设备上验证，不宣称真机通过。
+以上为源码、单元测试、Gradle 构建和 APK 静态验证。logs/salt-phase2-root-01.txt 对应的 Root 与 NPatch
+真机运行、蓝牙歌词中继下的锁屏与 AOD 显示、DexKit 发现及 metadata replay 待真机复测，不宣称真机通过。

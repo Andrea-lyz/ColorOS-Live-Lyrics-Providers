@@ -165,6 +165,43 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
                     if (sessions.isModuleWrite()) return@before
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
+                    val incomingArtist = incoming.getString(MediaMetadata.METADATA_KEY_ARTIST)
+                    val relayIdentity = SaltBluetoothLyricRelayPolicy.parseRelayIdentity(incomingArtist)
+                    if (relayIdentity != null) {
+                        val stable = sessions.stableMetadata(session) as? MediaMetadata
+                        val incomingDuration = incoming.getLong(MediaMetadata.METADATA_KEY_DURATION)
+                        val isRelayAccepted = stable != null && SaltBluetoothLyricRelayPolicy.matchesStable(
+                            stable,
+                            relayIdentity.title,
+                            relayIdentity.artist,
+                            incomingDuration
+                        )
+                        if (isRelayAccepted) {
+                            SaltBluetoothLyricRelayPolicy.logNormalized(stable, relayIdentity)
+                            sessions.onRelayMetadata(session, incoming)
+                            val snapshot = synchronized(publicationLock) { replaySnapshot }
+                            val stableTrack = SaltMediaSessionRegistry.trackFrom(stable)
+                            val selected = stableTrack?.let(sessions::selectUnique)
+                            val incomingLyricInfo = incoming.getString("lyricInfo")
+                            val alreadyOwned = SaltReplayPolicy.isModuleOwned(incomingLyricInfo)
+                            if (!alreadyOwned && SaltReplayPolicy.shouldReplay(
+                                    snapshot, selected, stableTrack, generationPolicy.currentTrack,
+                                    generationPolicy.generation,
+                                    snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
+                                    incomingLyricInfo
+                                )) {
+                                SaltNativePublisher.buildReplayMetadata(incoming, snapshot!!, generationPolicy)
+                                    .second?.let { args[0] = it }
+                            }
+                            return@before
+                        } else {
+                            SaltBluetoothLyricRelayPolicy.logRejected(
+                                if (stable == null) "NO_STABLE_TRACK" else "TRACK_MISMATCH"
+                            )
+                            return@before
+                        }
+                    }
+
                     val incomingTrack = SaltMediaSessionRegistry.trackFrom(incoming)
                     sessions.onHostMetadata(session, incomingTrack, incoming)
                     observeGenerationFromHostMainSession()
@@ -221,7 +258,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
         val currentTrack = generationPolicy.currentTrack
         val generation = generationPolicy.generation
         val session = sessions.selectUnique(track) as? MediaSession
-        val metadata = session?.let { sessions.hostMetadata(it) as? MediaMetadata }
+        val metadata = session?.let { (sessions.stableMetadata(it) ?: sessions.hostMetadata(it)) as? MediaMetadata }
         val decision = SaltPendingPublicationPolicy.decide(
             publicationTrack = track,
             currentHostTrack = currentTrack,
@@ -266,7 +303,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
             return
         }
         val session = sessions.selectUnique(track) as? MediaSession ?: return
-        if (sessions.hostMetadata(session) !is MediaMetadata) return
+        val metadata = (sessions.stableMetadata(session) ?: sessions.hostMetadata(session)) as? MediaMetadata ?: return
         if (!generationController.acceptsPublication(track)) return
         pendingStore.take()
         logPublicationResult("PENDING_DRAINED", generationPolicy.generation)
