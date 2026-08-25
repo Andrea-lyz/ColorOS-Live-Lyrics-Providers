@@ -49,6 +49,19 @@ class SaltMediaSessionRegistry {
         }
     }
 
+    @Synchronized fun onRecoveredStableMetadata(
+        session: Any,
+        track: TrackIdentity,
+        stableMetadata: Any,
+        relayMetadata: Any
+    ) {
+        ensure(session).apply {
+            this.track = track
+            this.hostMetadata = relayMetadata
+            this.stableMetadata = stableMetadata
+        }
+    }
+
     @Synchronized fun markStableMetadataPublished(session: Any, metadata: Any?) {
         ensure(session).stableMetadata = metadata
     }

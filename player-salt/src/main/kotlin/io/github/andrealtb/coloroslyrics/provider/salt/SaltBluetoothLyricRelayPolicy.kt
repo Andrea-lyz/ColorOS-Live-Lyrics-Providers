@@ -70,6 +70,34 @@ internal object SaltBluetoothLyricRelayPolicy {
         return incomingDurationMs <= 0L || stableDuration <= 0L || incomingDurationMs == stableDuration
     }
 
+    fun recoverTrackFromPending(
+        pendingTrack: TrackIdentity?,
+        relay: RelayIdentity,
+        incomingDurationMs: Long
+    ): TrackIdentity? = pendingTrack?.takeIf {
+        matchesStable(it, relay.title, relay.artist, incomingDurationMs)
+    }
+
+    fun recoverStableMetadata(
+        incoming: MediaMetadata,
+        relay: RelayIdentity,
+        recoveredTrack: TrackIdentity
+    ): MediaMetadata = MediaMetadata.Builder(incoming).apply {
+        recoveredTrack.id?.takeIf { it.isNotBlank() }?.let {
+            putString(MediaMetadata.METADATA_KEY_MEDIA_ID, it)
+        }
+        putString(MediaMetadata.METADATA_KEY_TITLE, relay.title)
+        putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, relay.title)
+        putString(MediaMetadata.METADATA_KEY_ARTIST, relay.artist)
+        putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, relay.artist)
+        recoveredTrack.album?.takeIf { it.isNotBlank() }?.let {
+            putString(MediaMetadata.METADATA_KEY_ALBUM, it)
+        }
+        if (recoveredTrack.durationMs > 0L) {
+            putLong(MediaMetadata.METADATA_KEY_DURATION, recoveredTrack.durationMs)
+        }
+    }.build()
+
     fun matchesStable(
         stable: MediaMetadata,
         relayTitle: String,

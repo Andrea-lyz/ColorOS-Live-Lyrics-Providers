@@ -101,6 +101,33 @@ class SaltMediaSessionRegistryTest {
         assertNull(registry.stableMetadata(session))
     }
 
+    @Test fun verifiedPendingTrackCanEstablishStableIdentityFromFirstRelay() {
+        val registry = SaltMediaSessionRegistry()
+        val session = Any()
+        registry.onConstructed(session, "main")
+        registry.onPlaybackState(session, PlaybackState.STATE_PLAYING)
+        registry.onActive(session, true)
+        val controller = SaltHostGenerationController(registry)
+        val pendingTrack = track(
+            "song-1",
+            "Broken",
+            "William Black/Fairlane",
+            180000L
+        )
+
+        registry.onRecoveredStableMetadata(
+            session,
+            pendingTrack,
+            "RecoveredStableMetadata",
+            "RelayLineMetadata"
+        )
+
+        assertEquals(1L, controller.observeUniqueHostMainTrack())
+        assertEquals(pendingTrack, controller.policy.currentTrack)
+        assertSame("RecoveredStableMetadata", registry.stableMetadata(session))
+        assertSame("RelayLineMetadata", registry.hostMetadata(session))
+    }
+
     @Test fun realTrackChangeAdvancesGenerationAndClearsOldPublicationAcceptance() {
         val registry = SaltMediaSessionRegistry()
         val session = Any()

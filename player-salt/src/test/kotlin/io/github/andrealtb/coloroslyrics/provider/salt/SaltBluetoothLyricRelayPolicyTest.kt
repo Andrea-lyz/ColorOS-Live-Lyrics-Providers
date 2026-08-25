@@ -93,4 +93,40 @@ class SaltBluetoothLyricRelayPolicyTest {
         assertFalse(SaltBluetoothLyricRelayPolicy.matchesStable(stable, "Broken", "William Black/Fairlane", 240000L))
         assertFalse(SaltBluetoothLyricRelayPolicy.matchesStable(null, "Broken", "William Black/Fairlane", 180000L))
     }
+
+    @Test
+    fun firstRelayRecoversOnlyFromMatchingPendingTrack() {
+        val relay = SaltBluetoothLyricRelayPolicy.parseRelayIdentity(
+            "William Black/Fairlane - Broken"
+        )!!
+        val matching = TrackIdentity(
+            id = "song-1",
+            title = "Broken",
+            artist = "William Black/Fairlane",
+            durationMs = 180000L
+        )
+
+        assertEquals(
+            matching,
+            SaltBluetoothLyricRelayPolicy.recoverTrackFromPending(
+                matching,
+                relay,
+                180000L
+            )
+        )
+        assertNull(
+            SaltBluetoothLyricRelayPolicy.recoverTrackFromPending(
+                matching.copy(id = "song-2", title = "Other"),
+                relay,
+                180000L
+            )
+        )
+        assertNull(
+            SaltBluetoothLyricRelayPolicy.recoverTrackFromPending(
+                null,
+                relay,
+                180000L
+            )
+        )
+    }
 }

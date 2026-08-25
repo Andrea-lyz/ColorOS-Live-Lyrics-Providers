@@ -32,5 +32,11 @@ internal class SaltPendingPublicationStore {
 
     @Synchronized fun take(): SaltPublication? = pending.also { pending = null }
 
+    @Synchronized fun takeIfSame(expected: SaltPublication): Boolean {
+        if (pending !== expected) return false
+        pending = null
+        return true
+    }
+
     @Synchronized fun clear(): SaltPublication? = take()
 }

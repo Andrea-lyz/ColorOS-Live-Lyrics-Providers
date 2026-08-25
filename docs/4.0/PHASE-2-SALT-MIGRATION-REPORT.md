@@ -62,6 +62,18 @@
   3. 真实换曲时（非 relay 正常 metadata），更新 `stableMetadata`、推进 generation、重置 replay 快照并在 stable 建立后
      drain pending publication。
 
+### 冷启动首包 Relay 补充修复
+
+- `logs/salt-phase2-root-02.txt` 进一步确认：Salt 冷启动后第一份 metadata 就可能是 relay，日志持续出现
+  `SALT_RELAY_METADATA_REJECTED reason=NO_STABLE_TRACK`，同时歌词停留在
+  `SALT_FINAL_PENDING_STORED/PENDING_REPLACED generation=0`。因此仅等待普通 stable metadata 会永久阻塞发布。
+- 当首包 relay 的 `<Artist> - <Title>` 与已经捕获的 pending Salt publication 身份、时长一致时，Provider 现在：
+  1. 从 pending publication 恢复 stable track identity；
+  2. 只在 registry 中保存由 relay metadata 还原出的 stable base，不覆盖 Salt 正在提交的动态 relay metadata；
+  3. 建立 host-driven generation；
+  4. 将 pending 歌词直接附着到当前 relay metadata 后交给原始 `setMetadata` 调用，保留车载/蓝牙动态标题。
+- 无 pending publication、身份不一致或时长不兼容时继续 fail-open，不借用旧曲身份。
+
 ## Salt 取证 fixture
 
 - 保留 `androidx.obf` 与 `androidx.media3` 双包根。
@@ -81,18 +93,18 @@
 执行：
 
 ```text
-scripts\gradle-ascii.cmd :player-salt:testDebugUnitTest :player-salt:assembleDebug --rerun-tasks --no-configuration-cache
+scripts\gradle-ascii.cmd :player-salt:testDebugUnitTest :player-salt:assembleDebug :player-salt:assembleNpatch :player-salt:assembleNpatchDebug --rerun-tasks --no-configuration-cache
 ```
 
-结果：`BUILD SUCCESSFUL`。JUnit XML 共 11 suites、42 tests，0 failures、0 errors、0 skipped。
+结果：`BUILD SUCCESSFUL`，262 个 task 执行。JUnit XML 共 11 suites、45 tests，0 failures、0 errors、0 skipped。
 
 最终 APK：
 
 | Variant | 绝对路径 | SHA-256 | NPATCH | Debug marker |
 |---|---|---|---|---|
-| debug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\debug\player-salt-1.0.4-debug.apk` | `13BEE0B220C49CAD9F396B21B700A8703254DE4622C0A33261977401D9ECDCB4` | false | false |
-| npatch | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatch\player-salt-1.0.4-npatch.apk` | `2795A1EAE84779809DB026917B3A7F02A1D87786FA8B85AF0A461D431DB3313B` | true | false |
-| npatchDebug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatchDebug\player-salt-1.0.4-npatchDebug.apk` | `97D8BE9361364E93FD5DAD45EB07B13006B9CC069CF4C458E8C3C4894E240F19` | true | true |
+| debug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\debug\player-salt-1.0.4-debug.apk` | `B5E83A88E08053C8F5499020ABD93E9FE35E26B308A2747162F533121E4D69C5` | false | false |
+| npatch | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatch\player-salt-1.0.4-npatch.apk` | `97FA4862EA9CB4A580FAD8A754B8244106B252D9FD918B76BE56F3E4CF6E8BAD` | true | false |
+| npatchDebug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatchDebug\player-salt-1.0.4-npatchDebug.apk` | `7015E6F848563F597FD67AFADB2CA6068E264A562EE025F2C9C8C36144F7FD14` | true | true |
 
 三种 APK 的 package 均为 `io.github.andrealtb.coloroslyrics.provider.salt`，versionCode=5、
 versionName=1.0.4。解包扫描均未发现 `LyriconFactory`、`LyriconProvider`、
@@ -100,5 +112,6 @@ versionName=1.0.4。解包扫描均未发现 `LyriconFactory`、`LyriconProvider
 
 ## 未验证门禁
 
-以上为源码、单元测试、Gradle 构建和 APK 静态验证。logs/salt-phase2-root-01.txt 对应的 Root 与 NPatch
+以上为源码、单元测试、Gradle 构建和 APK 静态验证。`logs/salt-phase2-root-01.txt` 与
+`logs/salt-phase2-root-02.txt` 对应的 Root 与 NPatch
 真机运行、蓝牙歌词中继下的锁屏与 AOD 显示、DexKit 发现及 metadata replay 待真机复测，不宣称真机通过。
