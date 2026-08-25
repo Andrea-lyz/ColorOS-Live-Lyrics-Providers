@@ -1,7 +1,7 @@
 # 4.0 Phase 2 Salt Player 迁移报告
 
-记录日期：2026-08-25  
-仓库：`ColorOS-Live-Lyrics-Providers`（分支 `4.0`）  
+记录日期：2026-08-25
+仓库：`ColorOS-Live-Lyrics-Providers`（分支 `4.0`）
 模块：`player-salt`
 
 ## 交付边界
