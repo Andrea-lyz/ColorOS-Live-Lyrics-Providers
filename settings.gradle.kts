@@ -41,6 +41,7 @@ include(":parser-qrc")
 include(":parser-yrc")
 include(":parser-krc")
 include(":parser-ttml")
+include(":player-salt")
 
 // Legacy share modules
 include(":share:extensions-kt")

@@ -15,12 +15,27 @@ import org.luckypray.dexkit.result.MethodData
  */
 object DexKitBridge {
 
+    private val loadLock = Any()
+    @Volatile private var nativeLibraryLoaded = false
+    internal var nativeLibraryLoader: (String) -> Unit = System::loadLibrary
+
+    fun ensureNativeLibraryLoaded() {
+        if (nativeLibraryLoaded) return
+        synchronized(loadLock) {
+            if (nativeLibraryLoaded) return
+            nativeLibraryLoader("dexkit")
+            nativeLibraryLoaded = true
+        }
+    }
+
     inline fun <R> withDexKit(apkPath: String, block: (NativeDexKitBridge) -> R): R {
+        ensureNativeLibraryLoaded()
         val bridge = NativeDexKitBridge.create(apkPath)
         return bridge.use(block)
     }
 
     inline fun <R> withDexKit(dexBytes: Array<ByteArray>, block: (NativeDexKitBridge) -> R): R {
+        ensureNativeLibraryLoaded()
         val bridge = NativeDexKitBridge.create(dexBytes)
         return bridge.use(block)
     }
@@ -30,5 +45,12 @@ object DexKitBridge {
         methodData: MethodData
     ): Method {
         return methodData.getMethodInstance(classLoader)
+    }
+
+    internal fun resetNativeLibraryLoaderForTesting(loader: (String) -> Unit = System::loadLibrary) {
+        synchronized(loadLock) {
+            nativeLibraryLoaded = false
+            nativeLibraryLoader = loader
+        }
     }
 }
