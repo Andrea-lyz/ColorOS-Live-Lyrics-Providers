@@ -8,4 +8,5 @@
 <resources>
     <string name="app_name">Salt Player Lyric Provider</string>
     <string name="xposed_description">ColorOS lockscreen lyrics for Salt Player</string>
+    <string name="debug_settings_activity_label">Salt Player Lyric Provider Settings</string>
 </resources>

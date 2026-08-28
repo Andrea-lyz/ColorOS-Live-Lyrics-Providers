@@ -1,96 +1,77 @@
-<!--suppress ALL -->
+# ColorOS Live Lyrics Providers
 
-# LyricProvider - 歌词提供器
+面向 ColorOS 锁屏歌词的独立 Root/LSPosed Provider 仓库。所有发布模块均输出标准
+`MediaMetadata["lyricInfo"]`，由
+`io.github.andrealtb.lockscreenlyrics` Bridge 统一消费。
 
-#### 基于Xposed 的歌词提供器
+当前 v5 适配矩阵已全部完成并通过对应设备门禁。
 
-![Platform](https://img.shields.io/badge/Platform-Android-brightgreen?style=flat&logo=android)
-![Release](https://img.shields.io/github/v/release/tomakino/LyricProvider?style=flat&color=blue&logo=github)
-![Size](https://img.shields.io/github/repo-size/tomakino/LyricProvider)
-![Downloads](https://img.shields.io/github/downloads/tomakino/LyricProvider/total?style=flat&color=orange)
-![License](https://img.shields.io/github/license/tomakino/LyricProvider?style=flat)
-![Last Commit](https://img.shields.io/github/last-commit/tomakino/LyricProvider?style=flat)
+[English](README-English.md)
 
-<p align="left">
-  <a href="README-English.md"><img src="https://img.shields.io/badge/Document-English-red.svg" alt="EN"></a>
-</p>
+## v5 Provider 矩阵
 
-## 🎵 支持平台
+| 播放器 | Gradle module | applicationId | 宿主包 | 适配基线版本 |
+|---|---|---|---|---|
+| Salt Player(椒盐音乐) | `:player-salt` | `io.github.andrealtb.coloroslyrics.provider.salt` | `com.salt.music` | `12.3.0-alpha03` |
+| 光锥音乐(含Play商店版) | `:player-cone` | `io.github.andrealtb.coloroslyrics.provider.cone` | `ink.trantor.coneplayer` / `ink.trantor.coneplayer.gp` | 正式版 `v1.2.0(c77a1ea49)`；GP 共用适配轮廓 |
+| 酷我音乐 | `:kuwo-music` | `io.github.andrealtb.coloroslyrics.provider.kuwo` | `cn.kuwo.player` | `12.2.0.0` |
+| 落雪音乐(含Walnut fork) | `:player-lx` | `io.github.andrealtb.coloroslyrics.provider.lx` | `cn.toside.music.mobile` / `com.lxwalnut.music.mobile` | LX `1.8.4`；Walnut `26.07.16` |
+| Poweramp | `:player-poweramp` | `io.github.andrealtb.coloroslyrics.provider.poweramp` | `com.maxmpz.audioplayer` | `build-1025-bundle-play` |
+| Metrolist | `:player-metrolist` | `io.github.andrealtb.coloroslyrics.provider.metrolist` | `com.metrolist.music` | `13.6.1` |
+| 酷狗音乐（含概念版） | `:player-kugou` | `io.github.andrealtb.coloroslyrics.provider.kugou` | `com.kugou.android` / `com.kugou.android.lite` | 标准版 `20.8.0`；概念版 `5.2.61` |
+| QQ音乐 | `:player-qq` | `io.github.andrealtb.coloroslyrics.provider.qq` | `com.tencent.qqmusic` | `20.7.5.8` |
+| 网易云音乐(含荣耀版\9.0.40精简版) | `:player-netease` | `io.github.andrealtb.coloroslyrics.provider.netease` | `com.netease.cloudmusic` / `com.hihonor.cloudmusic` | 官方版 `9.5.70`；荣耀版 `3.5.20`；精简修改版 `9.0.40` |
+| Apple Music | `:player-apple` | `io.github.andrealtb.coloroslyrics.provider.apple` | `com.apple.android.music` | `6.5.2` |
+| Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
+| 汽水音乐 | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
 
-### 核心适配列表
+“适配基线版本”是静态逆向、实现和设备收口所使用的宿主样本，不表示 Provider 仅支持
+该版本；宿主升级后如混淆结构或内部歌词链路发生变化，仍需重新验证。
 
-| 平台名称               | 标识符                 | 功能说明                 |
-|:-------------------|:--------------------|:---------------------|
-| 🍎 **Apple Music** | `apple-music`       | 支持逐字、翻译；不输出背景人声和对唱格式歌词 |
-| ☁️ **网易云音乐/荣耀版**   | `163-music`         | 支持逐字歌词、翻译歌词          |
-| 🐧 **QQ 音乐**       | `qq-music`          | 支持逐字歌词、翻译歌词          |
-| 🐧 **QQ 音乐 HD**    | `qq-music-hd`       | 支持逐字歌词、翻译歌词          |
-| 🧊 **LX 音乐**       | `lx-music`          | 支持翻译歌词显示             |
-| 🐶 **酷狗音乐/概念版**    | `kugou-music`       | 支持逐字歌词、翻译歌词，可转发 Bridge |
-| 📻 **酷我音乐**        | `kuwo-music`        | 从酷我官方歌词对象解析 LRC/LRCX，并将完整逐行、逐字和翻译歌词写入原生 `MediaSession` 的 `lyricInfo`，同时送入 Lyricon；无需开启车载歌词模式，保留原生封面与媒体元数据 |
-| 🎧 **Spotify**     | `spotify-music`     | 目前仅支持标准歌词            |
-| ⚡ **Poweramp**     | `poweramp-music`    | 支持网络匹配及本地内嵌歌词        |
-| 🧂 **Salt 音乐**     | `salt-player-music` | 基于魅族标准歌词接口适配         |
-| 🎵 **汽水音乐**        | `qishui-music`      | 支持动态歌词、翻译歌词；需做好 Root 隐藏 |
-| 🎵 **MusicFree**   | `music-free`        | 支持翻译                 |
+Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用公开 action 或 Bridge
+五槽按钮。QQ音乐 仅支持标准版，不包含 QQ音乐 HD。
 
-### 通用/特殊模块
+## 架构
 
-| 模块名称          | 标识符 (ID)         | 适用场景              |
-|:--------------|:-----------------|:------------------|
-| ☁️ **云音乐提供者** | `cloud-provider` | 通用型，通过搜索匹配在线歌词库   |
-| 📱 **魅族歌词支持** | `meizu-provider` | 适用于已适配魅族状态栏歌词的播放器 |
-| 🧂 **车载歌词支持** | `car-provider`   | 适用于已适配车载歌词适配的播放器  |
+- `provider-core`：TrackIdentity、generation、标准 `lyricInfo` publisher、debug 与诊断。
+- `reflection-core`：受控反射/DexKit 发现。
+- `parser-lrc/qrc/yrc/krc/ttml`：中立歌词解析。
+- `share:extensions-kt`、`share:extensions-android`、`share:lrckit`、
+  `share:yrckit`：KuWo/NetEase 仍在使用的兼容 helper，不是可安装模块。
 
-### 💡 已原生适配的应用
+`io.github.proify.lyricon.lyric:model` 目前仅作为 KuWo/NetEase 兼容 DTO 依赖；
 
-- [**光锥音乐**](https://coneplayer.trantor.ink/)
-- **Halcyon**：原生 `lyricInfo`，并提供 `lyricprovider/halcyon` v4 直达回退
-- **Flamingo**：通过 `yos.music.player` 的 `lyricprovider/flamingo` 原生 v4 接入
-- [**BBPlayer**](https://bbplayer.roitium.com/)
-- **MobiMusic**
-- [**Kanade**](https://github.com/rcmiku/Kanade)
-- **Sollin Player**
-- [**QZ Music**](https://github.com/lqtmcstudio/QZMusic)
-- [**棉花音乐**](https://github.com/pure-music/PureMusic)
 
-#### 已适配了但没有你的播放器？请[提交 issue](https://github.com/tomakino/LyricProvider/issues)。
+## 构建
 
----
+要求 JDK 21 和 Android SDK：
 
-## 📥 快速安装
+```powershell
+.\gradlew.bat assembleV5MatrixDebug
+.\gradlew.bat assembleV5MatrixRelease
+```
 
-1. **下载**：前往 [Releases 页面](https://github.com/tomakino/LyricProvider/releases) 获取目标播放器对应的 APK；需要一次安装全部 Provider 时可下载 `LyricProvider-release.zip` 整合包。
-2. **激活**：安装后进入 **LSPosed 管理器**，勾选启用 **对应提供者**。
-3. **配置作用域**：在 LSPosed 中勾选你需要获取歌词的音乐 App（如 Apple Music、网易云等）。
-4. **生效**：强行停止并重新打开对应的音乐 App 即可体验。
+单模块示例：
 
----
+```powershell
+.\gradlew.bat :player-qishui:assembleDebug
+```
 
-## 🛠️ 开发者指南
+Release 构建使用 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、
+`RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD` 环境变量。
 
-我们非常欢迎社区提交 Pull Request 来适配更多音乐 App。
+## 文档与来源
 
-请阅读 [开发文档](https://tomakino.github.io/lyricon/zh-cn/developer/provider/)
+- 迁移状态与边界：`docs/4.0/PHASE-0-MIGRATION-MAP.md`
+- 各播放器设备收口：`docs/4.0/PHASE-4-*-MIGRATION-REPORT.md`
+- 仓库清理与最终构建：`docs/4.0/REPOSITORY-CLEANUP-REPORT.md`
+- 旧 LyricProvider 来源、基线与署名：`NOTICE`
 
-或者 [订阅歌词](https://tomakino.github.io/lyricon/zh-cn/developer/subscriber/)
+许可证为 Apache-2.0。保留的第三方来源和历史贡献者署名见源码头、`NOTICE` 与迁移报告。
 
----
+## 致谢
 
-## 👥 贡献者
-
-[![Contributors](https://contrib.rocks/image?repo=tomakino/LyricProvider)](https://github.com/tomakino/LyricProvider/graphs/contributors)
-
-### ⭐ Star 增长
-
-<a href="https://star-history.com/#tomakino/LyricProvider&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tomakino/LyricProvider&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tomakino/LyricProvider&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=tomakino/LyricProvider&type=Date" />
- </picture>
-</a>
-
-### 👀 访问趋势
-
-![Visitors](https://count.getloli.com/get/@tomakino_LyricProvider?theme=minecraft)
+特别感谢 [tomakino/LyricProvider](https://github.com/tomakino/LyricProvider) 原项目及其
+贡献者，为早期播放器适配、逆向思路和代码基线提供了重要参考。尽管本仓库围绕标准
+v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了近乎从头到尾的全面
+重构，这段演进仍离不开原项目及社区贡献者的探索与积累。

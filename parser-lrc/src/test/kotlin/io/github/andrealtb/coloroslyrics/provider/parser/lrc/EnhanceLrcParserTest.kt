@@ -79,6 +79,52 @@ class EnhanceLrcParserTest {
     }
 
     @Test
+    @DisplayName("解析方括号行内逐字时间轴并移除正文时间标签")
+    fun testParseBracketInlineKaraokeWords() {
+        val lrc = """
+            [00:11.367]I [00:11.548]heard [00:11.773]you [00:12.062]calling[00:13.370]
+            [00:11.367]我听见你的呼唤声
+        """.trimIndent()
+
+        val doc = EnhanceLrcParser.parse(lrc)
+
+        assertEquals(1, doc.lines.size)
+        val line = doc.lines.single()
+        assertEquals("I heard you calling", line.text)
+        assertEquals("我听见你的呼唤声", line.secondary)
+        assertFalse(line.text.orEmpty().contains("[00:"))
+        assertEquals(4, line.words?.size)
+        assertEquals(11_367L, line.words?.get(0)?.begin)
+        assertEquals(11_548L, line.words?.get(0)?.end)
+        assertEquals("I ", line.words?.get(0)?.text)
+        assertEquals(13_370L, line.words?.last()?.end)
+        assertEquals("calling", line.words?.last()?.text)
+    }
+
+    @Test
+    @DisplayName("方括号结尾时间只关闭前一词而不创建空词")
+    fun testBracketInlineTerminalTimestampClosesLastWord() {
+        val doc = EnhanceLrcParser.parse("[00:01.000]Hello [00:01.400]world[00:02.000]")
+
+        val words = doc.lines.single().words.orEmpty()
+        assertEquals(2, words.size)
+        assertEquals("Hello ", words[0].text)
+        assertEquals("world", words[1].text)
+        assertEquals(2_000L, words[1].end)
+        assertEquals(600L, words[1].duration)
+    }
+
+    @Test
+    @DisplayName("多行起始时间标签不误判为方括号逐字格式")
+    fun testMultipleLineTagsRemainRepeatedLines() {
+        val doc = EnhanceLrcParser.parse("[00:10.00][00:20.00]重复的歌词")
+
+        assertEquals(2, doc.lines.size)
+        assertEquals(listOf(10_000L, 20_000L), doc.lines.map { it.begin })
+        assertTrue(doc.lines.all { it.text == "重复的歌词" && it.words.isNullOrEmpty() })
+    }
+
+    @Test
     @DisplayName("解析角色标签 - 验证主唱与背景音逻辑")
     fun testParseRolesAndAlignment() {
         val lrc = """

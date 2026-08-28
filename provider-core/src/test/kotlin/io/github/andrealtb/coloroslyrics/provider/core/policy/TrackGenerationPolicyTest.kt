@@ -36,4 +36,17 @@ class TrackGenerationPolicyTest {
         assertTrue(policy.isGenerationValid(2L))
         assertFalse(policy.isGenerationValid(1L))
     }
+
+    @Test
+    fun sameTrackLaterAdamIdDoesNotBumpGeneration() {
+        val policy = TrackGenerationPolicy()
+        val titleThenId = TrackIdentity(title = "I Knew It", artist = "Taylor Swift")
+        val withId = titleThenId.copy(id = "later-adam")
+        val genTitle = policy.onTrackObserved(titleThenId)
+        assertEquals(1L, genTitle)
+        val genMerged = policy.onTrackObserved(withId)
+        assertEquals(1L, genMerged)
+        assertEquals("later-adam", policy.currentTrack?.id)
+        assertTrue(policy.isGenerationValid(1L))
+    }
 }

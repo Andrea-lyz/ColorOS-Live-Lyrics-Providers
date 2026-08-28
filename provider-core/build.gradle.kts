@@ -21,8 +21,6 @@ configure<LibraryExtension> {
         minSdk = 27
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
-        manifestPlaceholders["colorosLyricsNpatchEmbedded"] = "false"
-        manifestPlaceholders["colorosLyricsProviderDebugEnabled"] = "false"
     }
 
     buildTypes {
@@ -51,6 +49,7 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.yukihookapi.api)
     compileOnly(libs.xposed.api)
 
     testImplementation(libs.junit)

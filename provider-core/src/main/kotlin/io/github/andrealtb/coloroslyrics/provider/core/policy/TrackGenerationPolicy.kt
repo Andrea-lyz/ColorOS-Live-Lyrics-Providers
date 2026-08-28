@@ -27,6 +27,9 @@ class TrackGenerationPolicy {
             lastTrackIdentity = newTrack
             return currentGeneration.incrementAndGet()
         }
+        lastTrackIdentity = lastTrackIdentity?.let {
+            TrackIdentityPolicy.mergePreferringFilled(it, newTrack)
+        } ?: newTrack
         return currentGeneration.get()
     }
 

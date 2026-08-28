@@ -11,13 +11,14 @@ import android.os.Looper
 import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
+import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
-import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeMode
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
+import io.github.andrealtb.coloroslyrics.provider.core.session.PlaybackStateTranslationToggle
 import io.github.andrealtb.coloroslyrics.provider.reflection.ReflectionCache
 import java.lang.ref.WeakReference
 
@@ -29,6 +30,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
     private val reflectionCache = ReflectionCache(hookContext.classLoader, hostVersion)
     private val pendingStore = SaltPendingPublicationStore()
     @Volatile private var mediaButtonHookInstalled = false
+    @Volatile private var translationActionInjectionLogged = false
     private var replaySnapshot: SaltReplaySnapshot? = null
     private val generationController = SaltHostGenerationController(sessions) {
         synchronized(publicationLock) { replaySnapshot = null }
@@ -50,14 +52,33 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
             ))
             return
         }
-        ProviderDebugConfig.configureDiagnostics(
+        val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.SALT,
-            rootSource = if (resolution.mode == RuntimeMode.ROOT_MODULE) SaltRootDebugSource.create() else null,
-            embeddedSource = if (resolution.mode == RuntimeMode.NPATCH_EMBEDDED) {
-                ProviderDebugConfig.embeddedMarkerSource(hookContext)
-            } else null
+            rootSource = YukiHookDebugSource.create(hookContext)
         )
+        StructuredDiagnostics.logInfo(
+            DiagnosticEvent(
+                component = "provider/salt",
+                area = "bootstrap",
+                event = "DEBUG_CONFIG_APPLIED",
+                mode = resolution.mode,
+                process = hookContext.packageName,
+                reason = debug.reason
+            )
+        )
+        if (debug.enabled) {
+            StructuredDiagnostics.logDebug(
+                DiagnosticEvent(
+                    component = "provider/salt",
+                    area = "bootstrap",
+                    event = "DEBUG_LOGGING_ENABLED",
+                    mode = resolution.mode,
+                    process = hookContext.packageName,
+                    reason = debug.reason
+                )
+            )
+        }
         installMediaButtonHook()
         installSessionHooks()
         installPublisherHook()
@@ -189,6 +210,8 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
             type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java).apply { isAccessible = true }.hook {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
+                    val original = args.getOrNull(0) as? PlaybackState
+                    if (original != null) args[0] = injectPublicTranslationToggle(original)
                     sessions.onPlaybackState(session, (args.getOrNull(0) as? PlaybackState)?.state ?: PlaybackState.STATE_NONE)
                     observeGenerationFromHostMainSession()
                     drainPendingPublication()
@@ -212,6 +235,23 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
                 }
             }
         }.onFailure { logFailure("session", "SESSION_HOOK_FAILED", it) }
+    }
+
+    private fun injectPublicTranslationToggle(original: PlaybackState): PlaybackState {
+        val patched = PlaybackStateTranslationToggle.prependPublicAction(original, hookContext)
+        if (patched !== original && !translationActionInjectionLogged) {
+            translationActionInjectionLogged = true
+            StructuredDiagnostics.logInfo(
+                DiagnosticEvent(
+                    component = "provider/salt",
+                    area = "session",
+                    event = "TRANSLATION_ACTION_INJECTED",
+                    process = hookContext.packageName,
+                    reason = "public"
+                )
+            )
+        }
+        return patched
     }
 
     private fun observeGenerationFromHostMainSession() {
@@ -321,6 +361,13 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
     )
 
     private fun logFailure(area: String, event: String, error: Throwable) = StructuredDiagnostics.logError(
-        DiagnosticEvent(component = "provider/salt", area = area, event = event, reason = error.javaClass.simpleName)
+        DiagnosticEvent(
+            component = "provider/salt",
+            area = area,
+            event = event,
+            reason = error.javaClass.simpleName,
+            message = error.message?.take(1000)
+        ),
+        throwable = error
     )
 }

@@ -24,6 +24,17 @@ class YrcParserTest {
     }
 
     @Test
+    fun keepsZeroDurationCommaAndFullwidthAsideAsSeparateSyllables() {
+        val line = YrcParser.parse(
+            "[11430,2610](11430,450,0)Bad(11880,0,0), (11880,360,0)bad " +
+                "(12240,300,0)boy(12540,0,0), (12540,360,0)shiny"
+        ).single()
+        val words = line.words.orEmpty()
+        assertEquals(listOf("Bad", ", ", "bad ", "boy", ", ", "shiny"), words.map { it.text })
+        assertEquals(listOf(11_430L, 11_880L, 11_880L, 12_240L, 12_540L, 12_540L), words.map { it.begin })
+    }
+
+    @Test
     fun negativePreRollLineAndWordsStillClampToZero() {
         val line = YrcParser.parse("[-100,200](-50,30,0)foo").single()
         val word = line.words.orEmpty().single()

@@ -75,7 +75,19 @@ object EnhanceLrcParser {
             if (roles.isEmpty() && person != "bg") roles.add(person)
         }
 
-        val words = parseWords(text)
+        val lineTimeMatches = TAG_REGEX.findAll(timeTags).toList()
+        val words = parseWords(text).ifEmpty {
+            if (lineTimeMatches.size == 1) {
+                val lineBegin = toMs(
+                    lineTimeMatches[0].groupValues[1],
+                    lineTimeMatches[0].groupValues[2],
+                    lineTimeMatches[0].groupValues.getOrNull(3)
+                )
+                parseBracketInlineWords(text, lineBegin)
+            } else {
+                emptyList()
+            }
+        }
         val plainText = if (words.isNotEmpty()) {
             words.joinToString("") { it.text.orEmpty() }
         } else {
@@ -85,7 +97,7 @@ object EnhanceLrcParser {
         val isRight =
             person == "bg" || (person != null && roles.isNotEmpty() && person != roles.first())
 
-        return TAG_REGEX.findAll(timeTags).map { m ->
+        return lineTimeMatches.map { m ->
             val ms = toMs(m.groupValues[1], m.groupValues[2], m.groupValues.getOrNull(3))
             RichLyricLine(
                 begin = words.firstOrNull()?.begin ?: ms,
@@ -95,6 +107,44 @@ object EnhanceLrcParser {
                 isAlignedRight = isRight
             )
         }.toList()
+    }
+
+    /**
+     * Parses the enhanced-LRC variant used by Salt/TME where the line tag is also the first
+     * word's start and later words use bracketed timestamps:
+     * `[00:11.367]I [00:11.548]heard ... [00:14.903]`.
+     *
+     * A visible segment must precede the first inline timestamp. This keeps ordinary repeated
+     * line tags (`[00:10][00:20]text`) and literal bracketed text on the standard LRC path. A
+     * final timestamp with no following text closes the previous word instead of creating an
+     * empty word.
+     */
+    private fun parseBracketInlineWords(content: String, lineBegin: Long): List<LyricWord> {
+        val matches = TAG_REGEX.findAll(content).toList()
+        if (matches.isEmpty()) return emptyList()
+
+        val leadingText = content.substring(0, matches.first().range.first)
+        if (leadingText.isBlank()) return emptyList()
+
+        val words = mutableListOf(LyricWord(begin = lineBegin, text = leadingText))
+        matches.forEachIndexed { index, match ->
+            val wordBegin = toMs(
+                match.groupValues[1],
+                match.groupValues[2],
+                match.groupValues.getOrNull(3)
+            )
+            words.lastOrNull()?.let { previous ->
+                previous.end = wordBegin.coerceAtLeast(previous.begin)
+                previous.duration = (previous.end - previous.begin).coerceAtLeast(0L)
+            }
+
+            val nextStart = matches.getOrNull(index + 1)?.range?.first ?: content.length
+            val segment = content.substring(match.range.last + 1, nextStart)
+            if (segment.isNotEmpty()) {
+                words += LyricWord(begin = wordBegin, text = segment)
+            }
+        }
+        return words
     }
 
     private fun parseWords(content: String): List<LyricWord> {

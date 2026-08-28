@@ -8,6 +8,7 @@ package io.github.andrealtb.coloroslyrics.provider.core.policy
 
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import org.junit.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -41,6 +42,21 @@ class TrackIdentityPolicyTest {
         val t1 = TrackIdentity(title = "Song A", artist = "Artist A")
         val t2 = TrackIdentity(title = "Song A", artist = "Artist B")
         assertFalse(TrackIdentityPolicy.isSameTrack(t1, t2))
+    }
+
+    @Test
+    fun mergePrefersAlreadyFilledFieldsAndFillsBlankAdamId() {
+        val previous = TrackIdentity(title = "I Knew It", artist = "Taylor Swift")
+        val incoming = TrackIdentity(
+            id = "later-adam",
+            title = "I Knew It",
+            artist = "Taylor Swift",
+            durationMs = 200_000L
+        )
+        val merged = TrackIdentityPolicy.mergePreferringFilled(previous, incoming)
+        assertEquals("later-adam", merged.id)
+        assertEquals("I Knew It", merged.title)
+        assertEquals(200_000L, merged.durationMs)
     }
 
     @Test

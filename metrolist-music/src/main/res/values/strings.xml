@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Metrolist Lyrics</string>
-    <string name="lyricon_module_description">Provides lyrics for Metrolist (YouTube Music client)</string>
-    <string name="xposed_description">Hooks into Metrolist to capture and forward lyrics to SystemUI lock screen.</string>
-</resources>

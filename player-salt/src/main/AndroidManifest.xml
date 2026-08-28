@@ -35,6 +35,16 @@
             android:name="xposedscope"
             android:resource="@array/xposed_scope" />
 
+        <activity
+            android:name=".SaltDebugSettingsActivity"
+            android:exported="true"
+            android:label="@string/debug_settings_activity_label">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
     </application>
 
 </manifest>

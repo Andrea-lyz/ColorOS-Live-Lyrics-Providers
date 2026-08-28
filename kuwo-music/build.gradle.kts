@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 Proify, Tomakino
+ * Copyright 2026 Proify, Tomakino, Andrea-TB
  * Licensed under the Apache License, Version 2.0
  * http://www.apache.org/licenses/LICENSE-2.0
  */
@@ -13,17 +13,17 @@ plugins {
 }
 
 configure<ApplicationExtension> {
-    namespace = "io.github.proify.lyricon.kwprovider"
+    namespace = "io.github.andrealtb.coloroslyrics.provider.kuwo"
     compileSdk {
         version = release(rootProject.extra.get("compileSdkVersion") as Int)
     }
 
     defaultConfig {
-        applicationId = "io.github.proify.lyricon.kwprovider"
+        applicationId = "io.github.andrealtb.coloroslyrics.provider.kuwo"
         minSdk = 27
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
-        versionCode = 12
-        versionName = "2.1.0"
+        versionCode = 1
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -39,12 +39,7 @@ configure<ApplicationExtension> {
 
     buildTypes {
         getByName("debug") {
-            val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile?.exists() == true) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
-            }
+            signingConfig = signingConfigs.getByName("debug")
         }
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
@@ -73,10 +68,11 @@ configure<ApplicationExtension> {
 }
 
 dependencies {
+    implementation(project(":provider-core"))
     implementation(project(":share:extensions-android"))
     implementation(project(":share:lrckit"))
 
-    implementation(libs.lyricon.provider)
+    implementation(libs.lyricon.lyric.model)
     implementation(libs.kotlinx.serialization.json)
 
     implementation(libs.yukihookapi.api)

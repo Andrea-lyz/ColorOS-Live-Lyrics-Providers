@@ -14,10 +14,10 @@
   - `TrackGenerationPolicy`：单向递增 generation 计数器，严格防止旧会话异步回调污染。
   - `LyricTimingClassifier`：准确分类歌词时间轴格式（`WORD` / `LINE` / `UNTIMED_TEXT` / `INVALID`）。
   - `LyricLaneAlignmentPolicy`：逐行单调递增时序对齐、一对一非重复翻译消费、`//` 空翻译过滤、推广行过滤防脱节。
-  - `RuntimeModeResolver`：进程内单次评估 `ROOT_MODULE` / `NPATCH_EMBEDDED` / `UNKNOWN`；Manifest/resource marker 均有测试，root 与 NPatch 信号同时出现时按冲突 fail-closed。
+  - `RuntimeModeResolver`：进程内单次确认 `ROOT_MODULE` / `UNKNOWN`；未观察到 LSPosed 模块入口时 fail-closed。
   - `NativeLyricInfoPublisher`：先在原 metadata 副本上构造候选并完成宿主包、当前 track generation、字段长度和完整 Parcel 检查，全部通过后才修改调用方 Builder；任何拒绝路径均不污染原 metadata。
   - `StructuredDiagnostics`：统一 `[CLL] level/component/area/event` 字段格式，支持 Logcat / Xposed sinks、按 component/area/event/session 节流、敏感字段脱敏和 track identity SHA-256 摘要。
-  - `ProviderDebugConfig`：覆盖 15 个旧迁移目标及新增 Cone 的独立 `ProviderId`；ROOT 配置源、NPatch 打包 marker 配置源和 `UNKNOWN` 默认关闭行为彼此隔离。
+  - `ProviderDebugConfig`：覆盖 15 个旧迁移目标及新增 Cone 的独立 `ProviderId`；仅读取 Root 配置源，`UNKNOWN` 默认关闭。
 
 - **`reflection-core`** (`io.github.andrealtb.coloroslyrics.provider.reflection`)：
   - `ReflectionCache`：按 ClassLoader 及宿主版本隔离的反射缓存，任一变化时自动清空。
@@ -39,12 +39,12 @@
 - `share:meizu-provider`
 - `share:car-provider`
 
-旧 `apple-music`、`163-music`、`salt-player-music` 等 application module 仍保留旧包名与 Lyricon 职责，仅用于后续逐播放器迁移和 A/B 基线。它们不是 4.0 新 namespace 已完成的 player 交付物。
+最终清理已删除旧 `163-music`、`salt-player-music` 及所有非 v5 矩阵 application。
+仓库只保留设备验证通过的 v5 application 与仍被这些模块引用的 core/parser/helper。
 
-## 2. NPatch 与版权交付物
+## 2. NPatch 清理与版权交付物
 
-- `provider-core` 提供默认关闭的 Manifest placeholders、`npatch_marker` 资源及 NPatch debug marker。
-- marker 配置与初始化顺序记录于 `docs/4.0/NPATCH-RUNTIME-MARKERS.md`。
+- 4.0 全系列只作为独立 Root/LSPosed Provider 交付；已删除 NPatch runtime marker、embedded debug 配置、双模式 build variant 和对应测试。
 - 根目录 `NOTICE` 记录 LyricProvider 来源、基线 commit 和 Apache-2.0 署名。
 
 ## 3. 单元测试验证状态
@@ -68,9 +68,9 @@ scripts\gradle-ascii.cmd :parser-lrc:test :parser-qrc:test :parser-yrc:test :par
 ## 4. Phase 1 验收边界
 
 - 基础设施与 parser module：静态实现及 JVM 测试完成。
-- 旧播放器 application module：仅保留为迁移源，未宣称完成新 namespace、v5 或 NPatch。
-- NPatch：marker/config 契约和测试完成，播放器真机注入验证从 Phase 2 开始。
+- 旧播放器 application module：仅保留为迁移源，未宣称完成新 namespace 或 v5。
+- NPatch：4.0 计划明确不适配；不再保留 marker/config 契约、嵌入构建或真机验收项。
 - 构建成功不等于真机验证；Phase 1 不包含播放器 runtime 验收。
 
 ## 5. 下一步规划（Phase 2）
-进入 Phase 2：Salt Player 与 ConePlayer 适配迁移（新建 `player-salt`、`player-cone`，迁移 DexKit 发现逻辑与 v5 原生发布，验证 root/NPatch 二合一）。
+进入 Phase 2：Salt Player 与 ConePlayer 适配迁移（新建 `player-salt`、`player-cone`，迁移 DexKit 发现逻辑与 v5 原生发布，仅验证 Root/LSPosed）。

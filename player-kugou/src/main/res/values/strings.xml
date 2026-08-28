@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Copyright 2026 Proify, Tomakino, Andrea-TB
+  ~ Licensed under the Apache License, Version 2.0
+  ~ http://www.apache.org/licenses/LICENSE-2.0
+  -->
+
+<resources>
+    <string name="app_name">酷狗音乐歌词 Provider</string>
+    <string name="xposed_description">ColorOS lockscreen lyrics for KuGou Music and KuGou Concept</string>
+    <string name="debug_settings_activity_label">酷狗音乐歌词 Provider Settings</string>
+</resources>

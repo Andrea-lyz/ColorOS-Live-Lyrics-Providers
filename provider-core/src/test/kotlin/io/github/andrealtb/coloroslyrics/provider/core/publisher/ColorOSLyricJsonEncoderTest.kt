@@ -7,9 +7,11 @@
 package io.github.andrealtb.coloroslyrics.provider.core.publisher
 
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
+import io.github.andrealtb.coloroslyrics.provider.parser.lrc.EnhanceLrcParser
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.LyricWord
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import org.junit.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -38,5 +40,27 @@ class ColorOSLyricJsonEncoderTest {
         assertTrue(encoded.jsonValue.contains("\"sessionGeneration\":5"))
         assertTrue(encoded.jsonValue.contains("\"rawLyric\":"))
         assertTrue(encoded.jsonValue.contains("\"translationLyric\":"))
+    }
+
+    @Test
+    fun bracketInlineTimingIsPlainForSystemUiAndEnhancedForBridge() {
+        val lines = EnhanceLrcParser.parse(
+            "[00:11.367]I [00:11.548]heard [00:11.773]you[00:12.062]"
+        ).lines
+        val encoded = ColorOSLyricJsonEncoder.encode(
+            track = TrackIdentity(id = "salt-1", title = "Title", artist = "Artist"),
+            lines = lines,
+            trackGeneration = 1L,
+            playerPackage = "com.salt.music"
+        )
+
+        assertNotNull(encoded)
+        assertTrue(encoded.plainLyric.contains("[00:11.367]I heard you"))
+        assertFalse(encoded.plainLyric.contains("[00:11.548]"))
+        assertFalse(encoded.plainLyric.contains("[00:11.773]"))
+        assertTrue(encoded.rawLyric.contains("<00:11.367>I "))
+        assertTrue(encoded.rawLyric.contains("<00:11.548>heard "))
+        assertTrue(encoded.rawLyric.contains("<00:11.773>you"))
+        assertTrue(encoded.rawLyric.contains("<00:12.062>"))
     }
 }

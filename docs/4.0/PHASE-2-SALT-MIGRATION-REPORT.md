@@ -8,19 +8,22 @@
 
 - 新建 `player-salt`，`namespace` / `applicationId` 均为
   `io.github.andrealtb.coloroslyrics.provider.salt`，并加入 `settings.gradle.kts`。
-- 未修改或删除 Bridge 的 Salt scope、`SaltPlayerAdapter`、翻译按钮实现，未修改
-  `todo.md` 或 `PlayerSource`。
+- Salt 仅以 **Root / LSPosed** 作为 4.0 运行路径。用户确认 Root 等价与冲突评审完成后，
+  Phase 2 已删除 Bridge 的 Salt scope、`SaltPlayerAdapter` 与定向测试；按播放器包名保存的
+  翻译偏好和 SystemUI 翻译按钮设置继续保留。
 - `desktop_lyrics` 仍由 Bridge/SystemUI 的 `TranslationToggleMediaActionBinder` 识别并
   绑定；Provider 仅保留动作常量，不宣称迁移该持久职责。
-- 当前解析器未解析 Salt `va1` 逐字模型；当前能力为 **LINE-only**，不能标记为 WORD。
+- 当前 Provider 未直接解析 Salt `va1` 私有对象；普通 LRC 为 LINE，方括号/标准增强 LRC
+  可解析为 WORD。
+
+完整适配方法与后续播放器模板见：
+`docs/4.0/PLAYER-ADAPTATION-REFERENCE-SALT.md`。
 
 ## 运行时与发布路径
 
-- Root 构建的 `BuildConfig.NPATCH_EMBEDDED=false`，入口调用
-  `notifyXposedHookActive()`；NPatch 两个构建为 `true`，不发送 root 信号。
-  root+npatch 同时出现仍由 Phase 1 `RuntimeModeResolver` fail-closed 为 `UNKNOWN`。
-- Root debug 通过 module-owned `XSharedPreferences` 读取 Salt 独立 debug 配置，读取失败
-  默认 false；NPatch 只读取宿主打包 marker。
+- Salt 仅保留 Root `debug` / `release` 构建，入口调用 `notifyXposedHookActive()`。
+- Root debug 读取 module-owned 配置。Provider APK 内置默认关闭的 Debug 页面；切换后重启 Salt，
+  `[CLL] DEBUG` 同时进入 logcat 与 LSPosed framework log。4.0 全系列不适配 NPatch。
 - MediaSession 使用弱引用 registry，跟踪 constructor tag、host metadata、播放状态、
   active/release；只有与 publication 稳定身份匹配且唯一、有效的 session 才发布。
 - generation 只由 host 主 session metadata 驱动。旧回调不会把自身曲目设置成当前曲目。
@@ -79,25 +82,33 @@
 
 ```text
 scripts\gradle-ascii.cmd :player-salt:testDebugUnitTest :player-salt:assembleDebug --rerun-tasks --no-configuration-cache
-scripts\gradle-ascii.cmd :player-salt:assembleNpatch :player-salt:assembleNpatchDebug --no-configuration-cache
 ```
 
-结果：两次命令均 `BUILD SUCCESSFUL`。JUnit XML 共 11 suites、43 tests，0 failures、0 errors、0 skipped。
+Root 定向测试与 Debug 构建通过。Salt NPatch build type 已在最终阻断结论后删除。
 
 最终 APK：
 
-| Variant | 绝对路径 | SHA-256 | NPATCH | Debug marker |
-|---|---|---|---|---|
-| debug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\debug\player-salt-1.0.4-debug.apk` | `F11147A18D687674472E98454E1548AC9A3C59511D32E2D02E1E99595312098E` | false | false |
-| npatch | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatch\player-salt-1.0.4-npatch.apk` | `744F038F3EDDA8FB64A454634BF92B1D91D1FD527CFB4F37B3EB1D26B053C318` | true | false |
-| npatchDebug | `D:\Users\Andrea-TB\Desktop\锁屏岛歌词\ColorOS-Live-Lyrics-Providers\build\all-apks\npatchDebug\player-salt-1.0.4-npatchDebug.apk` | `2909E47308140F6426E4C2D779FC1712025FCED624DD8A9EB0603D8442BEC9D0` | true | true |
+| Variant | 运行模式 | 状态 |
+|---|---|---|
+| debug | Root / LSPosed | 保留，真机通过 |
+| release | Root / LSPosed | 保留 |
 
-三种 APK 的 package 均为 `io.github.andrealtb.coloroslyrics.provider.salt`，versionCode=5、
-versionName=1.0.4。解包扫描均未发现 `LyriconFactory`、`LyriconProvider`、
+Root APK package 为 `io.github.andrealtb.coloroslyrics.provider.salt`，versionCode=5、
+versionName=1.0.4。解包扫描未发现 `LyriconFactory`、`LyriconProvider`、
 `SystemUiBroadcastSender`、`EXTERNAL_LYRIC_DIRECT_V4` 或 `player.setSong`。
 
-## 未验证门禁
+## NPatch 历史取证（不再复用）
 
-以上为源码、单元测试、Gradle 构建和 APK 静态验证。`logs/salt-phase2-root-01.txt`、
-`logs/salt-phase2-root-02.txt` 与 `logs/salt-phase2-root-03.txt` 对应的 Root 与 NPatch
-真机运行、蓝牙歌词中继下的锁屏与 AOD 显示、DexKit 发现及 metadata replay 待真机复测，不宣称真机通过。
+- `salt-phase2-npatch-01.txt`：安全门绕过成功，但宿主 marker 不可见，运行模式为 UNKNOWN。
+- `salt-phase2-npatch-02.txt`：运行模式已修复为 NPATCH_EMBEDDED，但 publisher 发现立即以
+  `IllegalStateException` 失败，没有安装最终歌词发布 Hook，也没有 `LYRIC_INFO_PUBLISHED`。
+- 已尝试签名 High bypass、两个 `Invalid App` 门限定绕过及显式运行模式信号；继续适配需要
+  扩大 NPatch 宿主/loader/DexKit 特例，超出 Salt Provider 的可维护边界。
+- `salt-phase2-npatch-03` 至 `08` 依次验证了外层/运行时 APK误选、NPatch code-cache、
+  ClassLoader resource 与 `AssetManager.open("npatch/origin.apk")`。最终日志为
+  `FileNotFoundException: npatch/origin.apk`。
+- NPatch loader 本身可通过其私有原始 ClassLoader提取 origin APK，但嵌入 Provider 的公开
+  Context/ClassLoader/AssetManager 均不可访问；继续需要耦合 NPatch 私有字段、缓存或维护
+  loader 分支，超出可维护边界。
+- 结论：Salt 的 NPatch 尝试已停止。4.0 全系列不再进行 NPatch 资格评估、重打包、嵌入实现或交付；
+  Salt 专属 variant、安全门绕过、origin resolver 与通用 NPatch 基础设施均已删除。

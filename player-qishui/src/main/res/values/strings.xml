@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">汽水音乐歌词 Provider</string>
+    <string name="xposed_description">为汽水音乐构造 ColorOS 锁屏逐字与翻译歌词</string>
+    <string name="debug_settings_activity_label">汽水音乐歌词 Provider 设置</string>
+</resources>

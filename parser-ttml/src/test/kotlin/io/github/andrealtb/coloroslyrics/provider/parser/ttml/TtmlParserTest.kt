@@ -47,6 +47,7 @@ class TtmlParserTest {
 
         val result = assertNotNull(TtmlParser.parse(ttml))
         assertEquals("[00:01.000]Hello World", result.plainLrc)
+        assertEquals("[00:01.000]<00:01.000>Hello <00:01.600>World<00:02.000>", result.enhancedLrc)
     }
 
     @Test

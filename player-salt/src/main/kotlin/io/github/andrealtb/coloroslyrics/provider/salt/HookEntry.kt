@@ -9,6 +9,8 @@ package io.github.andrealtb.coloroslyrics.provider.salt
 import com.highcapable.yukihookapi.YukiHookAPI
 import com.highcapable.yukihookapi.annotation.xposed.InjectYukiHookWithXposed
 import com.highcapable.yukihookapi.hook.xposed.proxy.IYukiHookXposedInit
+import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
+import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 
 @InjectYukiHookWithXposed(modulePackageName = "io.github.andrealtb.coloroslyrics.provider.salt")
@@ -17,9 +19,7 @@ class HookEntry : IYukiHookXposedInit {
     override fun onHook() {
         YukiHookAPI.encase {
             loadApp(SaltPlayerConstants.SALT_PACKAGE) {
-                if (SaltEntryPolicy.shouldNotifyXposed(BuildConfig.NPATCH_EMBEDDED)) {
-                    RuntimeModeResolver.notifyXposedHookActive()
-                }
+                RuntimeModeResolver.notifyXposedHookActive()
                 onAppLifecycle {
                     onCreate {
                         val hostContext = appContext ?: return@onCreate
@@ -35,14 +35,16 @@ class HookEntry : IYukiHookXposedInit {
     }
 
     override fun onInit() {
-        YukiHookAPI.configs {
-            debugLog {
-                tag = "SaltPlayerProvider"
+        if (ProviderDebugConfig.readXposedSwitch(MODULE_PACKAGE, ProviderId.SALT)) {
+            YukiHookAPI.configs {
+                debugLog {
+                    tag = "SaltPlayerProvider"
+                }
             }
         }
     }
-}
 
-internal object SaltEntryPolicy {
-    fun shouldNotifyXposed(npatchEmbedded: Boolean): Boolean = !npatchEmbedded
+    private companion object {
+        const val MODULE_PACKAGE = "io.github.andrealtb.coloroslyrics.provider.salt"
+    }
 }

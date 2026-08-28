@@ -2,15 +2,9 @@
 .gradle
 /local.properties
 
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-/.kotlin/sessions
-/.kotlin/errors
-/.idea/pandoc.xml
+/.idea/
+/.serena/
+/.kotlin/
 
 .DS_Store
 /.codex-build/

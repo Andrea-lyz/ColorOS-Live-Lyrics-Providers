@@ -1,4 +1,4 @@
-name: Android Multi-App Build & Release
+name: Build v5 Provider Matrix
 
 on:
   workflow_dispatch:
@@ -47,12 +47,12 @@ jobs:
         run: |
           echo "${{ secrets.SIGNING_KEY }}" | base64 -d > release.jks
 
-      - name: Build APKs with Caching
+      - name: Build v5 Provider APKs
         run: |
           if [ "$BUILD_TYPE" = "release" ]; then
-            ./gradlew assembleRelease --build-cache
+            ./gradlew assembleV5MatrixRelease --build-cache
           else
-            ./gradlew assembleDebug --build-cache
+            ./gradlew assembleV5MatrixDebug --build-cache
           fi
         env:
           RELEASE_STORE_FILE: ../release.jks
@@ -68,15 +68,20 @@ jobs:
 
           echo "Collected files:"
           ls -lh collected-apks/
+          APK_COUNT=$(find collected-apks -maxdepth 1 -name "*.apk" | wc -l)
+          if [ "$APK_COUNT" -ne 12 ]; then
+            echo "Expected 12 v5 Provider APKs, found $APK_COUNT" >&2
+            exit 1
+          fi
 
-      - name: Create LyricProvider bundle
+      - name: Create Provider bundle
         run: |
           mkdir -p bundled-apks
           if ! compgen -G "collected-apks/*.apk" > /dev/null; then
-            echo "No APK files found for LyricProvider bundle" >&2
+            echo "No v5 Provider APK files found" >&2
             exit 1
           fi
-          (cd collected-apks && zip -qr "../bundled-apks/LyricProvider-${BUILD_TYPE}.zip" ./*.apk)
+          (cd collected-apks && zip -qr "../bundled-apks/ColorOS-Live-Lyrics-Providers-${BUILD_TYPE}.zip" ./*.apk)
           echo "Bundled files:"
           ls -lh bundled-apks/
 
@@ -88,10 +93,10 @@ jobs:
           if-no-files-found: error
           archive: false
 
-      - name: Upload LyricProvider bundle to Artifacts
+      - name: Upload Provider bundle to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: LyricProvider-${{ env.BUILD_TYPE }}-bundle
+          name: ColorOS-Live-Lyrics-Providers-${{ env.BUILD_TYPE }}-bundle
           path: bundled-apks/*.zip
           if-no-files-found: error
           archive: false

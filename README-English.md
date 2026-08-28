@@ -1,94 +1,81 @@
-<!--suppress ALL -->
+# ColorOS Live Lyrics Providers
 
-# LyricProvider - Lyrics Provider
+An independent Root/LSPosed Provider repository for ColorOS lock-screen lyrics. Every installable
+module publishes standard `MediaMetadata["lyricInfo"]` consumed by the
+`io.github.andrealtb.lockscreenlyrics` Bridge.
 
-![Platform](https://img.shields.io/badge/Platform-Android-brightgreen?style=flat&logo=android)
-![Release](https://img.shields.io/github/v/release/tomakino/LyricProvider?style=flat&color=blue&logo=github)
-![Size](https://img.shields.io/github/repo-size/tomakino/LyricProvider)
-![Downloads](https://img.shields.io/github/downloads/tomakino/LyricProvider/total?style=flat&color=orange)
-![License](https://img.shields.io/github/license/tomakino/LyricProvider?style=flat)
-![Last Commit](https://img.shields.io/github/last-commit/tomakino/LyricProvider?style=flat)
+The complete v5 matrix has passed its applicable device gates. This repository contains no
+NPatch path, Lyricon Provider runtime, v4 broadcast sender, or non-matrix player application.
 
-<p align="left">
-  <a href="README.md"><img src="https://img.shields.io/badge/Document-中文-red.svg" alt="中文"></a>
-</p>
+[中文](README.md)
 
-## 🎵 Supported Platforms
+## v5 Provider matrix
 
-### Core Adaptations
+| Player | Gradle module | applicationId | Host package | Adaptation baseline |
+|---|---|---|---|---|
+| Salt | `:player-salt` | `io.github.andrealtb.coloroslyrics.provider.salt` | `com.salt.music` | `12.3.0-alpha03` |
+| Cone / GP | `:player-cone` | `io.github.andrealtb.coloroslyrics.provider.cone` | `ink.trantor.coneplayer` / `ink.trantor.coneplayer.gp` | Formal build `v1.2.0(c77a1ea49)`; GP shares the same profile |
+| KuWo | `:kuwo-music` | `io.github.andrealtb.coloroslyrics.provider.kuwo` | `cn.kuwo.player` | `12.2.0.0` |
+| LX / Walnut | `:player-lx` | `io.github.andrealtb.coloroslyrics.provider.lx` | `cn.toside.music.mobile` / `com.lxwalnut.music.mobile` | LX `1.8.4`; Walnut `26.07.16` |
+| Poweramp | `:player-poweramp` | `io.github.andrealtb.coloroslyrics.provider.poweramp` | `com.maxmpz.audioplayer` | `build-1025-bundle-play` |
+| Metrolist | `:player-metrolist` | `io.github.andrealtb.coloroslyrics.provider.metrolist` | `com.metrolist.music` | `13.6.1` |
+| KuGou / Lite | `:player-kugou` | `io.github.andrealtb.coloroslyrics.provider.kugou` | `com.kugou.android` / `com.kugou.android.lite` | Standard `20.8.0`; Lite `5.2.61` |
+| QQ Music | `:player-qq` | `io.github.andrealtb.coloroslyrics.provider.qq` | `com.tencent.qqmusic` | `20.7.5.8` |
+| NetEase / Honor | `:player-netease` | `io.github.andrealtb.coloroslyrics.provider.netease` | `com.netease.cloudmusic` / `com.hihonor.cloudmusic` | Official `9.5.70`; Honor `3.5.20`; modified lite build `9.0.40` |
+| Apple Music | `:player-apple` | `io.github.andrealtb.coloroslyrics.provider.apple` | `com.apple.android.music` | `6.5.2` |
+| Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
+| QiShui | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
 
-| Platform                             | Identifier          | Description                                        |
-|:-------------------------------------|:--------------------|:---------------------------------------------------|
-| 🍎 **Apple Music**                   | `apple-music`       | Supports word-timed and translated lyrics; excludes background vocals and duet lanes |
-| ☁️ **Netease Music**                 | `163-music`         | Supports dynamic lyrics, translated lyrics         |
-| 🐧 **QQ Music**                      | `qq-music`          | Supports dynamic lyrics, translated lyrics         |
-| 🐧 **QQ Music HD**                   | `qq-music-hd`       | Supports dynamic lyrics, translated lyrics         |
-| 🧊 **LX Music**                      | `lx-music`          | Supports translated lyrics display                 |
-| 🐶 **Kugou Music / Concept Edition** | `kugou-music`       | Supports word-timed and translated lyrics; can send to SystemUI |
-| 📻 **Kuwo Music**                    | `kuwo-music`        | Parses KuWo's official LRC/LRCX lyric object, writes complete line-timed, word-timed, and translated lyrics to the native `MediaSession` `lyricInfo`, and publishes the same timeline to Lyricon; no car lyrics mode is required, and original artwork/metadata are preserved |
-| 🎧 **Spotify**                       | `spotify-music`     | Currently only supports standard lyrics            |
-| ⚡ **Poweramp**                       | `poweramp-music`    | Supports online matching and embedded local lyrics |
-| 🧂 **Salt Music**                    | `salt-player-music` | Adapted based on Meizu standard lyric interface    |
-| 🎵 **Qishui Music**                  | `qishui-music`      | Supports dynamic and translated lyrics; proper root hiding is required |
-| 🎵 **MusicFree**                     | `music-free`        | Support translation                                |
+The adaptation baseline is the host sample used for static reverse engineering, implementation,
+and device closure. It does not mean that the Provider supports only that version; host updates
+that change obfuscation structures or internal lyric flows still require renewed verification.
 
-### Universal / Special Modules
+Metrolist and Spotify do not expose translations. Other modules use either the public action or
+the Bridge five-slot control according to player-specific evidence. QQ Music HD is out of scope.
 
-| Module Name                 | Identifier (ID)  | Applicable Scenario                                   |
-|:----------------------------|:-----------------|:------------------------------------------------------|
-| ☁️ **Cloud Provider**       | `cloud-provider` | Universal, matches online lyric libraries via search  |
-| 📱 **Meizu Lyrics Support** | `meizu-provider` | For players that have adapted Meizu status bar lyrics |
-| 🧂 **Car Lyrics Support**   | `car-provider`   | For players that have adapted car lyrics              |
+## Architecture
 
-### 🚀 Native Support (No Plugin Needed)
+- `provider-core`: TrackIdentity, generation, standard `lyricInfo` publication, debug and diagnostics.
+- `reflection-core`: bounded reflection and DexKit discovery.
+- `parser-lrc/qrc/yrc/krc/ttml`: neutral lyric parsers.
+- `share:extensions-kt`, `share:extensions-android`, `share:lrckit` and
+  `share:yrckit`: compatibility helpers still used by KuWo/NetEase; they are not installable apps.
 
-The following players have natively integrated this protocol and can be used directly with Lyricon:
+`io.github.proify.lyricon.lyric:model` remains only as a compatibility DTO dependency for
+KuWo/NetEase. No module creates `LyriconFactory` or mounts Lyricon.
 
-* **Cone Music**: [Official Website](https://coneplayer.trantor.ink/)
-* **Halcyon**: native `lyricInfo` with a direct v4 fallback (`lyricprovider/halcyon`)
-* **Flamingo**: native v4 integration from `yos.music.player` (`lyricprovider/flamingo`)
+## Build
 
----
+JDK 21 and an Android SDK are required:
 
-## 📥 Quick Installation
+```powershell
+.\gradlew.bat assembleV5MatrixDebug
+.\gradlew.bat assembleV5MatrixRelease
+```
 
-> [!IMPORTANT]
-> This plugin is an extension component and must be used together with the *
-*[LyriconCore](https://github.com/tomakino/lyricon/releases/tag/core)** main application.
+Single-module example:
 
-1. **Download**: Go to the [Releases page](https://github.com/tomakino/LyricProvider/releases) and
-   get the APK for your target player, or `LyricProvider-release.zip` if you want every provider APK together.
-2. **Activate**: After installation, open **LSPosed Manager** and enable the **corresponding
-   provider**.
-3. **Configure Scope**: In LSPosed, check the music apps you want to fetch lyrics for (e.g., Apple
-   Music, Netease Music, etc.).
-4. **Apply**: Force stop and reopen the respective music app to start enjoying lyrics.
+```powershell
+.\gradlew.bat :player-qishui:assembleDebug
+```
 
----
+Release signing uses `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`,
+`RELEASE_KEY_ALIAS` and `RELEASE_KEY_PASSWORD`.
 
-## 🛠️ Developer Guide
+## Documentation and provenance
 
-We warmly welcome community Pull Requests to adapt more music apps.
+- Migration matrix: `docs/4.0/PHASE-0-MIGRATION-MAP.md`
+- Per-player device closure: `docs/4.0/PHASE-4-*-MIGRATION-REPORT.md`
+- Repository cleanup and final build: `docs/4.0/REPOSITORY-CLEANUP-REPORT.md`
+- Original LyricProvider baseline and attribution: `NOTICE`
 
-Please read
-the [Development Documentation](https://github.com/tomakino/lyricon/blob/master/lyric/bridge/provider/README.md)
+Licensed under Apache-2.0. Retained third-party provenance and contributor attribution remain in
+source headers, `NOTICE` and the migration reports.
 
----
+## Acknowledgements
 
-## 👥 Contributors
-
-[![Contributors](https://contrib.rocks/image?repo=tomakino/LyricProvider)](https://github.com/tomakino/LyricProvider/graphs/contributors)
-
-### ⭐ Star History
-
-<a href="https://star-history.com/#tomakino/LyricProvider&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=tomakino/LyricProvider&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=tomakino/LyricProvider&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=tomakino/LyricProvider&type=Date" />
- </picture>
-</a>
-
-### 👀 Visitor Trends
-
-![Visitors](https://count.getloli.com/get/@tomakino_LyricProvider?theme=minecraft)
+Special thanks to the original [tomakino/LyricProvider](https://github.com/tomakino/LyricProvider)
+project and its contributors for the early player adaptations, reverse-engineering ideas, and code
+baseline. Although this repository has been comprehensively rebuilt almost end to end around the
+standard v5 `lyricInfo` contract, the Root/LSPosed architecture, and each player's internal lyric
+flow, its evolution still benefits from the original project's exploration and community work.

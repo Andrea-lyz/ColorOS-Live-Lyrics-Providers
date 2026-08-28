@@ -1,0 +1,2 @@
+-keep class io.github.andrealtb.coloroslyrics.provider.metrolist.** { *; }
+

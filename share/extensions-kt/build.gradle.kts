@@ -7,7 +7,6 @@
 plugins {
     id("java-library")
     alias(libs.plugins.jetbrains.kotlin.jvm)
-    kotlin("plugin.serialization") version "2.1.21"
 }
 
 java {
@@ -21,7 +20,6 @@ kotlin {
 }
 
 dependencies {
-    implementation(libs.kotlinx.serialization.json)
     implementation(libs.lyricon.lyric.model)
     testImplementation(libs.junit)
 }

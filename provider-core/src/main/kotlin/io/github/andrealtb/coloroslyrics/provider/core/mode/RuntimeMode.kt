@@ -8,9 +8,8 @@ package io.github.andrealtb.coloroslyrics.provider.core.mode
 
 enum class RuntimeMode {
     ROOT_MODULE,
-    NPATCH_EMBEDDED,
     UNKNOWN;
 
     val isSupported: Boolean
-        get() = this == ROOT_MODULE || this == NPATCH_EMBEDDED
+        get() = this == ROOT_MODULE
 }

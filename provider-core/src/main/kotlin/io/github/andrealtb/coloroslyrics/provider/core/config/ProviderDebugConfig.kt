@@ -7,15 +7,13 @@
 package io.github.andrealtb.coloroslyrics.provider.core.config
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
+import android.content.SharedPreferences
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeMode
 
 enum class ProviderId(val configKey: String) {
     NETEASE("netease"),
     QQ("qq"),
-    QQHD("qqhd"),
     KUGOU("kugou"),
     KUWO("kuwo"),
     SPOTIFY("spotify"),
@@ -35,83 +33,112 @@ fun interface ProviderDebugSource {
     fun read(provider: ProviderId): Boolean?
 }
 
+data class ProviderDebugResolution(
+    val enabled: Boolean,
+    val reason: String
+)
+
+data class OpenedModulePrefs(
+    val prefs: SharedPreferences,
+    val usingLsposedSharedPrefs: Boolean
+)
+
 object ProviderDebugConfig {
 
     const val PREFS_NAME_SUFFIX = "_provider_debug_prefs"
     const val KEY_DEBUG_ENABLED = "provider_debug_logging_enabled"
-    const val META_DEBUG_ENABLED = "io.github.andrealtb.coloroslyrics.PROVIDER_DEBUG_ENABLED"
-    const val RES_DEBUG_ENABLED = "provider_debug_enabled"
+
+    fun prefsName(provider: ProviderId): String = "${provider.configKey}$PREFS_NAME_SUFFIX"
 
     fun resolve(
         mode: RuntimeMode,
         provider: ProviderId,
-        rootSource: ProviderDebugSource? = null,
-        embeddedSource: ProviderDebugSource? = null
-    ): Boolean = runCatching {
-        when (mode) {
-            RuntimeMode.ROOT_MODULE -> rootSource?.read(provider)
-            RuntimeMode.NPATCH_EMBEDDED -> embeddedSource?.read(provider)
-            RuntimeMode.UNKNOWN -> false
-        } ?: false
-    }.getOrDefault(false)
+        rootSource: ProviderDebugSource? = null
+    ): Boolean = resolveDetailed(mode, provider, rootSource).enabled
+
+    fun resolveDetailed(
+        mode: RuntimeMode,
+        provider: ProviderId,
+        rootSource: ProviderDebugSource? = null
+    ): ProviderDebugResolution {
+        if (mode != RuntimeMode.ROOT_MODULE) {
+            return ProviderDebugResolution(false, "disabled:mode-${mode.name.lowercase()}")
+        }
+        if (rootSource == null) {
+            return ProviderDebugResolution(false, "disabled:source-unavailable")
+        }
+        val raw = runCatching { rootSource.read(provider) }
+            .getOrElse { error ->
+                return ProviderDebugResolution(
+                    false,
+                    "disabled:read-${error.javaClass.simpleName}"
+                )
+            }
+        return when (raw) {
+            true -> ProviderDebugResolution(true, "enabled")
+            false -> ProviderDebugResolution(false, "disabled")
+            null -> ProviderDebugResolution(false, "disabled:source-unavailable")
+        }
+    }
 
     fun configureDiagnostics(
         mode: RuntimeMode,
         provider: ProviderId,
-        rootSource: ProviderDebugSource? = null,
-        embeddedSource: ProviderDebugSource? = null
-    ): Boolean {
-        val enabled = resolve(mode, provider, rootSource, embeddedSource)
-        StructuredDiagnostics.configureForRuntime(mode, enabled)
-        return enabled
+        rootSource: ProviderDebugSource? = null
+    ): Boolean = applyDiagnostics(mode, provider, rootSource).enabled
+
+    fun applyDiagnostics(
+        mode: RuntimeMode,
+        provider: ProviderId,
+        rootSource: ProviderDebugSource? = null
+    ): ProviderDebugResolution {
+        val resolution = resolveDetailed(mode, provider, rootSource)
+        StructuredDiagnostics.configureForRuntime(mode, resolution.enabled)
+        return resolution
     }
 
-    fun sharedPreferencesSource(moduleContext: Context): ProviderDebugSource = ProviderDebugSource { provider ->
-        moduleContext.getSharedPreferences(
-            "${provider.configKey}$PREFS_NAME_SUFFIX",
-            Context.MODE_PRIVATE
-        ).getBoolean(KEY_DEBUG_ENABLED, false)
+    fun openModulePrefs(moduleContext: Context, provider: ProviderId): OpenedModulePrefs {
+        val name = prefsName(provider)
+        return try {
+            @Suppress("DEPRECATION")
+            OpenedModulePrefs(
+                prefs = moduleContext.getSharedPreferences(name, Context.MODE_WORLD_READABLE),
+                usingLsposedSharedPrefs = true
+            )
+        } catch (_: SecurityException) {
+            OpenedModulePrefs(
+                prefs = moduleContext.getSharedPreferences(name, Context.MODE_PRIVATE),
+                usingLsposedSharedPrefs = false
+            )
+        }
     }
+
+    fun sharedPreferencesSource(moduleContext: Context): ProviderDebugSource =
+        ProviderDebugSource { provider ->
+            openModulePrefs(moduleContext, provider).prefs.getBoolean(KEY_DEBUG_ENABLED, false)
+        }
 
     fun setRootDebugEnabled(moduleContext: Context?, provider: ProviderId, enabled: Boolean): Boolean {
         if (moduleContext == null) return false
         return runCatching {
-            moduleContext.getSharedPreferences(
-                "${provider.configKey}$PREFS_NAME_SUFFIX",
-                Context.MODE_PRIVATE
-            ).edit().putBoolean(KEY_DEBUG_ENABLED, enabled).commit()
+            openModulePrefs(moduleContext, provider)
+                .prefs
+                .edit()
+                .putBoolean(KEY_DEBUG_ENABLED, enabled)
+                .commit()
         }.getOrDefault(false)
     }
 
-    fun embeddedMarkerSource(hostContext: Context): ProviderDebugSource = ProviderDebugSource {
-        resolveEmbeddedMarker(
-            manifestValue = readManifestMarker(hostContext),
-            resourceValue = readResourceMarker(hostContext)
-        )
-    }
-
-    internal fun resolveEmbeddedMarker(manifestValue: Boolean?, resourceValue: Boolean?): Boolean =
-        manifestValue == true || resourceValue == true
-
-    private fun readManifestMarker(context: Context): Boolean? = runCatching {
-        val appInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.packageManager.getApplicationInfo(
-                context.packageName,
-                PackageManager.ApplicationInfoFlags.of(PackageManager.GET_META_DATA.toLong())
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA)
-        }
-        if (appInfo.metaData?.containsKey(META_DEBUG_ENABLED) == true) {
-            appInfo.metaData.getBoolean(META_DEBUG_ENABLED, false)
-        } else {
-            null
-        }
-    }.getOrNull()
-
-    private fun readResourceMarker(context: Context): Boolean? = runCatching {
-        val resourceId = context.resources.getIdentifier(RES_DEBUG_ENABLED, "bool", context.packageName)
-        if (resourceId == 0) null else context.resources.getBoolean(resourceId)
-    }.getOrNull()
+    fun readXposedSwitch(modulePackage: String, provider: ProviderId): Boolean = runCatching {
+        val type = Class.forName("de.robv.android.xposed.XSharedPreferences")
+        val prefs = type.getConstructor(String::class.java, String::class.java)
+            .newInstance(modulePackage, prefsName(provider))
+        runCatching { type.getMethod("makeWorldReadable").invoke(prefs) }
+        type.getMethod("reload").invoke(prefs)
+        type.getMethod(
+            "getBoolean",
+            String::class.java,
+            Boolean::class.javaPrimitiveType
+        ).invoke(prefs, KEY_DEBUG_ENABLED, false) as Boolean
+    }.getOrDefault(false)
 }

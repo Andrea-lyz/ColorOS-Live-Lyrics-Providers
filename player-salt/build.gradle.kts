@@ -23,12 +23,9 @@ configure<ApplicationExtension> {
         minSdk = 27
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
         versionCode = 5
-        versionName = "1.0.4"
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        manifestPlaceholders["colorosLyricsNpatchEmbedded"] = "false"
-        manifestPlaceholders["colorosLyricsProviderDebugEnabled"] = "false"
-        buildConfigField("boolean", "NPATCH_EMBEDDED", "false")
     }
 
     signingConfigs {
@@ -52,30 +49,6 @@ configure<ApplicationExtension> {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-        }
-        create("npatch") {
-            initWith(getByName("release"))
-            matchingFallbacks += listOf("release")
-            signingConfig = signingConfigs.getByName("debug")
-            buildConfigField("boolean", "NPATCH_EMBEDDED", "true")
-            manifestPlaceholders["colorosLyricsNpatchEmbedded"] = "true"
-            manifestPlaceholders["colorosLyricsProviderDebugEnabled"] = "false"
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
-        create("npatchDebug") {
-            initWith(getByName("debug"))
-            matchingFallbacks += listOf("debug")
-            signingConfig = signingConfigs.getByName("debug")
-            buildConfigField("boolean", "NPATCH_EMBEDDED", "true")
-            manifestPlaceholders["colorosLyricsNpatchEmbedded"] = "true"
-            manifestPlaceholders["colorosLyricsProviderDebugEnabled"] = "true"
-            isMinifyEnabled = false
-            isShrinkResources = false
         }
     }
 

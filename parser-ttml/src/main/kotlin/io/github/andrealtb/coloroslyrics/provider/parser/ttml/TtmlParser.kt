@@ -6,6 +6,7 @@
 
 package io.github.andrealtb.coloroslyrics.provider.parser.ttml
 
+import io.github.andrealtb.coloroslyrics.provider.parser.lrc.LatinSyllableSpanMerger
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.LyricWord
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import javax.xml.parsers.DocumentBuilderFactory
@@ -203,40 +204,22 @@ object TtmlParser {
         spans: List<TtmlWordInfo>
     ): List<TtmlWordInfo> {
         if (spans.size < 2) return spans
-        val merged = mutableListOf<TtmlWordInfo>()
-        var pending: TtmlWordInfo? = null
-
-        fun flushPending() {
-            pending?.let(merged::add)
-            pending = null
-        }
-
-        spans.forEach { span ->
-            if (!containsAsciiLetterOrDigit(span.text)) {
-                flushPending()
-                merged.add(span)
-                return@forEach
-            }
-
-            pending = pending?.let { current ->
-                current.copy(
-                    text = current.text + span.text,
-                    endMs = span.endMs.coerceAtLeast(current.endMs),
+        return LatinSyllableSpanMerger.merge(
+            spans.map { span ->
+                LatinSyllableSpanMerger.Span(
+                    text = span.text,
+                    begin = span.startMs,
+                    end = span.endMs,
                     hasTrailingSpace = span.hasTrailingSpace
                 )
-            } ?: span
-
-            if (span.hasTrailingSpace) {
-                flushPending()
             }
-        }
-        flushPending()
-        return merged
-    }
-
-    private fun containsAsciiLetterOrDigit(value: String): Boolean {
-        return value.any { character ->
-            character in 'A'..'Z' || character in 'a'..'z' || character in '0'..'9'
+        ).map { span ->
+            TtmlWordInfo(
+                text = span.text,
+                startMs = span.begin,
+                endMs = span.end,
+                hasTrailingSpace = span.hasTrailingSpace
+            )
         }
     }
 
