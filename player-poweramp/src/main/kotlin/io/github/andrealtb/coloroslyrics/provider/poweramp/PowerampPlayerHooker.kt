@@ -8,6 +8,7 @@ package io.github.andrealtb.coloroslyrics.provider.poweramp
 
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.MediaMetadata
@@ -41,6 +42,7 @@ class PowerampPlayerHooker(
     private val sessions = PowerampMediaSessionRegistry()
     private val publicationLock = Any()
     private val pendingStore = PowerampPendingPublicationStore()
+    private val trackEventGate = PowerampTrackEventGate()
     private val lyricExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var replaySnapshot: PowerampReplaySnapshot? = null
@@ -119,10 +121,34 @@ class PowerampPlayerHooker(
         )
 
         installSessionHooks()
+        installTrackChangedSendHook()
         registerTrackReceiver()
         onAppLifecycle {
             onTerminate { release() }
         }
+    }
+
+    private fun installTrackChangedSendHook() {
+        runCatching {
+            ContextWrapper::class.java
+                .getDeclaredMethod("sendStickyBroadcast", Intent::class.java)
+                .apply { isAccessible = true }
+                .hook {
+                    before {
+                        val intent = args.getOrNull(0) as? Intent ?: return@before
+                        if (intent.action == PowerampPlayerConstants.ACTION_TRACK_CHANGED) {
+                            onTrackChanged(intent, source = "host-send")
+                        }
+                    }
+                }
+            StructuredDiagnostics.logInfo(
+                DiagnosticEvent(
+                    component = "provider/poweramp",
+                    area = "hook",
+                    event = "TRACK_CHANGED_SEND_HOOK_INSTALLED"
+                )
+            )
+        }.onFailure { logFailure("hook", "TRACK_CHANGED_SEND_HOOK_FAILED", it) }
     }
 
     private fun registerTrackReceiver() {
@@ -130,7 +156,7 @@ class PowerampPlayerHooker(
         trackReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
                 if (intent.action == PowerampPlayerConstants.ACTION_TRACK_CHANGED) {
-                    onTrackChanged(intent)
+                    onTrackChanged(intent, source = "receiver")
                 }
             }
         }.also { receiver ->
@@ -150,8 +176,25 @@ class PowerampPlayerHooker(
         )
     }
 
-    private fun onTrackChanged(intent: Intent) {
+    private fun onTrackChanged(intent: Intent, source: String) {
         val snapshot = PowerampTrackIdentity.fromTrackChangedExtras(intent.extras) ?: return
+        val eventTimestamp = intent.getLongExtra("ts", Long.MIN_VALUE)
+        if (!trackEventGate.shouldHandle(
+                eventTimestampMillis = eventTimestamp,
+                trackKey = snapshot.track.buildStableKey()
+            )
+        ) {
+            StructuredDiagnostics.logDebug(
+                DiagnosticEvent(
+                    component = "provider/poweramp",
+                    area = "track",
+                    event = "TRACK_CHANGED_DUPLICATE_SKIPPED",
+                    generation = generationPolicy.generation,
+                    reason = source
+                )
+            )
+            return
+        }
         val generation = generationController.observeTrack(snapshot.track)
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -160,7 +203,7 @@ class PowerampPlayerHooker(
                 event = "TRACK_BOUND",
                 generation = generation,
                 trackHash = DiagnosticHasher.sha256(snapshot.track.buildStableKey()),
-                reason = "path=${!snapshot.path.isNullOrBlank()}"
+                reason = "source=$source path=${!snapshot.path.isNullOrBlank()}"
             )
         )
         lyricExecutor.execute {

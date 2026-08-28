@@ -188,6 +188,20 @@
   的进一步测试扩充。这些不阻塞本轮 P0/P1 关闭，但仍属于报告中的长期重复/覆盖债务。
 
 本地验证：`testV5Matrix` 汇总 458 个测试，0 failure/0 error；`assembleV5MatrixDebug` 生成 12 个 APK。
+
+### Poweramp P1-4 真机回归补充（2026-08-29）
+
+`lyrics-log-20260829-014011.txt` 证明，目标机上 `RECEIVER_NOT_EXPORTED` 只能在注册时取得系统保存的
+sticky `TRACK_CHANGED`；后续两次切歌仅由 MediaSession metadata 推进 generation，没有新的
+`TRACK_BOUND` 或本地歌词加载，旧 pending 因曲目变化被丢弃。该行为推翻了 P1-4 中“同 UID 广播
+必然覆盖后续切歌”的未验证假设。
+
+修复保留 `RECEIVER_NOT_EXPORTED`，不重新开放可伪造广播；改为在 Poweramp 宿主进程内只读截获
+`ContextWrapper.sendStickyBroadcast(Intent)`，仅处理 action 精确等于
+`com.maxmpz.audioplayer.TRACK_CHANGED` 的宿主发送，并以广播 `ts` + track key 去重 hook/receiver
+双通道。`player-poweramp:testDebugUnitTest` 共 29 个测试通过，Poweramp Debug APK 构建及 v2 签名
+验证通过；切歌取词链仍需用户真机复核。
+
 Windows 中文工作区下 Gradle 9.3.1 的纯 JVM test worker 会错误地 `ClassNotFoundException`，本地验证通过
 临时 ASCII 盘符映射执行；GitHub Actions 工作区不含该路径条件，并已强制 `--rerun-tasks`。以上均为
 本地构建/静态验证，未替代既有真机结论，也未新增真机验证。
