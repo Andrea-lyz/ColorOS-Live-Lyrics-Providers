@@ -9,7 +9,7 @@ import com.android.build.api.dsl.ApplicationExtension
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.ksp)
-    kotlin("plugin.serialization") version "2.1.21"
+    alias(libs.plugins.kotlin.serialization)
 }
 
 configure<ApplicationExtension> {
@@ -69,6 +69,7 @@ configure<ApplicationExtension> {
 
 dependencies {
     implementation(project(":provider-core"))
+    implementation(project(":reflection-core"))
     implementation(project(":parser-lrc"))
     implementation(project(":parser-krc"))
 

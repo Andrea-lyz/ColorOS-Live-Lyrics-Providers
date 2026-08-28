@@ -21,7 +21,7 @@ object AppleTrackIdentity {
             title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE),
             artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST),
             album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM),
-            durationMs = normalizeDuration(metadata.getLong(MediaMetadata.METADATA_KEY_DURATION))
+            durationMs = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION).coerceAtLeast(0L)
         ).takeUnless { it.isBlank }
     }
 
@@ -51,6 +51,8 @@ object AppleTrackIdentity {
 
     fun normalizeDuration(duration: Long): Long {
         if (duration <= 0L) return 0L
-        return if (duration < 24L * 60L * 60L) duration * 1000L else duration
+        return if (duration < MAX_PLAUSIBLE_TRACK_SECONDS) duration * 1000L else duration
     }
+
+    private const val MAX_PLAUSIBLE_TRACK_SECONDS = 10_000L
 }

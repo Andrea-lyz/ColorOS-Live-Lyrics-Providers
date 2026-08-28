@@ -18,6 +18,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfi
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
@@ -71,9 +72,9 @@ class SpotifyPlayerHooker(
                 area = "track",
                 event = "TRACK_GENERATION_RESET",
                 generation = generationPolicy.generation,
+                trackHash = DiagnosticHasher.sha256(current.buildStableKey()),
                 reason = "identity-changed",
-                message = "previous=" + previous?.id.orEmpty() +
-                    " current=" + current.id.orEmpty()
+                message = "previousPresent=${previous != null}"
             )
         )
     }
@@ -344,27 +345,23 @@ class SpotifyPlayerHooker(
                         var outgoing = incoming
                         val ignored = SpotifyTrackBindPolicy.shouldIgnoreMetadata(incoming)
                         val platformTrack = SpotifyTrackBindPolicy.fromMetadata(incoming)
+                        val diagnosticTrack = platformTrack ?: TrackIdentity(
+                            id = incoming.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+                            title = incoming.getString(MediaMetadata.METADATA_KEY_TITLE),
+                            artist = incoming.getString(MediaMetadata.METADATA_KEY_ARTIST)
+                        )
                         StructuredDiagnostics.logInfo(
                             DiagnosticEvent(
                                 component = SpotifyPlayerConstants.COMPONENT,
                                 area = "session",
                                 event = "SESSION_METADATA_OBSERVED",
                                 generation = generationPolicy.generation,
+                                trackHash = DiagnosticHasher.sha256(diagnosticTrack.buildStableKey()),
                                 reason = if (ignored) "ignored" else "track",
-                                message = "mediaId=" + incoming.getString(
-                                    MediaMetadata.METADATA_KEY_MEDIA_ID
-                                ).orEmpty() +
-                                    " title=" + incoming.getString(
-                                        MediaMetadata.METADATA_KEY_TITLE
-                                    ).orEmpty() +
-                                    " artist=" + incoming.getString(
-                                        MediaMetadata.METADATA_KEY_ARTIST
-                                    ).orEmpty() +
-                                    " parsedId=" + platformTrack?.id.orEmpty() +
+                                message = "parsed=${platformTrack != null}" +
                                     " moduleLyricInfo=" + !incoming.getString(
                                         SpotifyPlayerConstants.METADATA_KEY_LYRIC_INFO
                                     ).isNullOrEmpty() +
-                                    " currentId=" + generationPolicy.currentTrack?.id.orEmpty() +
                                     " fetchGeneration=" + fetchGeneration
                             )
                         )
@@ -474,11 +471,9 @@ class SpotifyPlayerHooker(
                     area = "track",
                     event = "TRACK_BOUND",
                     generation = generation,
+                    trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
                     reason = source,
-                    message = "id=" + track.id.orEmpty() +
-                        " title=" + track.title.orEmpty() +
-                        " artist=" + track.artist.orEmpty() +
-                        " durationMs=" + track.durationMs
+                    durationMs = track.durationMs
                 )
             )
         }
@@ -499,9 +494,9 @@ class SpotifyPlayerHooker(
                 area = "lyric",
                 event = "LYRIC_FETCH_GATE",
                 generation = generation,
+                trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
                 reason = source,
-                message = "id=" + track.id.orEmpty() +
-                    " accepts=" + acceptsPublication +
+                message = "accepts=" + acceptsPublication +
                     " fetchable=" + fetchableIdentity +
                     " gateAllows=" + gateAllows +
                     " fetchGeneration=" + fetchGeneration +
@@ -544,10 +539,12 @@ class SpotifyPlayerHooker(
                         area = "lyric",
                         event = "LYRIC_FETCH_OUTCOME",
                         generation = generation,
+                        trackHash = generationPolicy.currentTrack?.let {
+                            DiagnosticHasher.sha256(it.buildStableKey())
+                        },
                         reason = outcomeName,
                         message = "currentGeneration=" + generationPolicy.generation +
-                            " fetchGeneration=" + fetchGeneration +
-                            " currentId=" + generationPolicy.currentTrack?.id.orEmpty()
+                            " fetchGeneration=" + fetchGeneration
                     )
                 )
                 if (!generationPolicy.isGenerationValid(generation)) {
@@ -579,9 +576,9 @@ class SpotifyPlayerHooker(
                 area = "lyric",
                 event = "LYRIC_FETCH_RETRY_HEADERS_READY",
                 generation = generation,
+                trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
                 reason = "headers-ready",
-                message = "id=" + track.id.orEmpty() +
-                    " fetchGeneration=" + fetchGeneration +
+                message = "fetchGeneration=" + fetchGeneration +
                     " keys=" + authHeaders.capturedKeyList()
             )
         )

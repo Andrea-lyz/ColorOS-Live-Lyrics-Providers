@@ -16,13 +16,13 @@ object QqSongInfoReader {
     fun read(songInfo: Any?): TrackIdentity {
         if (songInfo == null) return TrackIdentity()
         val songId = firstNonPlaceholder(
-            SONG_ID_METHODS.map { stringify(QqLyricModelDecoder.invokeNoArg(songInfo, it)) }
+            SONG_ID_METHODS.map { stringifyId(QqLyricModelDecoder.invokeNoArg(songInfo, it)) }
         )
         val title = firstNonPlaceholder(
-            TITLE_METHODS.map { stringify(QqLyricModelDecoder.invokeNoArg(songInfo, it)) }
+            TITLE_METHODS.map { stringifyText(QqLyricModelDecoder.invokeNoArg(songInfo, it)) }
         )
         val artist = firstNonPlaceholder(
-            ARTIST_METHODS.map { stringify(QqLyricModelDecoder.invokeNoArg(songInfo, it)) }
+            ARTIST_METHODS.map { stringifyText(QqLyricModelDecoder.invokeNoArg(songInfo, it)) }
         )
         return TrackIdentity(
             id = songId,
@@ -52,10 +52,15 @@ object QqSongInfoReader {
         val translation: Any?
     )
 
-    private fun stringify(value: Any?): String? = when (value) {
+    private fun stringifyId(value: Any?): String? = when (value) {
         null -> null
         is Number -> value.toLong().takeIf { it != 0L }?.toString()
         else -> value.toString().trim().takeIf { it.isNotBlank() && it != "0" && it != "1" }
+    }
+
+    private fun stringifyText(value: Any?): String? = when (value) {
+        null -> null
+        else -> value.toString().trim().takeIf(String::isNotBlank)
     }
 
     private fun firstNonPlaceholder(values: List<String?>): String? =

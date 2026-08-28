@@ -13,12 +13,14 @@ import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import org.w3c.dom.Node
+import java.util.Locale
 
 /**
  * Parses TTML (W3C, BetterLyrics, Apple TTML) into plain LRC, enhanced LRC, and structured RichLyricLine list.
  */
 object TtmlParser {
     private const val TTML_PARAMETER_NS = "http://www.w3.org/ns/ttml#parameter"
+    private const val TTML_METADATA_NS = "http://www.w3.org/ns/ttml#metadata"
 
     private data class TtmlWordInfo(
         val text: String,
@@ -29,6 +31,7 @@ object TtmlParser {
 
     private data class TtmlLineInfo(
         val startMs: Long,
+        val endMs: Long?,
         val text: String,
         val words: List<TtmlWordInfo>
     )
@@ -38,8 +41,12 @@ object TtmlParser {
         return try {
             val factory = DocumentBuilderFactory.newInstance()
             factory.isNamespaceAware = true
+            try { factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) } catch (_: Exception) {}
             try { factory.setFeature("http://xml.org/sax/features/external-general-entities", false) } catch (_: Exception) {}
+            try { factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false) } catch (_: Exception) {}
             try { factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) } catch (_: Exception) {}
+            try { factory.isXIncludeAware = false } catch (_: Exception) {}
+            factory.isExpandEntityReferences = false
             val doc = factory.newDocumentBuilder().parse(ttml.byteInputStream())
             val globalOffsetMs = findTtmlLyricOffsetMillis(doc)
 
@@ -52,6 +59,10 @@ object TtmlParser {
                 if (begin.isEmpty()) continue
                 val lineMs = applyTtmlOffset(parseTTMLTime(begin), globalOffsetMs)
                 if (lineMs < 0) continue
+                val lineEndMs = timingAttribute(p, "end")
+                    .takeIf { it.isNotEmpty() }
+                    ?.let { applyTtmlOffset(parseTTMLTime(it), globalOffsetMs) }
+                    ?.takeIf { it > lineMs }
 
                 val spans = mutableListOf<TtmlWordInfo>()
                 var child = p.firstChild
@@ -59,7 +70,7 @@ object TtmlParser {
                     if (child is Element) {
                         val name = child.localName ?: child.nodeName.substringAfterLast(':')
                         if (name == "span") {
-                            val role = child.getAttribute("role").ifEmpty { child.getAttribute("ttm:role") }
+                            val role = roleAttribute(child)
                             if (role != "x-bg" && role != "x-translation" && role != "x-roman") {
                                 val spanText = child.textContent ?: ""
                                 val spanBegin = timingAttribute(child, "begin")
@@ -70,10 +81,8 @@ object TtmlParser {
                                 } else {
                                     ""
                                 }
-                                val hasInlineSeparator = separator.isNotEmpty() &&
-                                    !separator.contains('\n') &&
-                                    !separator.contains('\r') &&
-                                    separator.first().isWhitespace()
+                                val hasInlineSeparator = separator.any(Char::isWhitespace) &&
+                                    hasFollowingSpan(child)
                                 val hasTrailing = spanText.lastOrNull()?.isWhitespace() == true ||
                                     hasInlineSeparator
                                 val wStart = if (spanBegin.isNotEmpty()) {
@@ -109,7 +118,7 @@ object TtmlParser {
                 }
 
                 if (lineText.isNotEmpty()) {
-                    lines.add(TtmlLineInfo(lineMs, lineText, words))
+                    lines.add(TtmlLineInfo(lineMs, lineEndMs, lineText, words))
                 }
             }
 
@@ -149,7 +158,9 @@ object TtmlParser {
                         text = w.text
                     )
                 }
-                val endMs = lineWords.lastOrNull()?.end ?: (line.startMs + 5000L)
+                val endMs = line.endMs
+                    ?: lineWords.lastOrNull()?.end
+                    ?: (line.startMs + 5000L)
                 RichLyricLine(
                     begin = line.startMs,
                     end = endMs,
@@ -169,14 +180,14 @@ object TtmlParser {
         val min = ms / 60000
         val sec = (ms % 60000) / 1000
         val millis = ms % 1000
-        return "[%02d:%02d.%03d]".format(min, sec, millis)
+        return String.format(Locale.ROOT, "[%02d:%02d.%03d]", min, sec, millis)
     }
 
     internal fun formatInlineTime(ms: Long): String {
         val min = ms / 60000
         val sec = (ms % 60000) / 1000
         val millis = ms % 1000
-        return "%02d:%02d.%03d".format(min, sec, millis)
+        return String.format(Locale.ROOT, "%02d:%02d.%03d", min, sec, millis)
     }
 
     private fun findFirstSpanBegin(p: Element): String? {
@@ -245,7 +256,7 @@ object TtmlParser {
             if (child.nodeType == Node.TEXT_NODE) sb.append(child.textContent)
             else if (child is Element) {
                 val name = child.localName ?: child.nodeName.substringAfterLast(':')
-                val role = child.getAttribute("role").ifEmpty { child.getAttribute("ttm:role") }
+                val role = roleAttribute(child)
                 if (name == "span" && role != "x-bg" && role != "x-translation" && role != "x-roman") {
                     sb.append(child.textContent)
                 }
@@ -253,6 +264,34 @@ object TtmlParser {
             child = child.nextSibling
         }
         return sb.toString()
+    }
+
+    private fun roleAttribute(element: Element): String {
+        element.getAttributeNS(TTML_METADATA_NS, "role").takeIf { it.isNotEmpty() }?.let {
+            return it
+        }
+        element.getAttribute("role").takeIf { it.isNotEmpty() }?.let { return it }
+        val attributes = element.attributes
+        for (index in 0 until attributes.length) {
+            val attribute = attributes.item(index)
+            if (attribute.localName == "role") return attribute.nodeValue.orEmpty()
+        }
+        return ""
+    }
+
+    private fun hasFollowingSpan(element: Element): Boolean {
+        var sibling = element.nextSibling
+        while (sibling != null) {
+            if (sibling is Element) {
+                val name = sibling.localName ?: sibling.nodeName.substringAfterLast(':')
+                return name == "span"
+            }
+            if (sibling.nodeType == Node.TEXT_NODE && sibling.textContent.orEmpty().isNotBlank()) {
+                return false
+            }
+            sibling = sibling.nextSibling
+        }
+        return false
     }
 
     private fun parseTTMLTime(time: String): Long {

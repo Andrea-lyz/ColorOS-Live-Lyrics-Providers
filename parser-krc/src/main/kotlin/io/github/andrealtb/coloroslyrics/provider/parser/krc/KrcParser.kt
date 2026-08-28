@@ -6,8 +6,8 @@
 
 package io.github.andrealtb.coloroslyrics.provider.parser.krc
 
-import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.LyricLine
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.LyricWord
+import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import java.util.regex.Pattern
 
 object KrcParser {
@@ -20,7 +20,7 @@ object KrcParser {
         if (content.isNullOrBlank()) return KrcDocument(emptyMap(), emptyList())
 
         val metadata = mutableMapOf<String, String>()
-        val lines = mutableListOf<LyricLine>()
+        val lines = mutableListOf<RichLyricLine>()
 
         var currentMetaKey: String? = null
         val currentMetaValue = StringBuilder()
@@ -67,7 +67,7 @@ object KrcParser {
             if (currentMetaKey != null) {
                 if (line.endsWith("]")) {
                     currentMetaValue.append(line.dropLast(1).trim())
-                    metadata[currentMetaKey!!] = currentMetaValue.toString()
+                    metadata[currentMetaKey] = currentMetaValue.toString()
                     currentMetaKey = null
                 } else {
                     currentMetaValue.append(line)
@@ -78,7 +78,7 @@ object KrcParser {
         return KrcDocument(metadata, lines.sortedBy { it.begin })
     }
 
-    private fun parseLineBody(lineStart: Long, lineDur: Long, body: String): LyricLine {
+    private fun parseLineBody(lineStart: Long, lineDur: Long, body: String): RichLyricLine {
         val words = mutableListOf<LyricWord>()
         val textBuilder = StringBuilder()
 
@@ -129,11 +129,12 @@ object KrcParser {
             textBuilder.toString()
         }
 
-        return LyricLine(
+        return RichLyricLine(
             begin = lineStart,
             end = lineStart + lineDur,
             duration = lineDur,
-            text = finalText
+            text = finalText,
+            words = words.takeIf { it.isNotEmpty() }
         )
     }
 }

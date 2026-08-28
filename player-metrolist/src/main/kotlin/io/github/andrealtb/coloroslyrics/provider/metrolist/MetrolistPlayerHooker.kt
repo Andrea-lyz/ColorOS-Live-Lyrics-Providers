@@ -19,6 +19,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfi
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
@@ -40,6 +41,7 @@ class MetrolistPlayerHooker(
 
     private val sessions = MetrolistMediaSessionRegistry()
     private val publicationLock = Any()
+    private val fetchLock = Any()
     private val pendingStore = MetrolistPendingPublicationStore()
     private val fetchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -55,9 +57,11 @@ class MetrolistPlayerHooker(
     private var hookedMusicService: Any? = null
 
     private val generationController = MetrolistHostGenerationController { _, _ ->
-        fetchJob?.cancel()
-        fetchJob = null
-        fetchGeneration = null
+        synchronized(fetchLock) {
+            fetchJob?.cancel()
+            fetchJob = null
+            fetchGeneration = null
+        }
         synchronized(publicationLock) {
             replaySnapshot = null
             val droppedPending = pendingStore.peek() != null
@@ -200,48 +204,48 @@ class MetrolistPlayerHooker(
     ) {
         val generation = generationPolicy.generation
         if (!generationController.acceptsPublication(track, generation)) return
-        if (!MetrolistLyricFetchGate.shouldStartFetch(track, generation, fetchGeneration)) {
-            if (drainPending) drainPendingPublication()
-            return
-        }
-
-        fetchJob?.cancel()
-        fetchGeneration = generation
-        StructuredDiagnostics.logInfo(
-            DiagnosticEvent(
-                component = "provider/metrolist",
-                area = "track",
-                event = "TRACK_BOUND",
-                generation = generation,
-                reason = source,
-                message = "id=" + track.id.orEmpty() +
-                    " title=" + track.title.orEmpty() +
-                    " artist=" + track.artist.orEmpty() +
-                    " album=" + track.album.orEmpty() +
-                    " durationMs=" + track.durationMs
-            )
-        )
-        fetchJob = fetchScope.launch {
-            val publication = try {
-                MetrolistLyricsFetcher.fetchLyrics(hookContext, track, generation)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                logFailure("lyric", "LYRIC_FETCH_FAILED", error)
-                null
-            }
-            mainHandler.post {
-                if (!generationPolicy.isGenerationValid(generation)) {
-                    logPublicationResult("STALE", generation)
-                    return@post
+        val started = synchronized(fetchLock) {
+            if (!MetrolistLyricFetchGate.shouldStartFetch(track, generation, fetchGeneration)) {
+                false
+            } else {
+                fetchJob?.cancel()
+                fetchGeneration = generation
+                StructuredDiagnostics.logInfo(
+                    DiagnosticEvent(
+                        component = "provider/metrolist",
+                        area = "track",
+                        event = "TRACK_BOUND",
+                        generation = generation,
+                        trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
+                        reason = source,
+                        durationMs = track.durationMs
+                    )
+                )
+                fetchJob = fetchScope.launch {
+                    val publication = try {
+                        MetrolistLyricsFetcher.fetchLyrics(hookContext, track, generation)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        logFailure("lyric", "LYRIC_FETCH_FAILED", error)
+                        null
+                    }
+                    mainHandler.post {
+                        if (!generationPolicy.isGenerationValid(generation)) {
+                            logPublicationResult("STALE", generation)
+                            return@post
+                        }
+                        if (publication == null) {
+                            logPublicationResult("NO_LYRIC", generation)
+                            return@post
+                        }
+                        handlePublication(publication.boundTo(track), allowPending = true)
+                    }
                 }
-                if (publication == null) {
-                    logPublicationResult("NO_LYRIC", generation)
-                    return@post
-                }
-                handlePublication(publication.boundTo(track), allowPending = true)
+                true
             }
         }
+        if (!started && drainPending) drainPendingPublication()
     }
 
     private fun installSessionHooks() {

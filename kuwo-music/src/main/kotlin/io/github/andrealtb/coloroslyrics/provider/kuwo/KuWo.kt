@@ -17,6 +17,7 @@ import de.robv.android.xposed.XposedBridge
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.proify.extensions.android.AndroidUtils
 import io.github.proify.extensions.toRichLyricLines
@@ -260,27 +261,36 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
         }
         XposedBridge.hookMethod(method, object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
-                val music = param.args.getOrNull(0)
-                val fetchCall = KuWoLyricFetchRetryPolicy.FetchCall(
-                    rid = music?.let { readMusicString(it, "getRid") },
-                    trackKey = music?.let { readMusicTrackKey(it) }
-                )
-                lastFetchInvoke = KuWoLyricFetchRetryPolicy.FetchInvoke(
-                    method = method,
-                    instance = param.thisObject,
-                    args = param.args.copyOf(),
-                    call = fetchCall
-                )
-                val result = param.result
-                if (result != null && isAvailableLyricsInfo(result)) {
-                    lyricRetryPolicy.noteFetchSucceeded(fetchCall)
-                    handleLyricsInfo(result, music)
-                    return
+                runCatching {
+                    val music = param.args.getOrNull(0)
+                    val fetchCall = KuWoLyricFetchRetryPolicy.FetchCall(
+                        rid = music?.let { readMusicString(it, "getRid") },
+                        trackKey = music?.let { readMusicTrackKey(it) }
+                    )
+                    lastFetchInvoke = KuWoLyricFetchRetryPolicy.FetchInvoke(
+                        method = method,
+                        instance = param.thisObject,
+                        args = param.args.copyOf(),
+                        call = fetchCall
+                    )
+                    val result = param.result
+                    if (result != null && isAvailableLyricsInfo(result)) {
+                        lyricRetryPolicy.noteFetchSucceeded(fetchCall)
+                        handleLyricsInfo(result, music)
+                        return@runCatching
+                    }
+                    scheduleLyricFetchRetry(
+                        lyricRetryPolicy.noteFetchFailed(fetchCall),
+                        "fetch-unavailable"
+                    )
+                }.onFailure { throwable ->
+                    KuWoDiagnostics.error(
+                        area = "hook",
+                        event = "LYRIC_FETCH_CALLBACK_FAILED",
+                        process = processName,
+                        throwable = throwable
+                    )
                 }
-                scheduleLyricFetchRetry(
-                    lyricRetryPolicy.noteFetchFailed(fetchCall),
-                    "fetch-unavailable"
-                )
             }
         })
         KuWoDiagnostics.debug(
@@ -504,6 +514,7 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     }
 
     private fun logLyricTimingSample(song: Song) {
+        if (!StructuredDiagnostics.isDebugEnabled) return
         val lines = song.lyrics.orEmpty().take(3)
         lines.forEachIndexed { lineIndex, line ->
             val words = line.words.orEmpty().take(6).joinToString(separator=", ") { word ->
@@ -521,6 +532,7 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     }
 
     private fun logInvalidLrcxSourceSample(raw: String?) {
+        if (!StructuredDiagnostics.isDebugEnabled) return
         val lines = raw.orEmpty().lineSequence().toList()
         val headers = lines.takeWhile { !it.startsWith("[00") && !it.startsWith("[01") }
             .take(12)

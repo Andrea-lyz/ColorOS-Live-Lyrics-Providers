@@ -73,11 +73,11 @@ object NeteaseLyricInfoReader {
         }
         if (candidates.isEmpty()) return null
         if (!lyricMusicId.isNullOrBlank()) {
-            candidates.firstOrNull { candidate ->
+            return candidates.singleOrNull { candidate ->
                 stringify(invokeNoArg(candidate, MUSIC_ID_METHODS)) == lyricMusicId
-            }?.let { return it }
+            }
         }
-        return candidates.first()
+        return candidates.singleOrNull()
     }
 
     private fun looksLikeMusicInfo(target: Any): Boolean {

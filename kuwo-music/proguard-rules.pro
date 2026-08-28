@@ -21,4 +21,6 @@
 #-renamesourcefileattribute SourceFile
 
 -dontwarn java.lang.reflect.AnnotatedType
+-keep class io.github.andrealtb.coloroslyrics.provider.kuwo.HookEntry { *; }
+-keep class io.github.andrealtb.coloroslyrics.provider.kuwo.** { *; }
 -repackageclasses ''

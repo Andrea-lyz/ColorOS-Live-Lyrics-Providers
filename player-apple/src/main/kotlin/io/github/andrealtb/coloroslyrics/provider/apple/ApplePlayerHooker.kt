@@ -18,12 +18,14 @@ import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfi
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
-import org.luckypray.dexkit.DexKitBridge
+import io.github.andrealtb.coloroslyrics.provider.reflection.CandidateResolver
+import io.github.andrealtb.coloroslyrics.provider.reflection.DexKitBridge
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
@@ -49,7 +51,6 @@ class ApplePlayerHooker(
     }
 
     private var replaySnapshot: AppleReplaySnapshot? = null
-    private var dexKitBridge: DexKitBridge? = null
     private var lyricRequester: AppleLyricRequester? = null
     private var diskCache: AppleDiskSongCache? = null
 
@@ -141,14 +142,6 @@ class ApplePlayerHooker(
                 providerVersion = hostVersion
             )
         )
-
-        runCatching { System.loadLibrary("dexkit") }
-            .onFailure { logFailure("bootstrap", "DEXKIT_LOAD_FAILED", it) }
-        dexKitBridge = runCatching {
-            DexKitBridge.create(hookContext.applicationInfo.sourceDir)
-        }.onFailure {
-            logFailure("bootstrap", "DEXKIT_CREATE_FAILED", it)
-        }.getOrNull()
 
         diskCache = AppleDiskSongCache(hookContext)
         val application = (hookContext.applicationContext as? Application) ?: return
@@ -380,11 +373,9 @@ class ApplePlayerHooker(
                     area = "track",
                     event = "TRACK_BOUND",
                     generation = generation,
+                    trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
                     reason = source,
-                    message = "id=" + track.id.orEmpty() +
-                        " title=" + track.title.orEmpty() +
-                        " artist=" + track.artist.orEmpty() +
-                        " durationMs=" + track.durationMs
+                    durationMs = track.durationMs
                 )
             )
             publishCachedIfAvailable(track, generation)
@@ -442,7 +433,8 @@ class ApplePlayerHooker(
                         area = "lyric",
                         event = "WAIT_PLAYBACK_ITEM",
                         generation = generation,
-                        reason = source + " id=" + adamId + " title=" + boundTrack.title.orEmpty()
+                        trackHash = DiagnosticHasher.sha256(boundTrack.buildStableKey()),
+                        reason = source
                     )
                 )
                 scheduleFollowUp(boundTrack, generation, "playback-item-poll")
@@ -728,33 +720,55 @@ class ApplePlayerHooker(
     private fun findLoadLyricsMethod(
         viewModelClass: Class<*>,
         playbackItemClass: Class<*>
-    ): Method? =
-        viewModelClass.declaredMethods.firstOrNull { method ->
+    ): Method? {
+        val named = viewModelClass.declaredMethods.filter { method ->
             method.name == ApplePlayerConstants.LOAD_LYRICS &&
                 method.parameterCount == 1 &&
                 playbackItemClass.isAssignableFrom(method.parameterTypes[0])
-        } ?: viewModelClass.declaredMethods.firstOrNull { method ->
+        }
+        if (named.isNotEmpty()) {
+            return CandidateResolver.resolveUniqueMethod(
+                named,
+                "${viewModelClass.name}#${ApplePlayerConstants.LOAD_LYRICS}",
+                hostVersion = hostVersion
+            )
+        }
+        val structural = viewModelClass.declaredMethods.filter { method ->
             method.parameterCount == 1 &&
                 playbackItemClass.isAssignableFrom(method.parameterTypes[0]) &&
                 method.returnType == Void.TYPE
         }
+        return CandidateResolver.resolveUniqueMethod(
+            structural,
+            "${viewModelClass.name}#loadLyrics",
+            "single void method accepting PlaybackItem",
+            hostVersion
+        )
+    }
 
     private fun findLyricBuildMethod(
         viewModelClass: Class<*>,
         songInfoPtrClass: Class<*>
-    ): Method? =
+    ): Method? {
         runCatching {
             viewModelClass.getDeclaredMethod(
                 ApplePlayerConstants.BUILD_TIME_RANGE_TO_LYRICS_MAP,
                 songInfoPtrClass
             )
-        }.getOrNull()
-            ?: viewModelClass.declaredMethods.firstOrNull { method ->
-                !Modifier.isStatic(method.modifiers) &&
-                    method.parameterCount == 1 &&
-                    method.parameterTypes[0] == songInfoPtrClass &&
-                    method.returnType == Void.TYPE
-            }
+        }.getOrNull()?.let { return it }
+        val structural = viewModelClass.declaredMethods.filter { method ->
+            !Modifier.isStatic(method.modifiers) &&
+                method.parameterCount == 1 &&
+                method.parameterTypes[0] == songInfoPtrClass &&
+                method.returnType == Void.TYPE
+        }
+        return CandidateResolver.resolveUniqueMethod(
+            structural,
+            "${viewModelClass.name}#${ApplePlayerConstants.BUILD_TIME_RANGE_TO_LYRICS_MAP}",
+            "single instance void method accepting SongInfoPtr",
+            hostVersion
+        )
+    }
 
     private fun findPlaybackItemMapperMethods(
         classLoader: ClassLoader,
@@ -777,18 +791,19 @@ class ApplePlayerHooker(
     }
 
     private fun findPlaybackItemMapperClassesByDexKit(classLoader: ClassLoader): List<Class<*>> {
-        val bridge = dexKitBridge ?: return emptyList()
         return runCatching {
-            bridge.findClass {
-                searchPackages(ApplePlayerConstants.MAPPER_SEARCH_PACKAGE)
-                matcher {
-                    usingStrings(
-                        ApplePlayerConstants.METADATA_KEY_MEDIA_ID,
-                        ApplePlayerConstants.METADATA_KEY_PLAYBACK_ENDPOINT_TYPE
-                    )
+            DexKitBridge.withDexKit(hookContext.applicationInfo.sourceDir) { bridge ->
+                bridge.findClass {
+                    searchPackages(ApplePlayerConstants.MAPPER_SEARCH_PACKAGE)
+                    matcher {
+                        usingStrings(
+                            ApplePlayerConstants.METADATA_KEY_MEDIA_ID,
+                            ApplePlayerConstants.METADATA_KEY_PLAYBACK_ENDPOINT_TYPE
+                        )
+                    }
+                }.mapNotNull { classData ->
+                    runCatching { classData.getInstance(classLoader) }.getOrNull()
                 }
-            }.mapNotNull { classData ->
-                runCatching { classData.getInstance(classLoader) }.getOrNull()
             }
         }.onFailure {
             logFailure("hook", "DEXKIT_MAPPER_SEARCH_FAILED", it)

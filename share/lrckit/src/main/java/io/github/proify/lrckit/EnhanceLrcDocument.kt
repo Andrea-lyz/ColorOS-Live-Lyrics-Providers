@@ -21,10 +21,25 @@ data class EnhanceLrcDocument(
      */
     internal fun applyOffset(offsetMs: Long): EnhanceLrcDocument {
         val newLines = lines.map { line ->
-            val newBegin = line.begin + offsetMs
-            val newEnd = newBegin + line.duration
-            val newDuration = line.duration
-            line.copy(begin = newBegin, end = newEnd, duration = newDuration)
+            val newBegin = (line.begin + offsetMs).coerceAtLeast(0L)
+            val newEnd = (line.end + offsetMs).coerceAtLeast(newBegin)
+            val newWords = line.words?.map { word ->
+                val begin = (word.begin + offsetMs).coerceAtLeast(0L)
+                val end = (word.end + offsetMs).coerceAtLeast(begin)
+                word.copy(begin = begin, end = end, duration = end - begin)
+            }
+            val newSecondaryWords = line.secondaryWords?.map { word ->
+                val begin = (word.begin + offsetMs).coerceAtLeast(0L)
+                val end = (word.end + offsetMs).coerceAtLeast(begin)
+                word.copy(begin = begin, end = end, duration = end - begin)
+            }
+            line.copy(
+                begin = newBegin,
+                end = newEnd,
+                duration = newEnd - newBegin,
+                words = newWords,
+                secondaryWords = newSecondaryWords
+            )
         }
         return EnhanceLrcDocument(metadata, newLines)
     }

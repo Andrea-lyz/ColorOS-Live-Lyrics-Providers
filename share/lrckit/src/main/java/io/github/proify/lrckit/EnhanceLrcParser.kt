@@ -38,7 +38,7 @@ object EnhanceLrcParser {
         val roles = mutableListOf<String>()
 
         raw.lineSequence().forEach { rawLine ->
-            val trimmed = rawLine.trim()
+            val trimmed = rawLine.trim().trimStart('\uFEFF')
             if (!trimmed.startsWith("[")) return@forEach
 
             val timeMatch = TIME_PREFIX_REGEX.find(trimmed)
@@ -110,17 +110,33 @@ object EnhanceLrcParser {
         val isRight =
             person == "bg" || (person != null && roles.isNotEmpty() && person != roles.first())
 
-        return TAG_REGEX.findAll(timeTags).map { m ->
+        val matches = TAG_REGEX.findAll(timeTags).toList()
+        val baseLineMs = matches.firstOrNull()?.let { first ->
+            toMs(first.groupValues[1], first.groupValues[2], first.groupValues.getOrNull(3))
+        } ?: 0L
+        return matches.map { m ->
             val ms = toMs(m.groupValues[1], m.groupValues[2], m.groupValues.getOrNull(3))
+            val shiftedWords = shiftWords(words, ms - baseLineMs)
             RichLyricLine(
-                begin = words.firstOrNull()?.begin ?: ms,
-                end = words.lastOrNull()?.end ?: ms,
+                begin = ms,
+                end = shiftedWords.lastOrNull()?.end?.takeIf { it > ms } ?: ms,
                 text = plainText,
-                words = words.takeIf { it.isNotEmpty() },
+                words = shiftedWords.takeIf { it.isNotEmpty() },
                 isAlignedRight = isRight
             )
         }.toList()
     }
+
+    private fun shiftWords(words: List<LyricWord>, deltaMs: Long): List<LyricWord> =
+        words.map { word ->
+            val begin = (word.begin + deltaMs).coerceAtLeast(0L)
+            val end = if (word.end > word.begin) {
+                (word.end + deltaMs).coerceAtLeast(begin)
+            } else {
+                begin
+            }
+            word.copy(begin = begin, end = end, duration = end - begin)
+        }
 
     /**
      * 解析逐字时间。通过寻找连续的 <time> 标签并截取其中间的字符来实现。
@@ -146,7 +162,7 @@ object EnhanceLrcParser {
                     duration = (end - begin).coerceAtLeast(0)
                 }
             }
-        }
+        }.filter { !it.text.isNullOrEmpty() }
     }
 
     /**

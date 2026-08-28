@@ -12,6 +12,8 @@ build/
 **/build/
 /build
 /captures
+hs_err_pid*.log
+replay_pid*.log
 .externalNativeBuild
 .cxx
 local.properties

@@ -7,7 +7,6 @@
 package io.github.andrealtb.coloroslyrics.provider.parser.krc
 
 import io.github.andrealtb.coloroslyrics.provider.parser.krc.language.LanguageParser
-import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.LyricLine
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import kotlinx.serialization.Serializable
 import kotlin.io.encoding.Base64
@@ -17,22 +16,16 @@ import kotlin.io.encoding.ExperimentalEncodingApi
 @Serializable
 data class KrcDocument(
     val metadata: Map<String, String> = emptyMap(),
-    val lines: List<LyricLine> = emptyList()
+    val lines: List<RichLyricLine> = emptyList()
 ) {
 
     val richLyricLines: List<RichLyricLine> by lazy {
         val languageInfo = language?.let { LanguageParser.parse(it) }
-        val romas = languageInfo?.getRoma()?.flatten() ?: emptyList()
         val translates = languageInfo?.getTranslate()?.flatten() ?: emptyList()
 
         lines.mapIndexed { index, line ->
-            RichLyricLine(
-                begin = line.begin,
-                end = line.end,
-                duration = line.duration,
-                text = line.text,
-                secondary = if (lines.size == translates.size) translates.getOrNull(index) else null,
-                words = null
+            line.copy(
+                secondary = if (lines.size == translates.size) translates.getOrNull(index) else null
             )
         }
     }
@@ -58,11 +51,16 @@ data class KrcDocument(
         val newLines = lines.map { line ->
             val newBegin = (line.begin + offsetMs).coerceAtLeast(0L)
             val newEnd = newBegin + line.duration
-
+            val newWords = line.words?.map { word ->
+                val begin = (word.begin + offsetMs).coerceAtLeast(0L)
+                val end = (word.end + offsetMs).coerceAtLeast(begin)
+                word.copy(begin = begin, end = end, duration = end - begin)
+            }
             line.copy(
                 begin = newBegin,
                 end = newEnd,
-                duration = line.duration
+                duration = line.duration,
+                words = newWords
             )
         }
         return copy(lines = newLines)

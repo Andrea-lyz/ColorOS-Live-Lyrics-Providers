@@ -22,6 +22,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfi
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
@@ -29,6 +30,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPol
 import io.github.andrealtb.coloroslyrics.provider.core.session.PlaybackStateTranslationToggle
 import java.lang.ref.WeakReference
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 
 class PowerampPlayerHooker(
     private val hookContext: Context,
@@ -48,8 +50,7 @@ class PowerampPlayerHooker(
     private var translationActionInjectionLogged = false
 
     private val translationPokeGuard = ThreadLocal<Boolean>()
-    @Volatile
-    private var lastTranslationPokedGeneration = Long.MIN_VALUE
+    private val lastTranslationPokedGeneration = AtomicLong(Long.MIN_VALUE)
 
     private val generationController = PowerampHostGenerationController { _, _ ->
         synchronized(publicationLock) {
@@ -137,7 +138,7 @@ class PowerampPlayerHooker(
                 hookContext,
                 receiver,
                 filter,
-                ContextCompat.RECEIVER_EXPORTED
+                ContextCompat.RECEIVER_NOT_EXPORTED
             )
         }
         StructuredDiagnostics.logInfo(
@@ -158,7 +159,8 @@ class PowerampPlayerHooker(
                 area = "track",
                 event = "TRACK_BOUND",
                 generation = generation,
-                reason = "id=${snapshot.track.id} path=${!snapshot.path.isNullOrBlank()}"
+                trackHash = DiagnosticHasher.sha256(snapshot.track.buildStableKey()),
+                reason = "path=${!snapshot.path.isNullOrBlank()}"
             )
         )
         lyricExecutor.execute {
@@ -272,7 +274,7 @@ class PowerampPlayerHooker(
                         // Rewrite host args only. A delayed session.setPlaybackState
                         // races pause and can zero position.
                         if (original != null) {
-                            args[0] = injectPublicTranslationToggle(original)
+                            args[0] = injectPublicTranslationToggle(session, original)
                         }
                         val state = (args.getOrNull(0) as? PlaybackState)?.state
                             ?: PlaybackState.STATE_NONE
@@ -307,11 +309,17 @@ class PowerampPlayerHooker(
         }.onFailure { logFailure("session", "SESSION_HOOK_FAILED", it) }
     }
 
-    private fun injectPublicTranslationToggle(original: PlaybackState): PlaybackState {
+    private fun injectPublicTranslationToggle(
+        session: MediaSession,
+        original: PlaybackState
+    ): PlaybackState {
         val generation = generationPolicy.generation
+        val metadata = session.controller.metadata ?: sessions.hostMetadata(session) as? MediaMetadata
+        val hasLyricInfo = !metadata?.getString("lyricInfo").isNullOrBlank()
         val pokeHostPlaying = translationPokeGuard.get() != true &&
             original.state == PlaybackState.STATE_PLAYING &&
-            generation != lastTranslationPokedGeneration
+            hasLyricInfo &&
+            claimTranslationPoke(generation)
         val pokeToken = if (pokeHostPlaying) SystemClock.elapsedRealtime() else null
         val patched = PlaybackStateTranslationToggle.prependPublicAction(
             original,
@@ -331,7 +339,6 @@ class PowerampPlayerHooker(
             )
         }
         if (pokeToken != null && patched !== original) {
-            lastTranslationPokedGeneration = generation
             StructuredDiagnostics.logInfo(
                 DiagnosticEvent(
                     component = "provider/poweramp",
@@ -341,6 +348,8 @@ class PowerampPlayerHooker(
                     reason = "host-playing position=${original.position}"
                 )
             )
+        } else if (pokeToken != null) {
+            lastTranslationPokedGeneration.compareAndSet(generation, Long.MIN_VALUE)
         }
         return patched
     }
@@ -355,7 +364,7 @@ class PowerampPlayerHooker(
                 liveState = live?.state,
                 hasLyricInfo = hasLyricInfo,
                 generation = generation,
-                lastPokedGeneration = lastTranslationPokedGeneration
+                lastPokedGeneration = lastTranslationPokedGeneration.get()
             )
         ) {
             return
@@ -373,10 +382,13 @@ class PowerampPlayerHooker(
         if (stillPlaying == null || stillPlaying.state != PlaybackState.STATE_PLAYING) {
             return
         }
-        lastTranslationPokedGeneration = generation
+        if (!generationPolicy.isGenerationValid(generation)) return
+        if (!claimTranslationPoke(generation)) return
         translationPokeGuard.set(true)
+        var committed = false
         try {
             session.setPlaybackState(patched)
+            committed = true
             StructuredDiagnostics.logInfo(
                 DiagnosticEvent(
                     component = "provider/poweramp",
@@ -387,7 +399,18 @@ class PowerampPlayerHooker(
                 )
             )
         } finally {
+            if (!committed) {
+                lastTranslationPokedGeneration.compareAndSet(generation, Long.MIN_VALUE)
+            }
             translationPokeGuard.remove()
+        }
+    }
+
+    private fun claimTranslationPoke(generation: Long): Boolean {
+        while (true) {
+            val previous = lastTranslationPokedGeneration.get()
+            if (previous >= generation) return false
+            if (lastTranslationPokedGeneration.compareAndSet(previous, generation)) return true
         }
     }
 
@@ -448,6 +471,7 @@ class PowerampPlayerHooker(
                     hostPackage = hostPackage
                 )
                 if (publishResult.isPublished) {
+                    pendingStore.clear()
                     synchronized(publicationLock) {
                         replaySnapshot = PowerampReplaySnapshot(
                             WeakReference(session),
@@ -521,12 +545,10 @@ class PowerampPlayerHooker(
             currentTrack != null -> sessions.selectUnique(currentTrack) as? MediaSession
             else -> sessions.uniqueLiveSession() as? MediaSession
         } ?: return
-        val metadata = sessions.hostMetadata(session) as? MediaMetadata ?: return
+        val metadata = session.controller.metadata ?: return
         if (currentTrack == null || !generationController.acceptsPublication(currentTrack)) return
         if (!PowerampMetadataArtwork.isReadyForLyricInfo(metadata)) return
-        if (!pendingStore.takeIfSame(pending)) return
-        logPublicationResult("PENDING_DRAINED", generationPolicy.generation)
-        handlePublication(pending.boundTo(currentTrack), allowPending = false)
+        handlePublication(pending.boundTo(currentTrack), allowPending = true)
     }
 
     private fun release() {

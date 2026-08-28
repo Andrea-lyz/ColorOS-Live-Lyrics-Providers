@@ -6,9 +6,7 @@
 
 package io.github.andrealtb.coloroslyrics.provider.kugou
 
-import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.LyricWord
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class KuGouKrcFileDecoderTest {
@@ -36,15 +34,13 @@ class KuGouKrcFileDecoderTest {
 
     @Test
     fun parsesRelativeWordTags() {
-        val words = KuGouKrcFileDecoder.parseKrcWords(
-            "[12340,3200]<0,500,0>Hello<500,600,0> world",
-            12_340L
-        )
+        val words = KuGouKrcFileDecoder.decodeDecryptedKrc(
+            "[12340,3200]<0,500,0>Hello<500,600,0> world"
+        ).single().words.orEmpty()
         assertEquals(2, words.size)
         assertEquals(12_340L, words[0].begin)
         assertEquals(12_840L, words[1].begin)
         assertEquals("Hello", words[0].text)
         assertEquals(" world", words[1].text)
-        assertTrue(words.all { it is LyricWord })
     }
 }

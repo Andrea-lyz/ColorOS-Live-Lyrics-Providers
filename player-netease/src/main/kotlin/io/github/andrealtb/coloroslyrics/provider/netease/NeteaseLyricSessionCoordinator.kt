@@ -113,7 +113,7 @@ class NeteaseLyricSessionCoordinator(
                 generation = generation,
                 session = track.id,
                 reason = reason,
-                message = "title=${track.title.orEmpty().take(64)} id=${track.id.orEmpty().take(48)}"
+                message = "durationMs=${track.durationMs}"
             )
         }
         return currentSnapshot()
@@ -125,9 +125,6 @@ class NeteaseLyricSessionCoordinator(
 
     fun describeSnapshot(snapshot: NeteaseLyricInfoReader.Snapshot): String =
         "idsMatch=${snapshot.idsMatch} " +
-            "filter=${snapshot.track.id.orEmpty().take(32)} " +
-            "lyricId=${snapshot.lyricMusicId.orEmpty().take(32)} " +
-            "title=${snapshot.track.title.orEmpty().take(48)} " +
             "yrc=${snapshot.yrc?.length ?: 0} lrc=${snapshot.lrc?.length ?: 0} " +
             "yrcTr=${snapshot.yrcTranslate?.length ?: 0} " +
             "lrcTr=${snapshot.lrcTranslate?.length ?: 0} " +
@@ -146,8 +143,7 @@ class NeteaseLyricSessionCoordinator(
                 process = processName,
                 reason = if (lines.isEmpty()) "empty-lines" else "blank-track",
                 session = track.id,
-                message = "title=${track.title.orEmpty().take(48)} lines=${lines.size} " +
-                    threadNote()
+                message = "lines=${lines.size} ${threadNote()}"
             )
             return null
         }
@@ -159,7 +155,7 @@ class NeteaseLyricSessionCoordinator(
                 process = processName,
                 reason = "no-generation",
                 session = track.id,
-                message = "title=${track.title.orEmpty().take(48)} ${threadNote()}"
+                message = threadNote()
             )
             return null
         }
@@ -172,7 +168,7 @@ class NeteaseLyricSessionCoordinator(
                 generation = snapshot.generation,
                 reason = "foreign",
                 session = track.id,
-                message = "incoming=${track.id} bound=$boundId ${threadNote()}"
+                message = "boundPresent=${!boundId.isNullOrBlank()} ${threadNote()}"
             )
             return null
         }

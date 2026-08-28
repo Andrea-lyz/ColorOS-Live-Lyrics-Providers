@@ -9,6 +9,8 @@ package io.github.andrealtb.coloroslyrics.provider.poweramp
 import android.content.Context
 import android.net.Uri
 import com.kyant.taglib.TagLib
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.NativeLyricInfoPublisher
+import io.github.andrealtb.coloroslyrics.provider.core.text.LyricTextDecoder
 import java.io.File
 
 fun interface PowerampTextReader {
@@ -20,7 +22,7 @@ object PowerampLyricLoader {
         context: Context,
         snapshot: PowerampTrackSnapshot,
         sidecarReader: PowerampTextReader = PowerampTextReader { uri ->
-            readUtf8(context, uri)
+            readLyricText(context, uri)
         },
         embeddedReader: PowerampTextReader = PowerampTextReader { uri ->
             readEmbeddedLyric(context, uri)
@@ -62,7 +64,9 @@ object PowerampLyricLoader {
         if (PowerampPathPolicy.isAbsoluteFilesystemPath(path)) {
             val sidecar = PowerampPathPolicy.sidecarLrcPath(path) ?: return null
             val file = File(sidecar)
-            if (!file.isFile) return null
+            if (!file.isFile || file.length() > NativeLyricInfoPublisher.MAX_LYRIC_FIELD_CHARS) {
+                return null
+            }
             return sidecarReader.read(Uri.fromFile(file))
         }
         val documentId = PowerampPathPolicy.sidecarSafDocumentId(path) ?: return null
@@ -70,11 +74,11 @@ object PowerampLyricLoader {
         return sidecarReader.read(uri)
     }
 
-    private fun readUtf8(context: Context, uri: Uri): String? = runCatching {
+    private fun readLyricText(context: Context, uri: Uri): String? = runCatching {
         context.contentResolver.openInputStream(uri)?.use { input ->
-            input.bufferedReader().readText()
+            LyricTextDecoder.read(input, NativeLyricInfoPublisher.MAX_LYRIC_FIELD_CHARS)
         }
-    }.getOrNull()?.takeIf { it.isNotBlank() }
+    }.getOrNull()?.takeIf { !it.isNullOrBlank() }
 
     private fun readEmbeddedLyric(context: Context, uri: Uri): String? = runCatching {
         context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->

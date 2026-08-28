@@ -29,6 +29,13 @@ class QqSongInfoReaderTest {
         assertEquals("trans", models.translation)
     }
 
+    @Test
+    fun numericLookingTitlesAreNotDiscardedAsPlaceholders() {
+        val track = QqSongInfoReader.read(NumericTitleSongInfo())
+        assertEquals("1", track.title)
+        assertEquals("0", track.artist)
+    }
+
     class FakeSongInfo {
         fun H2(): Long = 99L
         fun j3(): String = "Title"
@@ -43,5 +50,11 @@ class QqSongInfoReaderTest {
         fun c(): String = "main"
         fun h(): String = "trans"
         fun e(): String = "roma"
+    }
+
+    class NumericTitleSongInfo {
+        fun H2(): Long = 99L
+        fun j3(): String = "1"
+        fun V3(): String = "0"
     }
 }

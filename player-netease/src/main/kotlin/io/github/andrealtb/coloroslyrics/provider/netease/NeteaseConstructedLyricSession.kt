@@ -46,8 +46,7 @@ class NeteaseConstructedLyricSession(
             event = "CONSTRUCTED_FETCH_REQUESTED",
             process = processName,
             generation = request.generation,
-            session = request.track.id,
-            message = "title=${request.track.title.orEmpty().take(64)}"
+            session = request.track.buildStableKey()
         )
         var lastFailure: Throwable? = null
         for (attempt in 1..FETCH_ATTEMPTS) {
@@ -71,7 +70,7 @@ class NeteaseConstructedLyricSession(
                         generation = request.generation,
                         session = request.track.id,
                         reason = "generation-mismatch",
-                        message = "current=${current.track?.id.orEmpty()}:${current.generation}"
+                        message = "currentGeneration=${current.generation}"
                     )
                     return
                 }
@@ -130,7 +129,7 @@ class NeteaseConstructedLyricSession(
             event = "CONSTRUCTED_FETCH_FAILED",
             process = processName,
             reason = lastFailure?.javaClass?.simpleName,
-            message = "id=${request.musicId} ${lastFailure?.message.orEmpty()}",
+            message = lastFailure?.message.orEmpty(),
             throwable = lastFailure
         )
     }

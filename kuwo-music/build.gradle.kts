@@ -9,7 +9,6 @@ import com.android.build.api.dsl.ApplicationExtension
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.ksp)
-    kotlin("plugin.serialization") version "2.1.21"
 }
 
 configure<ApplicationExtension> {
@@ -69,12 +68,11 @@ configure<ApplicationExtension> {
 
 dependencies {
     implementation(project(":provider-core"))
+    implementation(project(":reflection-core"))
     implementation(project(":share:extensions-android"))
     implementation(project(":share:lrckit"))
 
     implementation(libs.lyricon.lyric.model)
-    implementation(libs.kotlinx.serialization.json)
-
     implementation(libs.yukihookapi.api)
     implementation(libs.kavaref.core)
     implementation(libs.kavaref.extension)

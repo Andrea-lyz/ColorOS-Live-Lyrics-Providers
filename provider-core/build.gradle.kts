@@ -8,7 +8,7 @@ import com.android.build.api.dsl.LibraryExtension
 
 plugins {
     alias(libs.plugins.android.library)
-    kotlin("plugin.serialization") version "2.1.21"
+    alias(libs.plugins.kotlin.serialization)
 }
 
 configure<LibraryExtension> {
@@ -41,11 +41,6 @@ configure<LibraryExtension> {
 
 dependencies {
     api(project(":parser-lrc"))
-    implementation(project(":parser-qrc"))
-    implementation(project(":parser-yrc"))
-    implementation(project(":parser-krc"))
-    implementation(project(":parser-ttml"))
-    implementation(project(":reflection-core"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.serialization.json)

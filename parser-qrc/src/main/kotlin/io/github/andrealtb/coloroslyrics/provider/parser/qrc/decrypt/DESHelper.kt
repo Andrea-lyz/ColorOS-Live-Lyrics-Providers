@@ -17,6 +17,7 @@ object DESHelper {
         15, 12, 8, 2, 4, 9, 1, 7, 5, 11, 3, 14, 10, 0, 6, 13
     )
 
+    // QQ QRC intentionally uses non-standard DES S-box entries below. Do not "correct" them.
     private val box2 = intArrayOf(
         15, 1, 8, 14, 6, 11, 3, 4, 9, 7, 2, 13, 12, 0, 5, 10,
         3, 13, 4, 7, 15, 2, 8, 15, 12, 0, 1, 10, 6, 9, 11, 5,
@@ -31,6 +32,7 @@ object DESHelper {
         1, 10, 13, 0, 6, 9, 8, 7, 4, 15, 14, 3, 11, 5, 2, 12
     )
 
+    // QQ QRC intentionally uses non-standard DES S-box entries below. Do not "correct" them.
     private val box4 = intArrayOf(
         7, 13, 14, 3, 0, 6, 9, 10, 1, 2, 8, 5, 11, 12, 4, 15,
         13, 8, 11, 5, 6, 15, 0, 3, 4, 7, 2, 12, 1, 10, 14, 9,

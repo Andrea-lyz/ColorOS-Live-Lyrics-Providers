@@ -31,6 +31,16 @@ class DiagnosticsTest {
     }
 
     @Test
+    fun throttlerEvictsOldKeysAtConfiguredBound() {
+        val throttler = DiagnosticThrottler(windowMillis = 1000L, maxEntries = 2)
+        assertTrue(throttler.shouldLog("one", 100L))
+        assertTrue(throttler.shouldLog("two", 100L))
+        assertTrue(throttler.shouldLog("three", 100L))
+        assertEquals(2, throttler.entryCount())
+        assertTrue(throttler.shouldLog("one", 200L))
+    }
+
+    @Test
     fun testSensitiveFieldRedactorRedactsTokensAndPasswords() {
         val msg = "User token=abc123def456ghi789 and cookie=xyz_secret_val with password=my_secret_pass"
         val redacted = SensitiveFieldRedactor.redact(msg)
@@ -40,6 +50,15 @@ class DiagnosticsTest {
         assertTrue(redacted.contains("<REDACTED_TOKEN>"))
         assertTrue(redacted.contains("<REDACTED_COOKIE>"))
         assertTrue(redacted.contains("<REDACTED_PWD>"))
+    }
+
+    @Test
+    fun redactorRemovesSharedStorageAndFileUris() {
+        val redacted = SensitiveFieldRedactor.redact(
+            "file:///storage/emulated/0/Music/private.lrc /storage/emulated/0/Album/cover.jpg"
+        )
+        assertFalse(redacted.contains("private.lrc"))
+        assertFalse(redacted.contains("cover.jpg"))
     }
 
     @Test

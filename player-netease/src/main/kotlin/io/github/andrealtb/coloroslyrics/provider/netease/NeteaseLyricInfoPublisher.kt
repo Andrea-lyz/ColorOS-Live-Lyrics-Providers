@@ -300,12 +300,7 @@ object NeteaseLyricInfoPublisher {
                 "songId"
             ),
             reason = "metadata-track-mismatch",
-            message = "payloadTitle=${
-                NeteaseLyricInfoPayloadEncoder.extractJsonString(
-                    existing.orEmpty(),
-                    "songName"
-                ).orEmpty().take(48)
-            } hostTitle=${hostTrack.title.orEmpty().take(48)}"
+            message = "hostIdentityPresent=${!hostTrack.isBlank}"
         )
         return NeteaseMetadataCopy.copyWithLyricInfo(metadata, "")
     }
@@ -327,10 +322,7 @@ object NeteaseLyricInfoPublisher {
                 event = "OVERLAY_SKIPPED",
                 generation = generation,
                 session = "blank-$count",
-                reason = "no-publication-blank",
-                message = "title=${
-                    metadata.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty().take(48)
-                }"
+                reason = "no-publication-blank"
             )
             return
         }
@@ -343,9 +335,7 @@ object NeteaseLyricInfoPublisher {
             session = reason,
             reason = reason,
             message = "lyricInfoChars=${existing.length} provider=${provider.orEmpty()} " +
-                "rawChars=$rawChars title=${
-                    metadata.getString(MediaMetadata.METADATA_KEY_TITLE).orEmpty().take(48)
-                }" +
+                "rawChars=$rawChars" +
                 if (extra.isNullOrBlank()) "" else " $extra"
         )
     }

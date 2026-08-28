@@ -11,6 +11,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.media.MediaMetadata
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.MetadataParcelGuard
 import kotlin.math.max
 
 internal val QQ_ARTWORK_BITMAP_KEYS = arrayOf(
@@ -52,7 +53,17 @@ object QqMetadataCopy {
                     key in ratingKeys -> metadata.getRating(key)?.let {
                         builder.putRating(key, it)
                     }
-                    else -> metadata.getText(key)?.let { builder.putText(key, it) }
+                    else -> {
+                        val text = runCatching { metadata.getText(key) }.getOrNull()
+                        val bitmap = runCatching { metadata.getBitmap(key) }.getOrNull()
+                        val rating = runCatching { metadata.getRating(key) }.getOrNull()
+                        when {
+                            text != null -> builder.putText(key, text)
+                            bitmap != null && !bitmap.isRecycled -> builder.putBitmap(key, bitmap)
+                            rating != null -> builder.putRating(key, rating)
+                            else -> builder.putLong(key, metadata.getLong(key))
+                        }
+                    }
                 }
             }
         }
@@ -60,9 +71,10 @@ object QqMetadataCopy {
     }
 
     fun copyWithLyricInfo(metadata: MediaMetadata, lyricInfo: String): MediaMetadata {
-        return newPreservingBuilder(metadata)
+        val candidate = newPreservingBuilder(metadata)
             .putString(QqPlayerConstants.METADATA_KEY_LYRIC_INFO, lyricInfo)
             .build()
+        return MetadataParcelGuard.acceptOrOriginal(metadata, candidate, lyricInfo)
     }
 
     private fun binderSafe(bitmap: Bitmap): Bitmap? {

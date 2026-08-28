@@ -1,6 +1,7 @@
 package io.github.andrealtb.coloroslyrics.provider.kuwo
 
-import org.luckypray.dexkit.DexKitBridge
+import io.github.andrealtb.coloroslyrics.provider.reflection.CandidateResolver
+import io.github.andrealtb.coloroslyrics.provider.reflection.DexKitBridge
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
@@ -11,9 +12,6 @@ internal object KuWoDexKitResolver {
     private const val LRCX_WORD_PATTERN_ANCHOR = "<(-?\\d+),(-?\\d+)(?:,-?\\d+)?>"
     private const val MULTI_TIMESTAMP_ANCHOR = "]#_#["
 
-    @Volatile
-    private var dexKitLoaded = false
-
     data class Targets(
         val lyricFetchMethod: Method?,
         val lrcxParserMethod: Method?
@@ -21,9 +19,8 @@ internal object KuWoDexKitResolver {
 
     fun resolve(apkPath: String?, classLoader: ClassLoader?): Targets? {
         if (apkPath.isNullOrBlank() || classLoader == null) return null
-        ensureDexKitLoaded()
-        return DexKitBridge.create(apkPath).use { bridge ->
-            val lyricFetch = bridge.findMethod {
+        return DexKitBridge.withDexKit(apkPath) { bridge ->
+            val lyricFetchCandidates = bridge.findMethod {
                 searchPackages("cn.kuwo")
                 matcher {
                     usingStrings(
@@ -34,7 +31,10 @@ internal object KuWoDexKitResolver {
                 }
             }.mapNotNull { data ->
                 runCatching { data.getMethodInstance(classLoader) }.getOrNull()
-            }.singleOrNull(::isLyricFetchMethod)
+            }.filter(::isLyricFetchMethod)
+            val lyricFetch = lyricFetchCandidates.takeIf { it.isNotEmpty() }?.let {
+                CandidateResolver.resolveUniqueMethod(it, "KuWo lyric fetch")
+            }
 
             val parserMethods = mutableListOf<Method>()
             bridge.findClass {
@@ -50,9 +50,12 @@ internal object KuWoDexKitResolver {
                     runCatching { methodData.getMethodInstance(classLoader) }.getOrNull()
                 }
             }
-            val parser = parserMethods.distinctBy { method ->
+            val parserCandidates = parserMethods.distinctBy { method ->
                 method.declaringClass.name + "#" + method.name
-            }.singleOrNull(::isLrcxParserMethod)
+            }.filter(::isLrcxParserMethod)
+            val parser = parserCandidates.takeIf { it.isNotEmpty() }?.let {
+                CandidateResolver.resolveUniqueMethod(it, "KuWo LRCX parser")
+            }
             Targets(lyricFetch, parser)
         }
     }
@@ -77,12 +80,5 @@ internal object KuWoDexKitResolver {
                     List::class.java.isAssignableFrom(candidate.returnType)
             } &&
             runCatching { method.declaringClass.getDeclaredConstructor() }.isSuccess
-    }
-
-    @Synchronized
-    private fun ensureDexKitLoaded() {
-        if (dexKitLoaded) return
-        System.loadLibrary("dexkit")
-        dexKitLoaded = true
     }
 }

@@ -23,7 +23,18 @@ data class EnhanceLrcDocument(
                 val wEnd = (word.end + offsetMs).coerceAtLeast(wBegin)
                 word.copy(begin = wBegin, end = wEnd, duration = wEnd - wBegin)
             }
-            line.copy(begin = newBegin, end = newEnd, duration = newEnd - newBegin, words = newWords)
+            val newSecondaryWords = line.secondaryWords?.map { word ->
+                val wBegin = (word.begin + offsetMs).coerceAtLeast(0L)
+                val wEnd = (word.end + offsetMs).coerceAtLeast(wBegin)
+                word.copy(begin = wBegin, end = wEnd, duration = wEnd - wBegin)
+            }
+            line.copy(
+                begin = newBegin,
+                end = newEnd,
+                duration = newEnd - newBegin,
+                words = newWords,
+                secondaryWords = newSecondaryWords
+            )
         }
         return copy(lines = newLines)
     }

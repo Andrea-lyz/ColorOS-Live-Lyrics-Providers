@@ -163,3 +163,31 @@
 4. **P1-5/6/7 Poweramp 三项** 与 **P1-8 Metrolist 竞态**、**P1-9 parser 三处**（配合下面第 5 步补测）。
 5. **P2 补 parser 测试 launcher**（否则改 parser 无回归保护）→ 再下沉六件套与保留式拷贝到 provider-core，从根上消除复制漂移。
 6. 其余 P2/P3 随重构批次清理；serialization 插件版本与 proguard 模板作为构建收口一并处理。
+
+---
+
+## 整改回填（2026-08-28）
+
+本报告之后已完成一轮源码整改，并先将 4.0 迁移基线提交为 `41505eb`，配置远端
+`https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Providers.git`。本节只描述本轮实际落地内容；
+原始审查结论保留作为问题证据。
+
+- **P0 已关闭**：spotify/apple/netease/qq/kugou/qishui/metrolist 的常开诊断不再写入
+  title/artist/mediaId 原文，统一使用 `DiagnosticHasher` 的 `trackHash`；封面 URI 与本地路径也改为
+  scheme/host/value hash，并补 `/storage`、`file://` 脱敏。
+- **P1 已关闭**：官方追加路径共享 `MetadataParcelGuard`；Apple DexKit 改为 `withDexKit` 自动释放；
+  Poweramp 接收器改为 `RECEIVER_NOT_EXPORTED`，本地歌词增加有界 BOM/UTF-8/UTF-16/GB18030 解码，
+  translation poke 改为原子单代记账并要求已有 `lyricInfo`，pending drain 对齐 live metadata；
+  Metrolist fetch 门禁原子化；LRC 重复标签/副轨 offset 与 KRC 逐字归属均已修复并补回归测试。
+- **P2/P3 本轮已收口的明确项**：metadata 自定义 typed key 保留、逐 artwork key binder-safe 转换、
+  `Locale.ROOT` 时间格式、诊断节流器有界化、六个 JVM parser/kit 的 launcher、`testV5Matrix` CI 门禁、
+  serialization 插件与 Kotlin 版本对齐、缺失/漂移 ProGuard、`.idea/.serena/.kotlin` 卫生、TTML end/
+  namespace/DOCTYPE/pretty-print、Apple 短曲时长、QQ 数字曲名、NetEase 多候选 fail-closed、QRC S 盒注释。
+- **保留为后续架构批次**：六件套全面下沉、所有热路径反射统一迁入 `ReflectionCache`、lrckit/yrckit
+  薄适配化、app convention plugin、删除目前仍作为独立库保留的 parser-qrc，以及 qishui/Poweramp SAF
+  的进一步测试扩充。这些不阻塞本轮 P0/P1 关闭，但仍属于报告中的长期重复/覆盖债务。
+
+本地验证：`testV5Matrix` 汇总 458 个测试，0 failure/0 error；`assembleV5MatrixDebug` 生成 12 个 APK。
+Windows 中文工作区下 Gradle 9.3.1 的纯 JVM test worker 会错误地 `ClassNotFoundException`，本地验证通过
+临时 ASCII 盘符映射执行；GitHub Actions 工作区不含该路径条件，并已强制 `--rerun-tasks`。以上均为
+本地构建/静态验证，未替代既有真机结论，也未新增真机验证。

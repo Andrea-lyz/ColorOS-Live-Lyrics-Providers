@@ -7,7 +7,8 @@
 package io.github.andrealtb.coloroslyrics.provider.qq
 
 import java.lang.reflect.Method
-import org.luckypray.dexkit.DexKitBridge
+import io.github.andrealtb.coloroslyrics.provider.reflection.CandidateResolver
+import io.github.andrealtb.coloroslyrics.provider.reflection.DexKitBridge
 
 object QqLyricHookResolver {
     fun matchesSeedlingMethod(
@@ -39,8 +40,7 @@ object QqLyricHookResolver {
     }
 
     fun resolveSeedlingMethod(apkPath: String, classLoader: ClassLoader): Method? {
-        ensureDexKitLoaded()
-        return DexKitBridge.create(apkPath).use { bridge ->
+        return DexKitBridge.withDexKit(apkPath) { bridge ->
             val methods = bridge.findMethod {
                 matcher {
                     addUsingString(QqPlayerConstants.SEEDLING_LYRIC_KEY)
@@ -50,7 +50,7 @@ object QqLyricHookResolver {
             }.mapNotNull { data ->
                 runCatching { data.getMethodInstance(classLoader) }.getOrNull()
             }
-            methods.singleOrNull { method ->
+            val candidates = methods.filter { method ->
                 matchesSeedlingMethod(
                     parameterTypeNames = method.parameterTypes.map { it.name },
                     usingStrings = listOf(
@@ -59,6 +59,7 @@ object QqLyricHookResolver {
                     )
                 )
             }
+            CandidateResolver.resolveUniqueMethod(candidates, "QQ seedling lyricInfo writer")
         }
     }
 
@@ -69,8 +70,7 @@ object QqLyricHookResolver {
             controller.getDeclaredMethod("onLoadSuc", bean)
         }.getOrNull()
         if (named != null) return named
-        ensureDexKitLoaded()
-        return DexKitBridge.create(apkPath).use { bridge ->
+        return DexKitBridge.withDexKit(apkPath) { bridge ->
             val methods = bridge.findMethod {
                 searchPackages("com.tencent.qqmusicplayerprocess.servicenew.mediasession")
                 matcher {
@@ -78,19 +78,10 @@ object QqLyricHookResolver {
                     paramCount = 1
                 }
             }
-            methods.singleOrNull()?.getMethodInstance(classLoader)
-        }
-    }
-
-    @Volatile
-    private var dexKitLoaded = false
-
-    private fun ensureDexKitLoaded() {
-        if (dexKitLoaded) return
-        synchronized(this) {
-            if (dexKitLoaded) return
-            System.loadLibrary("dexkit")
-            dexKitLoaded = true
+            val candidates = methods.mapNotNull { methodData ->
+                runCatching { methodData.getMethodInstance(classLoader) }.getOrNull()
+            }
+            CandidateResolver.resolveUniqueMethod(candidates, "QQ RemoteLyricController#onLoadSuc")
         }
     }
 }

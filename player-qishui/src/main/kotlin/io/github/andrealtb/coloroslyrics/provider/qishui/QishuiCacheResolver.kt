@@ -8,6 +8,7 @@ package io.github.andrealtb.coloroslyrics.provider.qishui
 
 import android.content.Context
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import kotlinx.serialization.json.Json
@@ -61,8 +62,9 @@ class QishuiCacheResolver(private val context: Context) {
                 component = QishuiPlayerConstants.COMPONENT,
                 area = "cache",
                 event = event,
+                trackHash = DiagnosticHasher.sha256(id),
                 reason = throwable.javaClass.simpleName,
-                message = "mediaId=" + id
+                message = "cache-read-failed"
             )
         )
     }

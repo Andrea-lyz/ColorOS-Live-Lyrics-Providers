@@ -13,7 +13,9 @@ object SensitiveFieldRedactor {
         Regex("""(?i)(token\s*[:=]\s*)[a-z0-9_\-\.]{16,}""") to "$1<REDACTED_TOKEN>",
         Regex("""(?i)(cookie\s*[:=]\s*)[^\s;]+""") to "$1<REDACTED_COOKIE>",
         Regex("""(?i)(password\s*[:=]\s*)[^\s,]+""") to "$1<REDACTED_PWD>",
-        Regex("""/data/user/\d+/[a-zA-Z0-9_\.]+""") to "/data/user/<USER>/<PKG>"
+        Regex("""/data/user/\d+/[a-zA-Z0-9_\.]+""") to "/data/user/<USER>/<PKG>",
+        Regex("""(?i)file://[^\s\"']+""") to "file://<REDACTED_PATH>",
+        Regex("""(?i)/storage/(?:emulated/\d+/)?[^\s\"']+""") to "/storage/<REDACTED_PATH>"
     )
 
     fun redact(message: String): String {

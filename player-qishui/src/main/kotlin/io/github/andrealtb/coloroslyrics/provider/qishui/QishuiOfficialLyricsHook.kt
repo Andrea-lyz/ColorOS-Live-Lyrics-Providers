@@ -10,6 +10,7 @@ import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
@@ -116,8 +117,8 @@ class QishuiOfficialLyricsHook(
                     area = "session",
                     event = "HOST_PLAYBACK_STATE_REFRESHED",
                     generation = authority.generation,
-                    reason = reason,
-                    message = "mediaId=" + authorityId
+                    trackHash = DiagnosticHasher.sha256(authority.track.buildStableKey()),
+                    reason = reason
                 )
             )
         }

@@ -18,6 +18,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfi
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
@@ -294,8 +295,9 @@ class QishuiPlayerHooker(
                     area = "track",
                     event = "TRACK_BOUND",
                     generation = generation,
+                    trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
                     reason = "metadata",
-                    message = "mediaId=" + track.id.orEmpty()
+                    durationMs = track.durationMs
                 )
             )
         }

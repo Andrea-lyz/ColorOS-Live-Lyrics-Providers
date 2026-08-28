@@ -79,6 +79,31 @@ class EnhanceLrcParserTest {
     }
 
     @Test
+    fun repeatedLineTagsShiftWordTimelineWithoutCreatingTranslation() {
+        val doc = EnhanceLrcParser.parse(
+            "[00:10.000][00:20.000]<00:10.000>Hi <00:10.500>there<00:11.000>"
+        )
+
+        assertEquals(2, doc.lines.size)
+        assertEquals(listOf(10_000L, 20_000L), doc.lines.map { it.begin })
+        assertEquals(listOf(10_000L, 10_500L), doc.lines[0].words.orEmpty().map { it.begin })
+        assertEquals(listOf(20_000L, 20_500L), doc.lines[1].words.orEmpty().map { it.begin })
+        assertTrue(doc.lines.all { it.secondary.isNullOrBlank() })
+    }
+
+    @Test
+    fun offsetMovesSecondaryWordTimelineAndUtf8BomDoesNotDropFirstLine() {
+        val doc = EnhanceLrcParser.parse(
+                "\uFEFF[offset:1000]\n" +
+                "[00:10.000]<00:10.000>Main<00:11.000>\n" +
+                "[bg:<00:10.000>Back]"
+        )
+
+        assertEquals(11_000L, doc.lines.single().begin)
+        assertEquals(11_000L, doc.lines.single().secondaryWords.orEmpty().single().begin)
+    }
+
+    @Test
     @DisplayName("解析方括号行内逐字时间轴并移除正文时间标签")
     fun testParseBracketInlineKaraokeWords() {
         val lrc = """

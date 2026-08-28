@@ -10,6 +10,7 @@ import android.graphics.Bitmap
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import java.util.Locale
 
@@ -51,7 +52,7 @@ internal object PowerampArtworkDiagnostics {
             "$label=${describeBitmap(runCatching { metadata.getBitmap(key) }.getOrNull())}"
         }
         val uris = uriLanes.joinToString(" | ") { (label, key) ->
-            "$label=${metadata.getString(key).orEmpty().take(240)}"
+            "$label=${DiagnosticHasher.describeUri(metadata.getString(key))}"
         }
         val lyricInfoLength = metadata.getString("lyricInfo")?.length ?: 0
         return "$bitmaps | $uris | lyricInfo=$lyricInfoLength"

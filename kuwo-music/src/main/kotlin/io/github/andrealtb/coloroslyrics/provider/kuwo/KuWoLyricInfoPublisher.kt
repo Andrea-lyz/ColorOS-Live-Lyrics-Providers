@@ -7,6 +7,7 @@
 package io.github.andrealtb.coloroslyrics.provider.kuwo
 
 import android.media.MediaMetadata
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.MetadataParcelGuard
 import io.github.proify.extensions.bridge.TrackKeyBuilder
 import io.github.proify.lyricon.lyric.model.Song
 import java.util.Locale
@@ -122,11 +123,12 @@ object KuWoLyricInfoPublisher {
     }
 
     private fun copyWithLyricInfo(source: MediaMetadata, lyricInfo: String): MediaMetadata {
-        val result = MediaMetadata.Builder(source)
+        val candidate = MediaMetadata.Builder(source)
             .putString(METADATA_KEY_LYRIC_INFO, lyricInfo)
             .build()
+        val result = MetadataParcelGuard.acceptOrOriginal(source, candidate, lyricInfo)
         diagnose(
-            event = "LYRIC_INFO_COPIED",
+            event = if (result === source) "LYRIC_INFO_OVERSIZE_SKIPPED" else "LYRIC_INFO_COPIED",
             message = "chars=${lyricInfo.length}" +
                 " artworkBitmap=${result.hasKuWoArtworkBitmap()}" +
                 " artwork=${result.hasKuWoArtwork()}"

@@ -8,6 +8,7 @@ package io.github.andrealtb.coloroslyrics.provider.metrolist
 
 import android.content.Context
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import kotlinx.coroutines.CancellationException
@@ -100,7 +101,8 @@ object MetrolistLyricsFetcher {
             event = "LYRIC_PROVIDER_TRY",
             generation = generation,
             reason = provider,
-            message = "title=" + title + " artist=" + artist + " durationSec=" + duration
+            message = "durationSec=$duration",
+            trackHash = DiagnosticHasher.sha256(track.buildStableKey())
         )
         val publication = when (provider) {
             "BetterLyrics" -> fetchBetterLyrics(title, artist, duration, album, track, generation)
@@ -424,7 +426,8 @@ object MetrolistLyricsFetcher {
         event: String,
         generation: Long?,
         reason: String?,
-        message: String? = null
+        message: String? = null,
+        trackHash: String? = null
     ) {
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -432,6 +435,7 @@ object MetrolistLyricsFetcher {
                 area = "lyric",
                 event = event,
                 generation = generation,
+                trackHash = trackHash,
                 reason = reason,
                 message = message
             )

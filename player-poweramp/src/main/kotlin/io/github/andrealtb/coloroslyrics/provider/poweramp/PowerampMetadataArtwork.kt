@@ -93,20 +93,24 @@ internal object PowerampMetadataArtwork {
 
     fun ensureBinderSafe(metadata: MediaMetadata): MediaMetadata {
         PowerampArtworkDiagnostics.log("BINDER_INPUT", metadata)
-        var converted: Bitmap? = null
+        val replacements = LinkedHashMap<String, Bitmap>()
+        var changed = false
         POWERAMP_ARTWORK_BITMAP_KEYS.forEach { key ->
             val bitmap = metadata.getBitmap(key) ?: return@forEach
-            if (!PowerampArtworkPolicy.shouldCopyForBinder(
+            val safe = if (PowerampArtworkPolicy.shouldCopyForBinder(
                     bitmap.config?.name,
                     bitmap.width,
                     bitmap.height
                 )
             ) {
-                return@forEach
+                toBinderSafe(bitmap) ?: bitmap
+            } else {
+                bitmap
             }
-            converted = toBinderSafe(bitmap) ?: converted
+            replacements[key] = safe
+            if (safe !== bitmap) changed = true
         }
-        val safe = converted ?: return metadata.also {
+        if (!changed) return metadata.also {
             PowerampArtworkDiagnostics.log("BINDER_UNCHANGED", it)
         }
         if (!binderSafeLogged) {
@@ -120,15 +124,9 @@ internal object PowerampMetadataArtwork {
                 )
             )
         }
-        return newPreservingBuilder(metadata, includeArtwork = false)
-            .putBitmap(MediaMetadata.METADATA_KEY_ART, safe)
-            .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, safe)
-            .apply {
-                if (metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON) != null) {
-                    putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, safe)
-                }
-            }
-            .build()
+        return newPreservingBuilder(metadata, includeArtwork = false).apply {
+            replacements.forEach { (key, bitmap) -> putBitmap(key, bitmap) }
+        }.build()
             .also { PowerampArtworkDiagnostics.log("BINDER_OUTPUT", it) }
     }
 
@@ -153,7 +151,17 @@ internal object PowerampMetadataArtwork {
                     key in ratingKeys -> metadata.getRating(key)?.let {
                         builder.putRating(key, it)
                     }
-                    else -> metadata.getText(key)?.let { builder.putText(key, it) }
+                    else -> {
+                        val text = runCatching { metadata.getText(key) }.getOrNull()
+                        val bitmap = runCatching { metadata.getBitmap(key) }.getOrNull()
+                        val rating = runCatching { metadata.getRating(key) }.getOrNull()
+                        when {
+                            text != null -> builder.putText(key, text)
+                            bitmap != null && !bitmap.isRecycled -> builder.putBitmap(key, bitmap)
+                            rating != null -> builder.putRating(key, rating)
+                            else -> builder.putLong(key, metadata.getLong(key))
+                        }
+                    }
                 }
             }
         }

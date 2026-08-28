@@ -17,6 +17,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 
@@ -294,8 +295,9 @@ class QqPlayerHooker(
                 area = "identity",
                 event = "TRACK_BOUND",
                 generation = generation,
+                trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
                 reason = reason,
-                message = "title=${track.title.orEmpty().take(64)} id=${track.id.orEmpty().take(48)}"
+                message = "durationMs=${track.durationMs}"
             )
         }
     }
@@ -317,8 +319,9 @@ class QqPlayerHooker(
                 area = "lyric",
                 event = "LYRIC_CANDIDATE_REJECTED",
                 generation = snapshot.generation,
+                trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
                 reason = "foreign",
-                message = track.id
+                message = "identity-mismatch"
             )
             return false
         }

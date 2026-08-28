@@ -65,6 +65,18 @@ class MetrolistLyricDecoderTest {
     }
 
     @Test
+    fun krcLineWithoutWordTagsDoesNotShiftLaterWordTimings() {
+        val publication = assertNotNull(
+            MetrolistLyricDecoder.decodeDecryptedKrc(
+                "[1000,500]Plain line\n[2000,1000]<0,400,0>Timed<400,600,0> line"
+            )
+        )
+
+        assertTrue(publication.lines[0].words.isNullOrEmpty())
+        assertEquals(listOf(2000L, 2400L), publication.lines[1].words.orEmpty().map { it.begin })
+    }
+
+    @Test
     fun untimedTextIsNotPublished() {
         assertNull(MetrolistLyricDecoder.decode("plain lyric"))
         assertFalse(MetrolistLyricDecoder.containsTimedLrc(""))
@@ -102,4 +114,3 @@ class MetrolistLyricDecoderTest {
         )
     }
 }
-

@@ -7,7 +7,8 @@
 package io.github.andrealtb.coloroslyrics.provider.kugou
 
 import java.lang.reflect.Method
-import org.luckypray.dexkit.DexKitBridge
+import io.github.andrealtb.coloroslyrics.provider.reflection.CandidateResolver
+import io.github.andrealtb.coloroslyrics.provider.reflection.DexKitBridge
 
 object KuGouLyricManagerResolver {
     const val CLASS_NAME = KuGouPlayerConstants.LYRIC_MANAGER_CLASS
@@ -26,9 +27,8 @@ object KuGouLyricManagerResolver {
     }
 
     fun resolveLoadMethod(apkPath: String, classLoader: ClassLoader): Method? {
-        ensureDexKitLoaded()
-        return DexKitBridge.create(apkPath).use { bridge ->
-            val methodData = bridge
+        return DexKitBridge.withDexKit(apkPath) { bridge ->
+            val candidates = bridge
                 .findClass {
                     matcher {
                         className = CLASS_NAME
@@ -39,20 +39,10 @@ object KuGouLyricManagerResolver {
                         addUsingString(FAILURE_STRING)
                         paramTypes(String::class.java, Boolean::class.javaPrimitiveType)
                     }
-                }.singleOrNull()
-            methodData?.getMethodInstance(classLoader)
-        }
-    }
-
-    @Volatile
-    private var dexKitLoaded = false
-
-    private fun ensureDexKitLoaded() {
-        if (dexKitLoaded) return
-        synchronized(this) {
-            if (dexKitLoaded) return
-            System.loadLibrary("dexkit")
-            dexKitLoaded = true
+                }.mapNotNull { methodData ->
+                    runCatching { methodData.getMethodInstance(classLoader) }.getOrNull()
+                }
+            CandidateResolver.resolveUniqueMethod(candidates, "$CLASS_NAME#loadLyric")
         }
     }
 }

@@ -101,9 +101,10 @@ class AppleLyricRequestGateTest {
     }
 
     @Test
-    fun metadataDurationUnderADayIsTreatedAsSeconds() {
+    fun playbackItemDurationAcceptsSecondsOrMillisecondsWithoutInflatingShortTracks() {
         assertEquals(178_000L, AppleTrackIdentity.normalizeDuration(178L))
         assertEquals(178_000L, AppleTrackIdentity.normalizeDuration(178_000L))
+        assertEquals(80_000L, AppleTrackIdentity.normalizeDuration(80_000L))
         assertEquals(0L, AppleTrackIdentity.normalizeDuration(0L))
     }
 }

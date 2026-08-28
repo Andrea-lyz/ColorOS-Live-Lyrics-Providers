@@ -88,20 +88,24 @@ internal object MetrolistMetadataArtwork {
     }
 
     fun ensureBinderSafe(metadata: MediaMetadata): MediaMetadata {
-        var converted: Bitmap? = null
+        val replacements = LinkedHashMap<String, Bitmap>()
+        var changed = false
         METROLIST_ARTWORK_BITMAP_KEYS.forEach { key ->
             val bitmap = metadata.getBitmap(key) ?: return@forEach
-            if (!MetrolistArtworkPolicy.shouldCopyForBinder(
+            val safe = if (MetrolistArtworkPolicy.shouldCopyForBinder(
                     bitmap.config?.name,
                     bitmap.width,
                     bitmap.height
                 )
             ) {
-                return@forEach
+                toBinderSafe(bitmap) ?: bitmap
+            } else {
+                bitmap
             }
-            converted = toBinderSafe(bitmap) ?: converted
+            replacements[key] = safe
+            if (safe !== bitmap) changed = true
         }
-        val safe = converted ?: return metadata
+        if (!changed) return metadata
         if (!binderSafeLogged) {
             binderSafeLogged = true
             StructuredDiagnostics.logInfo(
@@ -113,15 +117,9 @@ internal object MetrolistMetadataArtwork {
                 )
             )
         }
-        return newPreservingBuilder(metadata, includeArtwork = false)
-            .putBitmap(MediaMetadata.METADATA_KEY_ART, safe)
-            .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, safe)
-            .apply {
-                if (metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON) != null) {
-                    putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, safe)
-                }
-            }
-            .build()
+        return newPreservingBuilder(metadata, includeArtwork = false).apply {
+            replacements.forEach { (key, bitmap) -> putBitmap(key, bitmap) }
+        }.build()
     }
 
     fun prepareForLyricInfo(incoming: MediaMetadata): MediaMetadata = ensureBinderSafe(incoming)
@@ -145,11 +143,20 @@ internal object MetrolistMetadataArtwork {
                     key in ratingKeys -> metadata.getRating(key)?.let {
                         builder.putRating(key, it)
                     }
-                    else -> metadata.getText(key)?.let { builder.putText(key, it) }
+                    else -> {
+                        val text = runCatching { metadata.getText(key) }.getOrNull()
+                        val bitmap = runCatching { metadata.getBitmap(key) }.getOrNull()
+                        val rating = runCatching { metadata.getRating(key) }.getOrNull()
+                        when {
+                            text != null -> builder.putText(key, text)
+                            bitmap != null && !bitmap.isRecycled -> builder.putBitmap(key, bitmap)
+                            rating != null -> builder.putRating(key, rating)
+                            else -> builder.putLong(key, metadata.getLong(key))
+                        }
+                    }
                 }
             }
         }
         return builder
     }
 }
-

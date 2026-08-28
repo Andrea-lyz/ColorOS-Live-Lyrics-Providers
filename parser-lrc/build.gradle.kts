@@ -7,7 +7,7 @@
 plugins {
     id("java-library")
     alias(libs.plugins.jetbrains.kotlin.jvm)
-    kotlin("plugin.serialization") version "2.1.21"
+    alias(libs.plugins.kotlin.serialization)
 }
 
 java {
@@ -29,5 +29,5 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     testImplementation(kotlin("test"))
     testImplementation(libs.junit.jupiter)
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testRuntimeOnly(libs.junit.platform.launcher)
 }

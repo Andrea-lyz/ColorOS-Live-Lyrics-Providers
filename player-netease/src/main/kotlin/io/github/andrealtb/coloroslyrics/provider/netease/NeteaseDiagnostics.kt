@@ -7,6 +7,7 @@
 package io.github.andrealtb.coloroslyrics.provider.netease
 
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeMode
 
@@ -31,7 +32,7 @@ object NeteaseDiagnostics {
                 event = event,
                 mode = mode,
                 process = process,
-                session = session,
+                trackHash = session?.let(DiagnosticHasher::sha256),
                 generation = generation,
                 reason = reason,
                 payloadChars = payloadChars,

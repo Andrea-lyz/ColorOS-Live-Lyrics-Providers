@@ -9,6 +9,7 @@ package io.github.andrealtb.coloroslyrics.provider.core.publisher
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.LrcParser
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
+import java.util.Locale
 
 object ColorOSLyricJsonEncoder {
 
@@ -148,7 +149,7 @@ object ColorOSLyricJsonEncoder {
         val min = ms / 60000
         val sec = (ms % 60000) / 1000
         val millis = ms % 1000
-        return "%02d:%02d.%03d".format(min, sec, millis)
+        return String.format(Locale.ROOT, "%02d:%02d.%03d", min, sec, millis)
     }
 
     private fun jsonStringField(name: String, value: String): String =

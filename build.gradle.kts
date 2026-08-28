@@ -42,3 +42,22 @@ tasks.register("assembleV5MatrixRelease") {
     description = "Build every device-validated v5 Provider release APK."
     dependsOn(v5ProviderModules.map { "$it:assembleRelease" })
 }
+
+tasks.register("testV5Matrix") {
+    group = "verification"
+    description = "Run core, parser, compatibility-kit, and v5 Provider unit tests."
+    dependsOn(v5ProviderModules.map { "$it:testDebugUnitTest" })
+    dependsOn(
+        ":provider-core:testDebugUnitTest",
+        ":reflection-core:testDebugUnitTest",
+        ":share:extensions-android:testDebugUnitTest",
+        ":share:extensions-kt:test",
+        ":share:lrckit:test",
+        ":share:yrckit:test",
+        ":parser-lrc:test",
+        ":parser-qrc:test",
+        ":parser-yrc:test",
+        ":parser-krc:test",
+        ":parser-ttml:test"
+    )
+}

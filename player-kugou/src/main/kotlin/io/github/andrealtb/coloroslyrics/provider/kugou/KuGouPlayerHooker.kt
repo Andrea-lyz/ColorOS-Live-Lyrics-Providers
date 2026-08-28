@@ -18,6 +18,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
 import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import java.io.File
@@ -155,7 +156,7 @@ class KuGouPlayerHooker(
                     area = "lyric",
                     event = "KUGOU_KRC_LOAD_CAPTURED",
                     generation = snapshot.generation,
-                    message = path.takeLast(96)
+                    message = "pathHash=${DiagnosticHasher.sha256(path)}"
                 )
                 scope.launch {
                     handleLyricLoad(param.result, path, snapshot, startedAt)
@@ -230,7 +231,8 @@ class KuGouPlayerHooker(
                 area = "identity",
                 event = "CAR_LYRIC_IGNORED",
                 generation = currentGeneration,
-                message = title.take(64)
+                trackHash = currentTrack?.let { DiagnosticHasher.sha256(it.buildStableKey()) },
+                message = "titleChars=${title.length}"
             )
             return
         }
@@ -267,8 +269,9 @@ class KuGouPlayerHooker(
                 area = "identity",
                 event = "TRACK_BOUND",
                 generation = generation,
+                trackHash = DiagnosticHasher.sha256(track.buildStableKey()),
                 reason = "metadata",
-                message = "title=${track.title.orEmpty().take(64)} id=${track.id.orEmpty().take(48)}"
+                message = "durationMs=${track.durationMs}"
             )
             if (!tryBindCachedOrPending(track, generation, "metadata")) {
                 scheduleLocalLyricProbe(track, generation)
@@ -301,7 +304,7 @@ class KuGouPlayerHooker(
                 area = "lyric",
                 event = "KUGOU_LYRIC_EMPTY",
                 generation = snapshot.generation,
-                message = path.takeLast(96)
+                message = "pathHash=${DiagnosticHasher.sha256(path)}"
             )
             return
         }
@@ -309,7 +312,7 @@ class KuGouPlayerHooker(
             area = "lyric",
             event = "KUGOU_LYRIC_PARSED",
             generation = snapshot.generation,
-            message = "lines=${lyrics.size} path=${path.takeLast(96)} " +
+            message = "lines=${lyrics.size} pathHash=${DiagnosticHasher.sha256(path)} " +
                 "source=${if (fromData.isNotEmpty()) "lyric-data" else "file"}"
         )
         handleCandidate(
@@ -336,7 +339,7 @@ class KuGouPlayerHooker(
                 event = "LYRIC_CANDIDATE_REJECTED",
                 generation = current.generation,
                 reason = "foreign",
-                message = candidate.path.takeLast(96)
+                message = "pathHash=${DiagnosticHasher.sha256(candidate.path)}"
             )
             return
         }
@@ -354,7 +357,7 @@ class KuGouPlayerHooker(
             area = "lyric",
             event = "LYRIC_CANDIDATE_PENDING",
             generation = candidate.capturedGeneration,
-            message = candidate.path.takeLast(96)
+            message = "pathHash=${DiagnosticHasher.sha256(candidate.path)}"
         )
     }
 
@@ -456,7 +459,7 @@ class KuGouPlayerHooker(
             area = "lyric",
             event = "LOCAL_FILE_HIT",
             generation = generation,
-            message = file.path.takeLast(96)
+            message = "pathHash=${DiagnosticHasher.sha256(file.path)}"
         )
         return emitLyrics(lyrics, track, generation, "local-file")
     }

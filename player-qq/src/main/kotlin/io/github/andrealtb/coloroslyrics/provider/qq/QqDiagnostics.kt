@@ -21,7 +21,8 @@ object QqDiagnostics {
         generation: Long? = null,
         message: String? = null,
         mode: RuntimeMode? = null,
-        payloadChars: Int? = null
+        payloadChars: Int? = null,
+        trackHash: String? = null
     ) {
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -31,6 +32,7 @@ object QqDiagnostics {
                 mode = mode,
                 process = process,
                 generation = generation,
+                trackHash = trackHash,
                 reason = reason,
                 payloadChars = payloadChars,
                 message = message
@@ -46,7 +48,8 @@ object QqDiagnostics {
         generation: Long? = null,
         message: String? = null,
         mode: RuntimeMode? = null,
-        payloadChars: Int? = null
+        payloadChars: Int? = null,
+        trackHash: String? = null
     ) {
         StructuredDiagnostics.logDebug(
             DiagnosticEvent(
@@ -56,6 +59,7 @@ object QqDiagnostics {
                 mode = mode,
                 process = process,
                 generation = generation,
+                trackHash = trackHash,
                 reason = reason,
                 payloadChars = payloadChars,
                 message = message

@@ -19,7 +19,6 @@ object SpotifyAdvertisementPolicy {
         if (advertisementFlag != 0L) return true
         val metadata = ((title ?: "") + " " + (artist ?: "")).lowercase(Locale.ROOT)
         return metadata.contains("广告")
-            || metadata.contains("骞垮憡")
             || metadata.contains("advertisement")
             || metadata.contains("sponsored")
     }

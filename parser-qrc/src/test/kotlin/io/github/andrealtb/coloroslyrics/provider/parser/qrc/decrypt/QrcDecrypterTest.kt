@@ -7,6 +7,8 @@
 package io.github.andrealtb.coloroslyrics.provider.parser.qrc.decrypt
 
 import kotlin.test.Test
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class QrcDecrypterTest {
     val encrypted =
@@ -14,7 +16,8 @@ class QrcDecrypterTest {
 
     @Test
     fun decrypt() {
-        val decrypter = QrcDecrypter.decrypt(encrypted)
-        println(decrypter)
+        val decrypted = assertNotNull(QrcDecrypter.decrypt(encrypted))
+        assertTrue(decrypted.isNotBlank())
+        assertTrue(decrypted.contains('['))
     }
 }
