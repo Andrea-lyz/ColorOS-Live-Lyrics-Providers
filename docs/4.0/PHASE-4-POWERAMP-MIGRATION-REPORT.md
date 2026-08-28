@@ -38,6 +38,8 @@
 ## 运行时数据流
 
 ```text
+宿主 sendStickyBroadcast(TRACK_CHANGED) / 注册时 sticky receiver
+        ↓
 TRACK_CHANGED (id, path, title, artist, album, durMs)
         ↓
 TrackIdentity（mediaId 末段与广播 id 对齐）
@@ -91,6 +93,8 @@ DEBUG_CONFIG_APPLIED（reason=enabled 才继续查 DEBUG 事件）
         ↓
 DEBUG_LOGGING_ENABLED
         ↓
+TRACK_CHANGED_SEND_HOOK_INSTALLED
+        ↓
 TRACK_CHANGED_RECEIVER_INSTALLED
         ↓
 TRANSLATION_ACTION_INJECTED reason=public
@@ -105,6 +109,18 @@ ARTWORK_PROBE HOST_OUT album=WxH（不是 1x1 / solid）
         ↓
 锁屏 / AOD 可见
 ```
+
+## 最终真机收口（2026-08-29）
+
+全量审查首次将动态接收器改为 `RECEIVER_NOT_EXPORTED` 后，
+`lyrics-log-20260829-014011.txt` 显示注册时的历史 sticky 事件可以取词，但后续切歌没有新的
+`TRACK_BOUND`，只由 MediaSession metadata 推进 generation 并丢弃旧 pending。最终修复保留
+非导出接收器，同时在 Poweramp 宿主进程内截获其自身
+`ContextWrapper.sendStickyBroadcast(Intent)` 的 `TRACK_CHANGED`，并以 `ts` + track key
+去重 hook/receiver 双通道。
+
+用户已确认修复后的 Poweramp 连续切歌取词实机通过。至此 Poweramp Provider 的本地歌词、
+封面、翻译按钮、播放时钟与切歌链全部完成设备验收。
 
 ## 明确不做
 

@@ -15,8 +15,8 @@ Phase 1 的中立 core/parser/diagnostics 与 NPatch 清理已经完成；Phase 
 `lyrics-log-20260828-010237.txt`）与 `player-spotify`
 （宿主 `com.spotify.music`，Color Lyrics 构造原生 `lyricInfo`，真机收口
 `lyrics-log-20260828-064938.txt`）。`player-qishui`
-（宿主 `com.luna.music`，复用内部 `TrackLyric` 构造原生 `lyricInfo`）已完成本地实现，
-尚待真机验证。旧
+（宿主 `com.luna.music`，复用内部 `TrackLyric` 构造原生 `lyricInfo`）已完成真机验收；
+修复后的 Poweramp 连续切歌取词也于 2026-08-29 由用户确认通过。旧
 `:lx-music` / `:poweramp-music` / `:metrolist-music` / `:kugou-music` /
 `:qq-music` / `:qq-music-hd` / `:apple-music` / `:spotify-music` / `:qishui-music`
 词幕模块、非 v5 矩阵 application、旧 `:163-music` / `:salt-player-music` 与对应

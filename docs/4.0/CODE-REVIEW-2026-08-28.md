@@ -200,8 +200,8 @@ sticky `TRACK_CHANGED`；后续两次切歌仅由 MediaSession metadata 推进 g
 `ContextWrapper.sendStickyBroadcast(Intent)`，仅处理 action 精确等于
 `com.maxmpz.audioplayer.TRACK_CHANGED` 的宿主发送，并以广播 `ts` + track key 去重 hook/receiver
 双通道。`player-poweramp:testDebugUnitTest` 共 29 个测试通过，Poweramp Debug APK 构建及 v2 签名
-验证通过；切歌取词链仍需用户真机复核。
+验证通过。2026-08-29 用户确认修复后的 Poweramp 连续切歌取词实机通过。
 
 Windows 中文工作区下 Gradle 9.3.1 的纯 JVM test worker 会错误地 `ClassNotFoundException`，本地验证通过
 临时 ASCII 盘符映射执行；GitHub Actions 工作区不含该路径条件，并已强制 `--rerun-tasks`。以上均为
-本地构建/静态验证，未替代既有真机结论，也未新增真机验证。
+本地构建/静态验证记录；最终 12 个 Provider（含本次 Poweramp 修复）已由用户完成全量实机验收。
