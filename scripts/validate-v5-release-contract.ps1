@@ -49,7 +49,7 @@ $rootTargetSdk = [int](Match-RequiredValue $rootBuild 'extra\["targetSdkVersion"
 Assert-Contract ($rootCompileSdk -eq $contract.compileSdk) 'root compileSdk differs from contract'
 Assert-Contract ($rootTargetSdk -eq $contract.targetSdk) 'root targetSdk differs from contract'
 
-$matrixBlock = Match-RequiredValue $rootBuild '(?s)val v5ProviderModules = listOf\((.*?)\)\s*\r?\n\r?\ntasks\.register' 'v5ProviderModules block'
+$matrixBlock = Match-RequiredValue $rootBuild '(?s)val v5ProviderModules = listOf\((.*?)\)\s*\r?\n\r?\nval releaseSigningEnvironment' 'v5ProviderModules block'
 $declaredModules = @(
     [regex]::Matches($matrixBlock, '"(:[^"\r\n]+)"') |
         ForEach-Object { $_.Groups[1].Value.TrimStart(':') }
