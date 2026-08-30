@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "suiteVersion": "4.0.0",
+  "sourceTag": "providers-v1.0.0",
+  "compileSdk": 37,
+  "targetSdk": 37,
+  "minSdk": 27,
+  "xposedMinVersion": 93,
+  "bundleAsset": "ColorOS-Live-Lyrics-Providers-v4.0.0.zip",
+  "providers": [
+    {
+      "module": "player-salt",
+      "displayName": "Salt",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.salt",
+      "versionName": "1.0.0",
+      "versionCode": 5,
+      "asset": "ColorOS-Live-Lyrics-Provider-Salt-v4.0.0.apk",
+      "scopes": ["com.salt.music"],
+      "processPolicy": {"kind": "scope-only", "evidence": "player-salt/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/salt/SaltPlayerHooker.kt"},
+      "validatedHosts": [{"package": "com.salt.music", "version": "12.3.0-alpha03"}]
+    },
+    {
+      "module": "player-cone",
+      "displayName": "Cone",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.cone",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-Cone-v4.0.0.apk",
+      "scopes": ["ink.trantor.coneplayer", "ink.trantor.coneplayer.gp"],
+      "processPolicy": {"kind": "scope-only", "evidence": "player-cone/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/cone/ConePlayerHooker.kt"},
+      "validatedHosts": [
+        {"package": "ink.trantor.coneplayer", "version": "1.2.0-c77a1ea49"},
+        {"package": "ink.trantor.coneplayer.gp", "version": "shared-profile"}
+      ]
+    },
+    {
+      "module": "kuwo-music",
+      "displayName": "KuWo",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.kuwo",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-KuWo-v4.0.0.apk",
+      "scopes": ["cn.kuwo.player"],
+      "processPolicy": {"kind": "scope-only", "evidence": "kuwo-music/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/kuwo/KuWo.kt"},
+      "validatedHosts": [{"package": "cn.kuwo.player", "version": "12.2.0.0"}]
+    },
+    {
+      "module": "player-lx",
+      "displayName": "LX",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.lx",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-LX-v4.0.0.apk",
+      "scopes": ["cn.toside.music.mobile", "com.lxwalnut.music.mobile"],
+      "processPolicy": {"kind": "scope-only", "evidence": "player-lx/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/lx/LxPlayerHooker.kt"},
+      "validatedHosts": [
+        {"package": "cn.toside.music.mobile", "version": "1.8.4"},
+        {"package": "com.lxwalnut.music.mobile", "version": "26.07.16"}
+      ]
+    },
+    {
+      "module": "player-poweramp",
+      "displayName": "Poweramp",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.poweramp",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-Poweramp-v4.0.0.apk",
+      "scopes": ["com.maxmpz.audioplayer"],
+      "processPolicy": {"kind": "scope-only", "evidence": "player-poweramp/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/poweramp/PowerampPlayerHooker.kt"},
+      "validatedHosts": [{"package": "com.maxmpz.audioplayer", "version": "build-1025-bundle-play"}]
+    },
+    {
+      "module": "player-metrolist",
+      "displayName": "Metrolist",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.metrolist",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-Metrolist-v4.0.0.apk",
+      "scopes": ["com.metrolist.music"],
+      "processPolicy": {"kind": "scope-only", "evidence": "player-metrolist/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/metrolist/MetrolistPlayerHooker.kt"},
+      "validatedHosts": [{"package": "com.metrolist.music", "version": "13.6.1"}]
+    },
+    {
+      "module": "player-kugou",
+      "displayName": "KuGou",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.kugou",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-KuGou-v4.0.0.apk",
+      "scopes": ["com.kugou.android", "com.kugou.android.lite"],
+      "processPolicy": {"kind": "explicit", "values": ["*:support", "*.support"], "evidence": "player-kugou/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/kugou/KuGouProcessPolicy.kt"},
+      "validatedHosts": [
+        {"package": "com.kugou.android", "version": "20.8.0"},
+        {"package": "com.kugou.android.lite", "version": "5.2.61"}
+      ]
+    },
+    {
+      "module": "player-qq",
+      "displayName": "QQ",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.qq",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-QQ-v4.0.0.apk",
+      "scopes": ["com.tencent.qqmusic"],
+      "processPolicy": {"kind": "explicit", "values": ["com.tencent.qqmusic:QQPlayerService"], "evidence": "player-qq/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/qq/QqProcessPolicy.kt"},
+      "validatedHosts": [{"package": "com.tencent.qqmusic", "version": "20.7.5.8"}]
+    },
+    {
+      "module": "player-netease",
+      "displayName": "NetEase",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.netease",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-NetEase-v4.0.0.apk",
+      "scopes": ["com.netease.cloudmusic", "com.hihonor.cloudmusic"],
+      "processPolicy": {
+        "kind": "profiles",
+        "values": [
+          "com.netease.cloudmusic=OFFICIAL_APPEND",
+          "com.netease.cloudmusic:play=CONSTRUCTED",
+          "com.hihonor.cloudmusic=OFFICIAL_APPEND",
+          "com.hihonor.cloudmusic:play=OFFICIAL_APPEND"
+        ],
+        "evidence": "player-netease/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/netease/NeteaseRuntimeProfile.kt"
+      },
+      "validatedHosts": [
+        {"package": "com.netease.cloudmusic", "version": "9.5.70"},
+        {"package": "com.hihonor.cloudmusic", "version": "3.5.20"},
+        {"package": "com.netease.cloudmusic", "version": "9.0.40-modified"}
+      ]
+    },
+    {
+      "module": "player-apple",
+      "displayName": "Apple",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.apple",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-Apple-v4.0.0.apk",
+      "scopes": ["com.apple.android.music"],
+      "processPolicy": {"kind": "scope-only", "evidence": "player-apple/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/apple/ApplePlayerHooker.kt"},
+      "validatedHosts": [{"package": "com.apple.android.music", "version": "6.5.2"}]
+    },
+    {
+      "module": "player-spotify",
+      "displayName": "Spotify",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.spotify",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-Spotify-v4.0.0.apk",
+      "scopes": ["com.spotify.music"],
+      "processPolicy": {"kind": "explicit", "values": ["com.spotify.music"], "evidence": "player-spotify/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/spotify/SpotifyPlayerConstants.kt"},
+      "validatedHosts": [{"package": "com.spotify.music", "version": "9.1.78.2208"}]
+    },
+    {
+      "module": "player-qishui",
+      "displayName": "QiShui",
+      "applicationId": "io.github.andrealtb.coloroslyrics.provider.qishui",
+      "versionName": "1.0.0",
+      "versionCode": 1,
+      "asset": "ColorOS-Live-Lyrics-Provider-QiShui-v4.0.0.apk",
+      "scopes": ["com.luna.music"],
+      "processPolicy": {"kind": "explicit", "values": ["com.luna.music"], "evidence": "player-qishui/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/qishui/QishuiPlayerConstants.kt"},
+      "validatedHosts": [{"package": "com.luna.music", "version": "20.7.0"}]
+    }
+  ]
+}
