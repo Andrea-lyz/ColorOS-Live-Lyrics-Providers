@@ -31,6 +31,31 @@ val v5ProviderModules = listOf(
     ":player-qishui"
 )
 
+val releaseSigningEnvironment = listOf(
+    "RELEASE_STORE_FILE",
+    "RELEASE_STORE_PASSWORD",
+    "RELEASE_KEY_ALIAS",
+    "RELEASE_KEY_PASSWORD"
+)
+val releaseArtifactTaskRequested = gradle.startParameter.taskNames.any { requestedTask ->
+    requestedTask.substringAfterLast(':').lowercase() in setOf(
+        "assemblev5matrixrelease",
+        "assemblerelease",
+        "bundlerelease",
+        "packagerelease",
+        "installrelease",
+        "build"
+    )
+}
+if (releaseArtifactTaskRequested) {
+    val missingSigningEnvironment = releaseSigningEnvironment.filter { name ->
+        System.getenv(name).isNullOrBlank()
+    }
+    check(missingSigningEnvironment.isEmpty()) {
+        "Provider release signing is required; missing: ${missingSigningEnvironment.joinToString()}."
+    }
+}
+
 tasks.register("assembleV5MatrixDebug") {
     group = "build"
     description = "Build every device-validated v5 Provider debug APK."
