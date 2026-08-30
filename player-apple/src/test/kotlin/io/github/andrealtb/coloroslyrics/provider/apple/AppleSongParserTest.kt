@@ -55,7 +55,7 @@ class AppleSongParserTest {
     fun appliesTranslationLanguageWhenPresent() {
         val native = FakeSongNative(adamIdValue = 1L, durationValue = 1)
         assertEquals(true, AppleSongParser.applySystemTranslation(native, "zh-Hans"))
-        assertEquals("zh-Hans", native.translation)
+        assertEquals("zh-Hans", native.appliedTranslation)
         assertEquals(false, AppleSongParser.applySystemTranslation(native, " "))
     }
 
@@ -64,14 +64,14 @@ class AppleSongParserTest {
         private val durationValue: Int,
         private val sectionValues: List<FakeSectionNative> = emptyList()
     ) {
-        var translation: String? = null
+        var appliedTranslation: String? = null
 
         fun getAdamId(): Long = adamIdValue
         fun getDuration(): Int = durationValue
         fun getSections(): FakeVector<FakePtr<FakeSectionNative>> =
             FakeVector(sectionValues.map(::FakePtr))
         fun setTranslation(language: String): Boolean {
-            translation = language
+            appliedTranslation = language
             return true
         }
     }
