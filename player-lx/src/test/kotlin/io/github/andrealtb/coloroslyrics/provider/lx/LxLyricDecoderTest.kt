@@ -32,6 +32,8 @@ class LxLyricDecoderTest {
         assertEquals("Hello world", publication.lines[1].text)
         assertEquals("Welcome", publication.lines[1].secondary)
         assertTrue(publication.lines[0].words.orEmpty().size >= 2)
+        assertTrue(publication.containsDisplayLine("  HELLO   world "))
+        assertFalse(publication.containsDisplayLine("Another song"))
     }
 
     @Test

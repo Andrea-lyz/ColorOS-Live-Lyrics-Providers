@@ -70,6 +70,26 @@ ColorOS 用 TITLE/ARTIST 做锁屏曲目键。投影 metadata 必须先从 LX �
 `"${songName} - ${singer}"` 还原歌名/歌手，再 `observeTrack`，并在同曲
 titles-only / 暂停还原标题时把 `lyricInfo` replay 回当前 hooked session。
 
+### 2026-08-29 最终 Bridge 4.0 回归收口
+
+`lyrics-log-20260829-044318.txt` 暴露了切歌 buffering 窗口的最后一项身份竞态：
+LX 已把新歌当前歌词行写入 TITLE，但 ARTIST 仍短暂保留上一首歌的
+`"${songName} - ${singer}"` 组合值。旧策略先解析 ARTIST，导致 generation 被错误
+弹回上一首歌并丢弃当前 replay snapshot。
+
+最终实现以“TITLE 精确命中当前 generation 已发布歌词行”作为更强的投影证据：
+
+- `LxPublication.containsDisplayLine` 对空白和大小写归一后匹配当前歌词行；
+- `LxPlayerHooker` 只在同一 hooked session、有效 generation 下提交该证据；
+- `LxBluetoothLyricMetadataPolicy` 命中后保留 stable track，不再解析陈旧 composite
+  ARTIST 为一次真实换曲；
+- 每个 generation 最多记录一次
+  `LX_PUBLISHED_LYRIC_TITLE_PROJECTION_IGNORED`，不增加高频日志。
+
+对应 policy / publication 测试已补齐。后续 `lyrics-log-20260829-045859.txt` 与
+`lyrics-log-20260829-050946.txt` 的 Bridge 通用回归完成后，用户确认 LX 连续切歌、
+整表滚动与实时行位置恢复正常。该实现作为 4.0 RC 的 LX 冻结基线。
+
 ## 歌词早于 metadata
 
 `setLyric` 不含歌曲身份。歌词可能早于 `setMetadata` 到达。Policy：

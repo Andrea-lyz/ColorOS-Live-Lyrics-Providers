@@ -41,6 +41,9 @@ class LxPlayerHooker(
     @Volatile
     private var translationActionInjectionLogged = false
 
+    @Volatile
+    private var lyricTitleProjectionLoggedGeneration = -1L
+
     private val generationController = LxHostGenerationController { _, current ->
         synchronized(publicationLock) {
             replaySnapshot = null
@@ -199,9 +202,33 @@ class LxPlayerHooker(
                     )
                     val candidate = LxMediaSessionRegistry.trackFrom(incoming)
                     val stable = generationPolicy.currentTrack ?: sessions.uniqueCurrentTrack()
-                    val resolved = LxBluetoothLyricMetadataPolicy.resolve(stable, candidate)
+                    val snapshotBeforeObservation = synchronized(publicationLock) { replaySnapshot }
+                    val titleMatchesPublishedLyric = snapshotBeforeObservation != null &&
+                        snapshotBeforeObservation.session.get() === session &&
+                        generationPolicy.isGenerationValid(snapshotBeforeObservation.generation) &&
+                        candidate != null &&
+                        snapshotBeforeObservation.publication.containsDisplayLine(candidate.title)
+                    val resolved = LxBluetoothLyricMetadataPolicy.resolve(
+                        stable,
+                        candidate,
+                        titleMatchesPublishedLyric
+                    )
                         ?: return@before
                     generationController.observeTrack(resolved.track.copy(id = null))
+                    if (titleMatchesPublishedLyric && resolved.projection &&
+                        lyricTitleProjectionLoggedGeneration != generationPolicy.generation
+                    ) {
+                        lyricTitleProjectionLoggedGeneration = generationPolicy.generation
+                        StructuredDiagnostics.logInfo(
+                            DiagnosticEvent(
+                                component = "provider/lx",
+                                area = "relay",
+                                event = "LX_PUBLISHED_LYRIC_TITLE_PROJECTION_IGNORED",
+                                generation = generationPolicy.generation,
+                                reason = "title-matched-current-publication"
+                            )
+                        )
+                    }
                     if (resolved.projection) {
                         if (!bluetoothProjectionLogged) {
                             bluetoothProjectionLogged = true

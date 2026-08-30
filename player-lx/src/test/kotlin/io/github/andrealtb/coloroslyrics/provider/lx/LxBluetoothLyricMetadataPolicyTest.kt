@@ -140,6 +140,40 @@ class LxBluetoothLyricMetadataPolicyTest {
     }
 
     @Test
+    fun publishedLyricLineEvidencePreventsOfficialLxTitleChurnFromBumpingTrack() {
+        val stable = TrackIdentity(
+            title = "I Knew It, I Knew You",
+            artist = "Taylor Swift",
+            durationMs = 178_000L
+        )
+        val projectedLine = TrackIdentity(
+            title = "I watched you drive around the bend",
+            // LX can briefly retain the previous song's composite artist during buffering.
+            artist = "I Knew It, I Knew You - Taylor Swift",
+            durationMs = 178_000L
+        )
+        val nextSongBySameArtist = TrackIdentity(
+            title = "Style",
+            artist = "Taylor Swift",
+            durationMs = 231_000L
+        )
+
+        val resolved = LxBluetoothLyricMetadataPolicy.resolve(
+            stable,
+            projectedLine,
+            titleMatchesPublishedLyric = true
+        )
+        assertNotNull(resolved)
+        assertTrue(resolved.projection)
+        assertSame(stable, resolved.track)
+        assertFalse(LxBluetoothLyricMetadataPolicy.isBluetoothLyricProjection(
+            stable,
+            nextSongBySameArtist,
+            titleMatchesPublishedLyric = false
+        ))
+    }
+
+    @Test
     fun decodesANewSongAlreadyPublishedInLxArtistConcatWithoutThePreviousTitlePrefix() {
         val previous = TrackIdentity(title = "Try Try Try", artist = "The Kid LAROI")
         val nextProjection = TrackIdentity(

@@ -19,4 +19,16 @@ data class LxPublication(
         capturedTrack?.takeUnless { it.isBlank } ?: TrackIdentity()
 
     fun boundTo(track: TrackIdentity): LxPublication = copy(capturedTrack = track)
+
+    fun containsDisplayLine(value: String?): Boolean {
+        val candidate = normalizeDisplayLine(value)
+        if (candidate.isEmpty()) return false
+        return lines.any { normalizeDisplayLine(it.text) == candidate }
+    }
+
+    private fun normalizeDisplayLine(value: String?): String = value
+        ?.trim()
+        ?.replace(Regex("""\s+"""), " ")
+        ?.lowercase()
+        .orEmpty()
 }

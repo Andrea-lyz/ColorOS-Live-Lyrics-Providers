@@ -41,10 +41,18 @@ object LxBluetoothLyricMetadataPolicy {
 
     fun resolve(
         stableTrack: TrackIdentity?,
-        candidate: TrackIdentity?
+        candidate: TrackIdentity?,
+        titleMatchesPublishedLyric: Boolean = false
     ): Resolution? {
         if (candidate == null || candidate.isBlank) {
             return stableTrack?.let { Resolution(it, projection = true) }
+        }
+        // A title that exactly belongs to the currently published lyric is authoritative
+        // projection evidence. During a skip, LX can pair that new lyric line with a stale
+        // previous-song composite ARTIST; parsing the composite first would bounce generation
+        // back to the previous track and invalidate the replay snapshot.
+        if (stableTrack != null && titleMatchesPublishedLyric) {
+            return Resolution(stableTrack, projection = true)
         }
         val parsed = parseProjection(candidate)
         if (parsed != null) {
@@ -56,7 +64,11 @@ object LxBluetoothLyricMetadataPolicy {
             // from LX's own ARTIST encoding instead of treating the lyric TITLE as a track.
             return Resolution(parsedTrack, projection = true)
         }
-        if (isBluetoothLyricProjection(stableTrack, candidate)) {
+        if (isBluetoothLyricProjection(
+                stableTrack,
+                candidate,
+                titleMatchesPublishedLyric
+            )) {
             return Resolution(stableTrack!!, projection = true)
         }
         return Resolution(candidate, projection = false)
@@ -87,7 +99,8 @@ object LxBluetoothLyricMetadataPolicy {
 
     fun isBluetoothLyricProjection(
         stableTrack: TrackIdentity?,
-        candidate: TrackIdentity
+        candidate: TrackIdentity,
+        titleMatchesPublishedLyric: Boolean = false
     ): Boolean {
         if (parseProjection(candidate) != null) return true
         if (stableTrack == null) return false
@@ -104,6 +117,10 @@ object LxBluetoothLyricMetadataPolicy {
         }
 
         if (LxLyricDecoder.containsTimedLrc(candidateTitle)) {
+            return true
+        }
+
+        if (titleMatchesPublishedLyric) {
             return true
         }
 
@@ -134,6 +151,7 @@ object LxBluetoothLyricMetadataPolicy {
             withoutIds
         )
     }
+
 }
 
 object LxSessionIdentity {
