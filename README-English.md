@@ -1,13 +1,20 @@
 # ColorOS Live Lyrics Providers
 
 An independent Root/LSPosed Provider repository for ColorOS lock-screen lyrics. Every installable
-module publishes standard `MediaMetadata["lyricInfo"]` consumed by the
-`io.github.andrealtb.lockscreenlyrics` Bridge.
+module publishes standard `MediaMetadata["lyricInfo"]` that ColorOS SystemUI can consume directly.
+Installing the optional `io.github.andrealtb.lockscreenlyrics` Bridge adds generic word rendering,
+AOD, translation controls, appearance settings, and compatibility enhancements.
 
-The complete v5 matrix has passed its applicable device gates. This repository contains no
-NPatch path, Lyricon Provider runtime, v4 broadcast sender, or non-matrix player application.
+The complete v5 matrix has passed its applicable device gates and contains exactly 12 installable
+Provider applications.
 
 [中文](README.md)
+
+Developer entry points:
+
+- [Provider adaptation guide](docs/4.0/PROVIDER-ADAPTATION-GUIDE.md)
+- [Provider 适配技术指南（中文）](docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md)
+- [Player-owned `lyricInfo` protocol](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.0/docs/PLAYER_INTEGRATION.md)
 
 ## v5 Provider matrix
 
@@ -42,7 +49,23 @@ the Bridge five-slot control according to player-specific evidence. QQ Music HD 
   `share:yrckit`: compatibility helpers still used by KuWo/NetEase; they are not installable apps.
 
 `io.github.proify.lyricon.lyric:model` remains only as a compatibility DTO dependency for
-KuWo/NetEase. No module creates `LyriconFactory` or mounts Lyricon.
+KuWo/NetEase.
+
+This repository does not distribute Lyricon Providers. Obtain that product path from the
+[original LyricProvider project](https://github.com/tomakino/LyricProvider), and report Lyricon
+display/product issues there. Bridge and this repository handle only the ColorOS native
+`lyricInfo` path.
+
+## Adding a player
+
+Do not copy a large existing Hooker and immediately add it to the matrix. Follow the
+[Provider adaptation guide](docs/4.0/PROVIDER-ADAPTATION-GUIDE.md) to establish:
+
+1. official append vs constructed publication;
+2. authoritative process/MediaSession, track identity, and generation;
+3. lyric lanes, artwork, PlaybackState, and translation-action ownership;
+4. debug/privacy, unit tests, and the device-validation ladder;
+5. the explicit `release/v5-provider-matrix.json` contract.
 
 ## Build
 
@@ -64,6 +87,8 @@ Release signing uses `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`,
 
 ## Documentation and provenance
 
+- Provider adaptation guide: `docs/4.0/PROVIDER-ADAPTATION-GUIDE.md`
+- Provider 适配技术指南: `docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md`
 - Migration matrix: `docs/4.0/PHASE-0-MIGRATION-MAP.md`
 - Per-player device closure: `docs/4.0/PHASE-4-*-MIGRATION-REPORT.md`
 - Repository cleanup and final build: `docs/4.0/REPOSITORY-CLEANUP-REPORT.md`

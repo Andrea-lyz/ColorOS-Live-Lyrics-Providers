@@ -44,6 +44,23 @@ Assert-Contract ($contract.targetSdk -eq 37) 'matrix targetSdk must be 37'
 Assert-Contract ($contract.xposedMinVersion -eq 93) 'xposedMinVersion must be 93'
 Assert-Contract ($contract.bundleAsset -eq "ColorOS-Live-Lyrics-Providers-v$($contract.suiteVersion).zip") 'bundle asset differs from suite version'
 
+$requiredDocumentation = @(
+    'README.md',
+    'README-English.md',
+    'docs\4.0\README.md',
+    'docs\4.0\PROVIDER-ADAPTATION-GUIDE.md',
+    'docs\4.0\PROVIDER-ADAPTATION-GUIDE.zh-CN.md'
+)
+foreach ($relativePath in $requiredDocumentation) {
+    $documentationPath = Join-Path $RepoRoot $relativePath
+    Assert-Contract (Test-Path -LiteralPath $documentationPath -PathType Leaf) "required documentation is missing: $relativePath"
+    $content = Get-Content -LiteralPath $documentationPath -Raw
+    Assert-Contract (-not [string]::IsNullOrWhiteSpace($content)) "required documentation is empty: $relativePath"
+    Assert-Contract ($content -notmatch '(?i)npatch|non-root') "README/guide contains an internal abandoned-route term: $relativePath"
+}
+Assert-Contract ((Get-Content -LiteralPath (Join-Path $RepoRoot 'README.md') -Raw).Contains('PROVIDER-ADAPTATION-GUIDE.zh-CN.md')) 'Chinese README does not link the adaptation guide'
+Assert-Contract ((Get-Content -LiteralPath (Join-Path $RepoRoot 'README-English.md') -Raw).Contains('PROVIDER-ADAPTATION-GUIDE.md')) 'English README does not link the adaptation guide'
+
 $rootCompileSdk = [int](Match-RequiredValue $rootBuild 'extra\["compileSdkVersion"\]\s*=\s*(\d+)' 'root compileSdkVersion')
 $rootTargetSdk = [int](Match-RequiredValue $rootBuild 'extra\["targetSdkVersion"\]\s*=\s*(\d+)' 'root targetSdkVersion')
 Assert-Contract ($rootCompileSdk -eq $contract.compileSdk) 'root compileSdk differs from contract'

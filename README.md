@@ -1,12 +1,19 @@
 # ColorOS Live Lyrics Providers
 
 面向 ColorOS 锁屏歌词的独立 Root/LSPosed Provider 仓库。所有发布模块均输出标准
-`MediaMetadata["lyricInfo"]`，由
-`io.github.andrealtb.lockscreenlyrics` Bridge 统一消费。
+`MediaMetadata["lyricInfo"]`，可由 ColorOS SystemUI 直接消费；安装
+`io.github.andrealtb.lockscreenlyrics` Bridge 后可获得通用逐字渲染、AOD、翻译按钮、
+样式与兼容增强。
 
 当前 v5 适配矩阵已全部完成并通过对应设备门禁。
 
 [English](README-English.md)
+
+开发者入口：
+
+- [Provider 适配技术指南](docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md)
+- [Provider adaptation guide (English)](docs/4.0/PROVIDER-ADAPTATION-GUIDE.md)
+- [播放器主动发布 `lyricInfo` 协议](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.0/docs/PLAYER_INTEGRATION.zh-CN.md)
 
 ## v5 Provider 矩阵
 
@@ -41,6 +48,21 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 
 `io.github.proify.lyricon.lyric:model` 目前仅作为 KuWo/NetEase 兼容 DTO 依赖；
 
+本仓库不分发词幕 Provider。需要词幕时请从
+[LyricProvider 原项目](https://github.com/tomakino/LyricProvider) 获取，并将词幕显示或
+产品链路问题反馈到原项目；Bridge 与本仓库只受理 ColorOS 原生 `lyricInfo` 链路问题。
+
+## 新增播放器适配
+
+不要从现有 Hooker 复制一份巨型实现后直接加入矩阵。先按
+[Provider 适配技术指南](docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md) 确认：
+
+1. 官方 payload 追加或自行构造；
+2. 权威进程/MediaSession、曲目身份和 generation；
+3. 歌词 lane、封面、PlaybackState 与翻译 action 所有权；
+4. debug/隐私、单元测试和真机验收梯子；
+5. `release/v5-provider-matrix.json` 的显式发布契约。
+
 
 ## 构建
 
@@ -62,6 +84,8 @@ Release 构建使用 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、
 
 ## 文档与来源
 
+- Provider 适配主线（中文）：`docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md`
+- Provider adaptation guide：`docs/4.0/PROVIDER-ADAPTATION-GUIDE.md`
 - 迁移状态与边界：`docs/4.0/PHASE-0-MIGRATION-MAP.md`
 - 各播放器设备收口：`docs/4.0/PHASE-4-*-MIGRATION-REPORT.md`
 - 仓库清理与最终构建：`docs/4.0/REPOSITORY-CLEANUP-REPORT.md`

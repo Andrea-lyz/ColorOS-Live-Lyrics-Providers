@@ -2,8 +2,8 @@
 
 这是从旧 `LyricProvider` 独立出来的 4.0 Provider 仓库。Phase 0 的初始 source commit 为旧仓库 `master` 的 `292a7da3f88a87e8c6df6b4ae4f56455b6856c72`；当前分支为 `4.0`。
 
-Phase 1 的中立 core/parser/diagnostics 与 NPatch 清理已经完成；Phase 2 的 Salt/Cone Root Provider
-已完成，并已删除 Bridge 的 Salt/Cone legacy scope 和 adapter。Phase 4 已完成 `player-lx`
+Phase 1 的中立 core/parser/diagnostics 已完成；Phase 2 的 Salt/Cone Root Provider 已完成，
+并已删除 Bridge 的 Salt/Cone legacy scope 和 adapter。Phase 4 已完成 `player-lx`
 （LX Music / Walnut 共用，宿主仅 `cn.toside.music.mobile` 与 `com.lxwalnut.music.mobile`）、
 `player-poweramp`（宿主 `com.maxmpz.audioplayer`）、`player-metrolist`
 （宿主仅 `com.metrolist.music`）、`player-kugou`
@@ -34,5 +34,17 @@ Apple Music 实施记录见 [`PHASE-4-APPLE-MIGRATION-REPORT.md`](PHASE-4-APPLE-
 Spotify 实施记录见 [`PHASE-4-SPOTIFY-MIGRATION-REPORT.md`](PHASE-4-SPOTIFY-MIGRATION-REPORT.md)。
 汽水音乐实施记录见 [`PHASE-4-QISHUI-MIGRATION-REPORT.md`](PHASE-4-QISHUI-MIGRATION-REPORT.md)。
 最终仓库清理见 [`REPOSITORY-CLEANUP-REPORT.md`](REPOSITORY-CLEANUP-REPORT.md)。
+
+后续新增播放器必须先阅读：
+
+- [`PROVIDER-ADAPTATION-GUIDE.zh-CN.md`](PROVIDER-ADAPTATION-GUIDE.zh-CN.md)
+- [`PROVIDER-ADAPTATION-GUIDE.md`](PROVIDER-ADAPTATION-GUIDE.md)
+
+需要播放器自己主动发布 JSON 时，参阅 Bridge 的
+[`PLAYER_INTEGRATION.zh-CN.md`](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.0/docs/PLAYER_INTEGRATION.zh-CN.md)。
+
+本仓库不分发词幕 Provider。词幕功能从
+[LyricProvider 原项目](https://github.com/tomakino/LyricProvider) 获取；相关问题向原项目
+反馈，本仓库只受理 ColorOS 原生 `lyricInfo` 路线。
 
 新仓库没有配置旧 LyricProvider remote，避免 4.0 变更误推送到旧发布仓库。许可证、第三方来源和历史署名继续保留。
