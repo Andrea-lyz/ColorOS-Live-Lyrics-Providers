@@ -6,28 +6,26 @@
 
 package io.github.andrealtb.coloroslyrics.provider.lx
 
-import android.content.Context
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.session.PlaybackStateTranslationToggle
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.andrealtb.coloroslyrics.provider.reflection.ReflectionCache
 import java.lang.ref.WeakReference
 
-class LxPlayerHooker(
-    private val hookContext: Context,
-    private val hostPackage: String,
-    private val hostVersion: String?
-) : YukiBaseHooker() {
+class LxPlayerHooker(private val hookContext: ProviderHookContext) {
+    private val hookRuntime = hookContext.runtime
+    private val hostContext = hookContext.application
+    private val hostPackage = hookContext.packageName
+    private val hostVersion = hookContext.hostVersion
 
     private val sessions = LxMediaSessionRegistry()
     private val publicationLock = Any()
@@ -60,8 +58,8 @@ class LxPlayerHooker(
     private val generationPolicy: TrackGenerationPolicy
         get() = generationController.policy
 
-    override fun onHook() {
-        val resolution = RuntimeModeResolver.resolve(hookContext)
+    fun onHook() {
+        val resolution = RuntimeModeResolver.resolve(hostContext)
         if (!resolution.mode.isSupported) {
             StructuredDiagnostics.logWarning(
                 DiagnosticEvent(
@@ -79,7 +77,8 @@ class LxPlayerHooker(
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.LX,
-            rootSource = YukiHookDebugSource.create(hookContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -131,8 +130,8 @@ class LxPlayerHooker(
             }
             val setLyric = reflectionCache.getOrPutMethod("lx.setLyric") {
                 LxLyricModuleResolver.findSetLyricMethod(lyricModule, hostVersion)
-            }.apply { isAccessible = true }
-            setLyric.hook {
+            }
+            hookRuntime.hook(setLyric, "lx.lyric.${lyricModule.name}#${setLyric.name}") {
                 after {
                     onSetLyric(
                         args.getOrNull(0) as? String,
@@ -178,9 +177,8 @@ class LxPlayerHooker(
     private fun installSessionHooks() {
         runCatching {
             val type = MediaSession::class.java
-            type.declaredConstructors.forEach { constructor ->
-                constructor.isAccessible = true
-                constructor.hook {
+            type.declaredConstructors.forEachIndexed { index, constructor ->
+                hookRuntime.hook(constructor, "lx.session.MediaSession#ctor$index") {
                     after {
                         (instanceOrNull as? MediaSession)?.let {
                             sessions.onConstructed(it, LxMediaSessionRegistry.constructorTag(args))
@@ -189,7 +187,10 @@ class LxPlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setMetadata", MediaMetadata::class.java).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setMetadata", MediaMetadata::class.java),
+                "lx.session.MediaSession#setMetadata"
+            ) {
                 before {
                     if (sessions.isModuleWrite()) return@before
                     val session = instanceOrNull as? MediaSession ?: return@before
@@ -286,7 +287,10 @@ class LxPlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java),
+                "lx.session.MediaSession#setPlaybackState"
+            ) {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val original = args.getOrNull(0) as? PlaybackState
@@ -297,7 +301,10 @@ class LxPlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType),
+                "lx.session.MediaSession#setActive"
+            ) {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val active = args.getOrNull(0) as? Boolean ?: false
@@ -306,7 +313,7 @@ class LxPlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("release").apply { isAccessible = true }.hook {
+            hookRuntime.hook(type.getDeclaredMethod("release"), "lx.session.MediaSession#release") {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     sessions.onReleased(session)
@@ -319,7 +326,7 @@ class LxPlayerHooker(
     }
 
     private fun injectPublicTranslationToggle(original: PlaybackState): PlaybackState {
-        val patched = PlaybackStateTranslationToggle.prependPublicAction(original, hookContext)
+        val patched = PlaybackStateTranslationToggle.prependPublicAction(original, hostContext)
         if (patched !== original && !translationActionInjectionLogged) {
             translationActionInjectionLogged = true
             StructuredDiagnostics.logInfo(
