@@ -6,8 +6,8 @@
 
 package io.github.andrealtb.coloroslyrics.provider.salt
 
-import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugSettingsActivity
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
+import io.github.andrealtb.coloroslyrics.provider.settings102.ProviderDebugSettingsActivity
 
 class SaltDebugSettingsActivity : ProviderDebugSettingsActivity() {
     override val providerId: ProviderId = ProviderId.SALT

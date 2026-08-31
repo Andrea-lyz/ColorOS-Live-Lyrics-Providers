@@ -8,10 +8,8 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
@@ -19,10 +17,14 @@ import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.session.PlaybackStateTranslationToggle
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.andrealtb.coloroslyrics.provider.reflection.ReflectionCache
 import java.lang.ref.WeakReference
 
-class SaltPlayerHooker(private val hookContext: Context, private val hostVersion: String?) : YukiBaseHooker() {
+class SaltPlayerHooker(private val hookContext: ProviderHookContext) {
+    private val hookRuntime = hookContext.runtime
+    private val hostContext = hookContext.application
+    private val hostVersion = hookContext.hostVersion
     private val sessions = SaltMediaSessionRegistry()
     private val dexKitLock = Any()
     private val publicationLock = Any()
@@ -43,8 +45,8 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
     private var resolvedSongAccessors: SaltSongAccessors? = null
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
-    override fun onHook() {
-        val resolution = RuntimeModeResolver.resolve(hookContext)
+    fun onHook() {
+        val resolution = RuntimeModeResolver.resolve(hostContext)
         if (!resolution.mode.isSupported) {
             StructuredDiagnostics.logWarning(DiagnosticEvent(
                 component = "provider/salt", area = "bootstrap", event = "HOOK_DISABLED",
@@ -55,7 +57,8 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.SALT,
-            rootSource = YukiHookDebugSource.create(hookContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -91,8 +94,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
             runCatching {
                 val receiver = hookContext.classLoader.loadClass(SaltPlayerConstants.MEDIA_BUTTON_RECEIVER_CLASS)
                 val onReceive = receiver.getDeclaredMethod("onReceive", Context::class.java, Intent::class.java)
-                onReceive.isAccessible = true
-                onReceive.hook {
+                hookRuntime.hook(onReceive, "salt.media-button.MediaButtonIntentReceiver#onReceive") {
                     before {
                         val context = args.getOrNull(0) as? Context ?: return@before
                         val intent = args.getOrNull(1) as? Intent ?: return@before
@@ -118,7 +120,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
         runCatching {
             reflectionCache.ensureValid(hookContext.classLoader, hostVersion)
             val discovery = synchronized(dexKitLock) {
-                SaltDexKitDiscovery.discover(hookContext.applicationInfo.sourceDir, hookContext.classLoader)
+                SaltDexKitDiscovery.discover(hostContext.applicationInfo.sourceDir, hookContext.classLoader)
             }
             val sourceEnumClass = discovery.sourceEnum.getInstance(hookContext.classLoader)
             val resultClass = discovery.lyricResult.getInstance(hookContext.classLoader)
@@ -128,8 +130,6 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
             }
             val publicationMethod = reflectionCache.getOrPutMethod("salt.publisher.${publisherClass.name}") {
                 SaltPublisherMethodResolver.findInvokeSuspendMethod(publisherClass)
-            }.apply {
-                isAccessible = true
             }
             val accessors = SaltSongAccessors(
                 id = reflectionCache.getOrPutMethod("salt.song.getId") { songClass.getMethod("getId") },
@@ -148,7 +148,12 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
                 resolvedSourceEnumClass = sourceEnumClass
                 resolvedSongAccessors = accessors
             }
-            publicationMethod.hook { after { instanceOrNull?.let(::onFinalLyricPublication) } }
+            hookRuntime.hook(
+                publicationMethod,
+                "salt.publisher.${publicationMethod.declaringClass.name}#${publicationMethod.name}"
+            ) {
+                after { instanceOrNull?.let(::onFinalLyricPublication) }
+            }
             StructuredDiagnostics.logInfo(DiagnosticEvent(
                 component = "provider/salt", area = "reflection", event = "PUBLISHER_HOOK_INSTALLED",
                 reason = "publisher=${publisherClass.name}#${publicationMethod.name}"
@@ -173,15 +178,19 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
     private fun installSessionHooks() {
         runCatching {
             val type = MediaSession::class.java
-            type.declaredConstructors.forEach { constructor ->
-                constructor.isAccessible = true
-                constructor.hook { after {
-                    (instanceOrNull as? MediaSession)?.let {
-                        sessions.onConstructed(it, SaltMediaSessionRegistry.constructorTag(args))
+            type.declaredConstructors.forEachIndexed { index, constructor ->
+                hookRuntime.hook(constructor, "salt.session.MediaSession#ctor$index") {
+                    after {
+                        (instanceOrNull as? MediaSession)?.let {
+                            sessions.onConstructed(it, SaltMediaSessionRegistry.constructorTag(args))
+                        }
                     }
-                } }
+                }
             }
-            type.getDeclaredMethod("setMetadata", MediaMetadata::class.java).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setMetadata", MediaMetadata::class.java),
+                "salt.session.MediaSession#setMetadata"
+            ) {
                 before {
                     if (sessions.isModuleWrite()) return@before
                     val session = instanceOrNull as? MediaSession ?: return@before
@@ -207,7 +216,10 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
                     }
                 }
             }
-            type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java),
+                "salt.session.MediaSession#setPlaybackState"
+            ) {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val original = args.getOrNull(0) as? PlaybackState
@@ -217,7 +229,10 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
                     drainPendingPublication()
                 }
             }
-            type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType),
+                "salt.session.MediaSession#setActive"
+            ) {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     sessions.onActive(session, args.getOrNull(0) as? Boolean ?: false)
@@ -225,7 +240,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
                     drainPendingPublication()
                 }
             }
-            type.getDeclaredMethod("release").apply { isAccessible = true }.hook {
+            hookRuntime.hook(type.getDeclaredMethod("release"), "salt.session.MediaSession#release") {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     sessions.onReleased(session)
@@ -238,7 +253,7 @@ class SaltPlayerHooker(private val hookContext: Context, private val hostVersion
     }
 
     private fun injectPublicTranslationToggle(original: PlaybackState): PlaybackState {
-        val patched = PlaybackStateTranslationToggle.prependPublicAction(original, hookContext)
+        val patched = PlaybackStateTranslationToggle.prependPublicAction(original, hostContext)
         if (patched !== original && !translationActionInjectionLogged) {
             translationActionInjectionLogged = true
             StructuredDiagnostics.logInfo(

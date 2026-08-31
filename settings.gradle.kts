@@ -35,6 +35,10 @@ rootProject.name = "ColorOS-Live-Lyrics-Providers"
 
 // 4.0 Infrastructure & Parser Modules
 include(":provider-core")
+// v4.1 libxposed API 102 shared runtime: only enters the hook path of target players.
+include(":provider-hook-api102")
+// v4.1 libxposed service shared layer: Provider module App and Debug config write side.
+include(":provider-settings-api102")
 include(":reflection-core")
 include(":parser-lrc")
 include(":parser-qrc")

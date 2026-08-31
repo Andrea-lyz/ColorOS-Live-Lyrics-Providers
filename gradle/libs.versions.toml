@@ -17,6 +17,8 @@ kavaref-extension = "1.0.2"
 kotlinxSerializationJson = "1.11.0"
 kotlin = "2.3.20"
 junitJupiter = "6.0.3"
+libxposedApi = "102.0.0"
+libxposedService = "102.0.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -39,6 +41,8 @@ xposed-api = { module = "de.robv.android.xposed:api", version.ref = "xposed" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junitJupiter" }
 junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher", version.ref = "junitJupiter" }
+libxposed-api = { module = "io.github.libxposed:api", version.ref = "libxposedApi" }
+libxposed-service = { module = "io.github.libxposed:service", version.ref = "libxposedService" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

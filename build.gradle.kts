@@ -74,6 +74,8 @@ tasks.register("testV5Matrix") {
     dependsOn(v5ProviderModules.map { "$it:testDebugUnitTest" })
     dependsOn(
         ":provider-core:testDebugUnitTest",
+        ":provider-hook-api102:testDebugUnitTest",
+        ":provider-settings-api102:testDebugUnitTest",
         ":reflection-core:testDebugUnitTest",
         ":share:extensions-android:testDebugUnitTest",
         ":share:extensions-kt:test",

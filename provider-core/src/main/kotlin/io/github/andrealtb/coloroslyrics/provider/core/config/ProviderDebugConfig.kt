@@ -8,6 +8,7 @@ package io.github.andrealtb.coloroslyrics.provider.core.config
 
 import android.content.Context
 import android.content.SharedPreferences
+import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticSink
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeMode
 
@@ -94,6 +95,21 @@ object ProviderDebugConfig {
     ): ProviderDebugResolution {
         val resolution = resolveDetailed(mode, provider, rootSource)
         StructuredDiagnostics.configureForRuntime(mode, resolution.enabled)
+        return resolution
+    }
+
+    /**
+     * v4.1 variant used by libxposed API 102 entries: the framework sink is injected by the
+     * modern runtime instead of constructing the legacy Xposed bridge sink here.
+     */
+    fun applyDiagnostics(
+        mode: RuntimeMode,
+        provider: ProviderId,
+        rootSource: ProviderDebugSource?,
+        frameworkSink: DiagnosticSink?
+    ): ProviderDebugResolution {
+        val resolution = resolveDetailed(mode, provider, rootSource)
+        StructuredDiagnostics.configureForRuntime(mode, resolution.enabled, frameworkSink)
         return resolution
     }
 

@@ -34,6 +34,21 @@ object StructuredDiagnostics {
         configure(debugEnabled, frameworkSinks)
     }
 
+    /**
+     * v4.1 variant with an injected framework sink. Used by libxposed API 102 entries through
+     * FrameworkLogSink; passing null keeps the logcat-only configuration. The legacy overload
+     * above stays for providers that have not migrated yet and is removed with the final
+     * legacy cleanup.
+     */
+    fun configureForRuntime(mode: RuntimeMode, debugEnabled: Boolean, frameworkSink: DiagnosticSink?) {
+        val frameworkSinks = if (mode == RuntimeMode.ROOT_MODULE && frameworkSink != null) {
+            listOf(frameworkSink)
+        } else {
+            emptyList()
+        }
+        configure(debugEnabled, frameworkSinks)
+    }
+
     fun addSink(sink: DiagnosticSink) {
         if (!sinks.contains(sink)) {
             sinks.add(sink)
