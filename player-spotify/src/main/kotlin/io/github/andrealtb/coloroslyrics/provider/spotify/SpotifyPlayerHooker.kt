@@ -160,8 +160,10 @@ class SpotifyPlayerHooker(
 
     private fun installApplicationHooks() {
         runCatching {
-            val applicationClass = hookContext.applicationContext.javaClass
-            val method = applicationClass.methods.firstOrNull {
+            val application = checkNotNull(hookContext as? Application) {
+                "API 102 bootstrap did not provide the host Application instance"
+            }
+            val method = application.javaClass.methods.firstOrNull {
                 it.name == "onTerminate" && it.parameterCount == 0
             } ?: Application::class.java.getDeclaredMethod("onTerminate")
             method.isAccessible = true
