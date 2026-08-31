@@ -281,7 +281,7 @@ QQ 首曲的 5 条法语逐字行被 Bridge `raw-split` 启发式误拆，以及
 `testV5Matrix` 全矩阵回归和源码 forbidden 扫描（Yuki/legacy Xposed 等 token 为 0）。
 测试包：`device-testing/wave-d/`；Apple APK SHA-256
 `73AC328C2516C127AE0335D65FB0D6C87E9C384E383A29A00FA1C5B82933D06D`，Spotify APK
-SHA-256 `6B153EF80D221CF410B1A4A647823B1A5AB1FABB3A93A8306EA90F984609A705`。
+SHA-256 `774F6AA415FE0AF146920BF20BC89FF5512A9B5ED348320C3A9C071501B41F7A`。
 首轮 Apple 真机日志 `logs/lyrics-log-20260831-160438.txt` 暴露 bootstrap 误传
 `Application.attach(Context)` 的 base Context，导致 Apple 在安装业务 Hook 前静默返回（`hooks=1`）。
 提交 `eb675b1` 改为传递真实 Application 实例并加入显式断言；共享层/Apple 单测、Debug APK、
