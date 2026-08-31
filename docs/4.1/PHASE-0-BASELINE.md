@@ -1,7 +1,7 @@
 # v4.1.0 Phase 0：基线冻结与迁移台账
 
-> 状态：Phase 0/1 与 Wave A–D 已完成；11/12 Provider 已通过本地门禁与用户真机回归；
-> 仅 Wave E（NetEase）待执行。
+> 状态：Phase 0/1 与 Wave A–D 已完成；12/12 Provider 已完成 API 102 源码迁移与
+> 本地 Debug 全矩阵门禁；11/12 已通过用户真机回归，仅 Wave E（NetEase）待真机验证。
 > 上游计划：工作区根目录 `todo.md`（ColorOS Live Lyrics Bridge v4.1.0 TODO）。
 
 ## 1. 冻结基线（2026-08-31）
@@ -15,7 +15,8 @@
 4.0 发布基线：Bridge tag `v4.0.0`，Provider source tag `providers-v1.0.0`，
 矩阵契约 `release/v5-provider-matrix.json`（schema 1，suiteVersion 4.0.0，12 Provider）。
 
-用户未提交修改（属于用户，迁移期间不得覆盖/回滚，不计入 4.1 基线）：
+Wave E 开始前保留的 4 个用户 NetEase WIP 文件已先经定向单测验证，并独立提交为
+`be4eea1`，再开始 Hook API 迁移：
 
 - `player-netease/src/main/kotlin/.../NeteaseLyricInfoPayloadEncoder.kt`
 - `player-netease/src/main/kotlin/.../NeteaseLyricInfoPublisher.kt`
@@ -304,3 +305,46 @@ Bridge hotfix APK SHA-256
 至 49s，新曲从 1.2s 推进至 10.1s，`playing=true`、`active=true`、
 `scaleActiveIndex` 连续变化，暂停态 PlaybackState 亦正常。至此 Apple 与 Spotify 均完成用户
 真机回归，Wave D 结论：全部通过。
+
+## 14. Wave E Hook ledger（NetEase，源码迁移与本地门禁通过）
+
+NetEase 继续由一个 APK 覆盖四个显式 package/process profile：
+
+| package / process | profile | 处理 |
+|---|---|---|
+| `com.netease.cloudmusic` | `OFFICIAL_APPEND` | 官方 writer/encoder 追加 |
+| `com.netease.cloudmusic:play` | `CONSTRUCTED` | 9.0.40 构造链 |
+| `com.hihonor.cloudmusic` | `OFFICIAL_APPEND` | 荣耀官方追加 |
+| `com.hihonor.cloudmusic:play` | `OFFICIAL_APPEND` | 荣耀播放进程官方追加 |
+
+| # | 目标 | 4.0 形态 | 4.1 处理 |
+|---|---|---|---|
+| 1 | package/process 路由 | Yuki `loadApp` + hooker 内 profile gate | 唯一 `NeteaseModuleEntry` + `NeteaseProfileProcessPolicy`，拒绝进程在业务 Hook 前 detach |
+| 2 | `MediaSession#setMetadata` | KavaRef + Yuki before | `netease:netease.session.MediaSession#setMetadata`；constructed 请求、generation 与 host metadata overlay 不变 |
+| 3 | 官方 lyric writer before/after | `XposedBridge.hookMethod` + `XC_MethodHook` | `netease:netease.writer.<class>#<method>`；ThreadLocal 仅覆盖同步 writer→encoder 窗口 |
+| 4 | 官方 encoder result after | `XposedBridge.hookMethod` 直接替换 result | `netease:netease.encoder.<class>#<method>`；共享 Chain 先 `proceed()` 一次，再显式返回修补结果 |
+| 5 | track-bind methods before | 复用一个 `XC_MethodHook` | `netease:netease.track.<class>#<method>`，逐方法稳定 id |
+| 6 | `Handler#dispatchMessage` after | 全局 legacy Hook + handler/what/payload 过滤 | `netease:netease.dispatch.Handler#dispatchMessage`；原有三重过滤和 post-dispatch capture 不变 |
+
+`NeteaseConstructedLyricSession`、`NeteaseLyricSessionCoordinator`、payload mode、异步
+generation 防串曲、官方/构造 source 值均未因 Hook API 迁移改变。Wave E 前的官方歌词重复
+别名修复保留在独立提交 `be4eea1`；API 102 迁移提交为 `8208945`。
+
+最后一个 Provider 迁移完成后，提交 `37df111` 删除 `provider-core` 中的
+`YukiHookDebugSource`、world-readable/New XSharedPreferences 路径、legacy `XposedSink` 与
+Yuki/legacy Xposed 依赖；Apple/Spotify 设置页同时改回共享 Remote Preferences Activity，
+不改变其播放器 Hook 逻辑。
+
+本地门禁：
+
+- `:player-netease:testDebugUnitTest`、`:player-netease:verifyXposedApi102Resources`、
+  `:player-netease:assembleDebug` 通过；
+- `testV5Matrix` 与 `assembleV5MatrixDebug` 通过，共产出 12/12 Debug APK；
+- 12 个 Debug APK 解包后的 DEX legacy forbidden hits 为 0；
+- NetEase APK 的 `module.prop` 为 API 102/protective/static scope/关闭 auto hot reload，
+  `java_init.list` 仅含 `NeteaseModuleEntry`，scope 为 NetEase + Honor 两包，legacy entry 为 0；
+- NetEase Debug APK SHA-256：
+  `A84887181C61CA6F2EE407B7B0A82FD71332AD4DDC06830B6D43EF659397358E`，v2 debug 签名通过。
+
+当前结论仅为源码、本地测试、APK 结构与 Debug 全矩阵通过；Wave E 的四 profile 真机等价性、
+Remote Preferences 开关和 LSPosed 废弃警告消失仍待用户设备验证，不提前标记 Wave E 完成。
