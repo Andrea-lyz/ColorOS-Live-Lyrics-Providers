@@ -9,6 +9,7 @@ package io.github.andrealtb.coloroslyrics.provider.netease
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * Encodes both native-append and constructed NetEase lyricInfo payloads.
@@ -19,14 +20,28 @@ object NeteaseLyricInfoPayloadEncoder {
     private val WHITESPACE_REGEX = Regex("\\s+")
     private val TIMED_LRC_REGEX =
         Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
+    private val TIMED_LRC_CAPTURE_REGEX =
+        Regex("""[\[<]([0-9]{1,3}):([0-9]{2})(?:[.:]([0-9]{1,3}))?[\]>]""")
     private val JSON_STRING_FIELD =
         Regex(""""([^"\\]+)":\s*"((?:\\.|[^"\\])*)"""")
+    private const val DISPLAY_LINE_MATCH_WINDOW_MS = 650L
 
     data class Encoded(
         val value: String,
         val plainLyric: String,
         val rawLyric: String,
-        val translationLyric: String
+        val translationLyric: String,
+        val repairedOfficialLyric: Boolean
+    )
+
+    private data class DisplayLyricSelection(
+        val lyric: String,
+        val repairedOfficialLyric: Boolean
+    )
+
+    private data class TimedDisplayLine(
+        val timeMillis: Long,
+        val matchKey: String
     )
 
     fun encode(
@@ -43,9 +58,12 @@ object NeteaseLyricInfoPayloadEncoder {
         val rawLyric = toEnhancedLrc(track, lines)
         val translationLyric = toTranslationLrc(lines)
         val existing = existingLyricInfo?.trim().orEmpty()
-        val officialLyric = extractJsonString(existing, "lyric")
-            ?.takeIf { it.isNotBlank() }
-            ?: plainLyric
+        val displayLyric = chooseDisplayLyric(
+            mode = mode,
+            hostOfficialLyric = extractJsonString(existing, "lyric"),
+            decodedPrimaryLyric = plainLyric
+        )
+        val officialLyric = displayLyric.lyric
         val songId = firstNonBlank(
             extractJsonString(existing, "songId"),
             track.id
@@ -80,8 +98,94 @@ object NeteaseLyricInfoPayloadEncoder {
             ) { "\"${it.key}\":${it.value}" },
             plainLyric = officialLyric,
             rawLyric = rawLyric,
-            translationLyric = translationLyric
+            translationLyric = translationLyric,
+            repairedOfficialLyric = displayLyric.repairedOfficialLyric
         )
+    }
+
+    /**
+     * Keep NetEase's native display lyric unless it can alias a later row onto an earlier
+     * decoded YRC line. ColorOS suppresses duplicate alias objects outside the active slot;
+     * that made the later row stay blank until playback reached it. In that narrow case the
+     * decoded primary timeline is authoritative because it is also the source of rawLyric.
+     */
+    private fun chooseDisplayLyric(
+        mode: NeteasePayloadMode,
+        hostOfficialLyric: String?,
+        decodedPrimaryLyric: String
+    ): DisplayLyricSelection {
+        val hostLyric = hostOfficialLyric?.takeIf { it.isNotBlank() }
+            ?: return DisplayLyricSelection(decodedPrimaryLyric, false)
+        if (mode != NeteasePayloadMode.OFFICIAL_APPEND ||
+            !hasCrossTimestampAliasCollision(hostLyric, decodedPrimaryLyric)
+        ) {
+            return DisplayLyricSelection(hostLyric, false)
+        }
+        return DisplayLyricSelection(decodedPrimaryLyric, true)
+    }
+
+    private fun hasCrossTimestampAliasCollision(
+        hostOfficialLyric: String,
+        decodedPrimaryLyric: String
+    ): Boolean {
+        val officialLines = parseTimedDisplayLines(hostOfficialLyric)
+        val decodedLines = parseTimedDisplayLines(decodedPrimaryLyric)
+        if (officialLines.isEmpty() || decodedLines.isEmpty()) return false
+
+        officialLines.forEach { officialLine ->
+            val nearestDecoded = decodedLines.minByOrNull { line ->
+                abs(line.timeMillis - officialLine.timeMillis)
+            } ?: return@forEach
+            if (abs(nearestDecoded.timeMillis - officialLine.timeMillis) >
+                DISPLAY_LINE_MATCH_WINDOW_MS ||
+                officialLine.matchKey.isBlank() ||
+                officialLine.matchKey == nearestDecoded.matchKey
+            ) {
+                return@forEach
+            }
+            if (decodedLines.any { line ->
+                    line.matchKey == officialLine.matchKey &&
+                        abs(line.timeMillis - officialLine.timeMillis) >
+                        DISPLAY_LINE_MATCH_WINDOW_MS
+                }
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun parseTimedDisplayLines(lyric: String): List<TimedDisplayLine> =
+        lyric.lineSequence().mapNotNull { rawLine ->
+            val line = rawLine.trim()
+            val firstTag = TIMED_LRC_CAPTURE_REGEX.find(line)
+                ?.takeIf { it.range.first == 0 }
+                ?: return@mapNotNull null
+            val matchKey = displayMatchKey(TIMED_LRC_REGEX.replace(line, ""))
+            if (matchKey.isBlank()) return@mapNotNull null
+            TimedDisplayLine(
+                timeMillis = parseLrcTimeMillis(firstTag),
+                matchKey = matchKey
+            )
+        }.toList()
+
+    private fun parseLrcTimeMillis(match: MatchResult): Long {
+        val minutes = match.groupValues[1].toLongOrNull() ?: return -1L
+        val seconds = match.groupValues[2].toLongOrNull() ?: return -1L
+        val fraction = match.groupValues[3]
+        val millis = when (fraction.length) {
+            0 -> 0L
+            1 -> fraction.toLong() * 100L
+            2 -> fraction.toLong() * 10L
+            else -> fraction.take(3).padEnd(3, '0').toLong()
+        }
+        return minutes * 60_000L + seconds * 1_000L + millis
+    }
+
+    private fun displayMatchKey(text: String): String = buildString(text.length) {
+        cleanPlainText(text).forEach { character ->
+            if (character.isLetterOrDigit()) append(character.lowercaseChar())
+        }
     }
 
     private fun toEnhancedLrc(track: TrackIdentity, lines: List<RichLyricLine>): String {

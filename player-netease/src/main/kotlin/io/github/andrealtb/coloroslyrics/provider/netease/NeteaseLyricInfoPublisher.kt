@@ -268,7 +268,8 @@ object NeteaseLyricInfoPublisher {
             payloadChars = encoded.value.length,
             message = "source=${publication.payloadMode.source} " +
                 "capture=${publication.captureOrigin} rawChars=${encoded.rawLyric.length} " +
-                "translationChars=${encoded.translationLyric.length}"
+                "translationChars=${encoded.translationLyric.length} " +
+                "officialLyricRepair=${encoded.repairedOfficialLyric}"
         )
         return patched
     }

@@ -176,7 +176,8 @@ class NeteaseOfficialLyricHooks(
                         session = publication.track.id,
                         payloadChars = encoded.value.length,
                         message = "source=encoder rawChars=${encoded.rawLyric.length} " +
-                            "translationChars=${encoded.translationLyric.length} ${threadNote()}"
+                            "translationChars=${encoded.translationLyric.length} " +
+                            "officialLyricRepair=${encoded.repairedOfficialLyric} ${threadNote()}"
                     )
                 }.onFailure { error ->
                     NeteaseDiagnostics.error(

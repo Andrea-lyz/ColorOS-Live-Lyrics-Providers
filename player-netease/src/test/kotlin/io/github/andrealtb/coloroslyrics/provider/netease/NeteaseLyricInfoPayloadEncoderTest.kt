@@ -56,6 +56,46 @@ class NeteaseLyricInfoPayloadEncoderTest {
         assertTrue(NeteaseLyricInfoPayloadEncoder.isOfficialAppend(encoded.value))
         assertFalse(NeteaseLyricInfoPayloadEncoder.isOfficialAppend(existing))
         assertFalse(NeteaseLyricInfoPayloadEncoder.isOfficialAppend(null))
+        assertFalse(encoded.repairedOfficialLyric)
+    }
+
+    @Test
+    fun replacesOfficialDisplayLyricWhenRepeatedTextAliasesALaterYrcRow() {
+        val lines = listOf(
+            RichLyricLine(
+                begin = 64_920L,
+                end = 66_000L,
+                duration = 1_080L,
+                text = "Why do you hide?"
+            ),
+            RichLyricLine(
+                begin = 83_370L,
+                end = 84_270L,
+                duration = 900L,
+                text = "Bigger!"
+            ),
+            RichLyricLine(
+                begin = 84_270L,
+                end = 85_800L,
+                duration = 1_530L,
+                text = "Why do you ride?"
+            )
+        )
+        val existing = """{"lyric":"[01:04.920]Why do you hide?\n[01:23.370]Bigger!\n[01:24.270]Why do you hide?\n","songName":"Bigger"}"""
+
+        val encoded = NeteaseLyricInfoPayloadEncoder.encode(
+            track = TrackIdentity(id = "1", title = "Bigger", artist = "Artist"),
+            lines = lines,
+            trackGeneration = 1L,
+            hostPackage = NeteasePlayerConstants.HOST_PACKAGE,
+            existingLyricInfo = existing,
+            mode = NeteasePayloadMode.OFFICIAL_APPEND
+        )
+
+        requireNotNull(encoded)
+        assertTrue(encoded.repairedOfficialLyric)
+        assertTrue(encoded.plainLyric.contains("[01:24.270]Why do you ride?"))
+        assertFalse(encoded.plainLyric.contains("[01:24.270]Why do you hide?"))
     }
 
     @Test
