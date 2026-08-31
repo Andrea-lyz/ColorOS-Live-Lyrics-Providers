@@ -6,17 +6,15 @@
 
 package io.github.andrealtb.coloroslyrics.provider.spotify
 
+import android.app.Application
 import android.content.Context
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import com.highcapable.yukihookapi.hook.factory.toClass
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
@@ -24,6 +22,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,10 +33,16 @@ import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
 
 class SpotifyPlayerHooker(
-    private val hookContext: Context,
-    private val hostPackage: String,
-    private val hostVersion: String?
-) : YukiBaseHooker() {
+    providerContext: ProviderHookContext
+) {
+
+    private val hookContext: Context = providerContext.application
+    private val hostPackage: String = providerContext.packageName
+    private val hostVersion: String? = providerContext.hostVersion
+    private val hookRuntime = providerContext.runtime
+    private val appClassLoader: ClassLoader = providerContext.classLoader
+    private val debugSource = providerContext.debugSource
+    private val frameworkSink = providerContext.frameworkSink
 
     private val sessions = SpotifyMediaSessionRegistry()
     private val publicationLock = Any()
@@ -82,7 +87,7 @@ class SpotifyPlayerHooker(
     private val generationPolicy: TrackGenerationPolicy
         get() = generationController.policy
 
-    override fun onHook() {
+    fun onHook() {
         val resolution = RuntimeModeResolver.resolve(hookContext)
         if (!resolution.mode.isSupported) {
             StructuredDiagnostics.logWarning(
@@ -97,22 +102,11 @@ class SpotifyPlayerHooker(
             )
             return
         }
-        if (!SpotifyPlayerConstants.isPlaybackProcess(resolution.processName)) {
-            StructuredDiagnostics.logDebug(
-                DiagnosticEvent(
-                    component = SpotifyPlayerConstants.COMPONENT,
-                    area = "bootstrap",
-                    event = "PROCESS_SKIPPED",
-                    process = resolution.processName
-                )
-            )
-            return
-        }
-
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.SPOTIFY,
-            rootSource = YukiHookDebugSource.create(hookContext)
+            rootSource = debugSource,
+            frameworkSink = frameworkSink
         )
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -150,9 +144,7 @@ class SpotifyPlayerHooker(
 
         installSessionHooks()
         installHeaderHooks()
-        onAppLifecycle {
-            onTerminate { fetchScope.cancel() }
-        }
+        installApplicationHooks()
 
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -164,6 +156,22 @@ class SpotifyPlayerHooker(
                 providerVersion = hostVersion
             )
         )
+    }
+
+    private fun installApplicationHooks() {
+        runCatching {
+            val applicationClass = hookContext.applicationContext.javaClass
+            val method = applicationClass.methods.firstOrNull {
+                it.name == "onTerminate" && it.parameterCount == 0
+            } ?: Application::class.java.getDeclaredMethod("onTerminate")
+            method.isAccessible = true
+            hookRuntime.hook(
+                method,
+                "spotify.app.${method.declaringClass.name}#onTerminate"
+            ) {
+                after { fetchScope.cancel() }
+            }
+        }.onFailure { logFailure("hook", "APPLICATION_TERMINATE_HOOK_FAILED", it) }
     }
 
     private fun installHeaderHooks() {
@@ -194,11 +202,14 @@ class SpotifyPlayerHooker(
     private fun installShadedHeaderHooks(): Int = runCatching {
         val constructors = SpotifyShadedHeadersResolver.resolve(
             hostApkPaths(),
-            hookContext.classLoader
+            appClassLoader
         )
-        constructors.forEach { constructor ->
+        constructors.forEachIndexed { index, constructor ->
             constructor.isAccessible = true
-            constructor.hook {
+            hookRuntime.hook(
+                constructor,
+                "spotify.headers.shaded.${constructor.declaringClass.name}#constructor$index"
+            ) {
                 after {
                     captureHeaderBlock(args.getOrNull(0), "spotify-shaded-okhttp")
                 }
@@ -224,11 +235,14 @@ class SpotifyPlayerHooker(
     private fun installCronetHeaderHooks(): Int = runCatching {
         val methods = SpotifyCronetHeaderResolver.resolve(
             hostApkPaths(),
-            hookContext.classLoader
+            appClassLoader
         )
-        methods.forEach { method ->
+        methods.forEachIndexed { index, method ->
             method.isAccessible = true
-            method.hook {
+            hookRuntime.hook(
+                method,
+                "spotify.headers.cronet.${method.declaringClass.name}#${method.name}$index"
+            ) {
                 before {
                     captureHeaderPair(
                         args.getOrNull(0) as? String,
@@ -256,10 +270,13 @@ class SpotifyPlayerHooker(
     }.getOrDefault(0)
 
     private fun installOkHttpHeaderHooks(): Int = runCatching {
-            val headersClass = "okhttp3.Headers".toClass()
-            headersClass.declaredConstructors.forEach { constructor ->
+            val headersClass = appClassLoader.loadClass("okhttp3.Headers")
+            headersClass.declaredConstructors.forEachIndexed { index, constructor ->
                 constructor.isAccessible = true
-                constructor.hook {
+                hookRuntime.hook(
+                    constructor,
+                    "spotify.headers.okhttp.Headers#constructor$index"
+                ) {
                     after {
                         captureHeaderBlock(args.getOrNull(0), "okhttp")
                     }
@@ -323,9 +340,9 @@ class SpotifyPlayerHooker(
     private fun installSessionHooks() {
         runCatching {
             val type = MediaSession::class.java
-            type.declaredConstructors.forEach { constructor ->
+            type.declaredConstructors.forEachIndexed { index, constructor ->
                 constructor.isAccessible = true
-                constructor.hook {
+                hookRuntime.hook(constructor, "spotify.session.MediaSession#constructor$index") {
                     after {
                         (instanceOrNull as? MediaSession)?.let {
                             sessions.onConstructed(it, SpotifyMediaSessionRegistry.constructorTag(args))
@@ -336,7 +353,8 @@ class SpotifyPlayerHooker(
 
             type.getDeclaredMethod("setMetadata", MediaMetadata::class.java)
                 .apply { isAccessible = true }
-                .hook {
+                .also { method ->
+                    hookRuntime.hook(method, "spotify.session.MediaSession#setMetadata") {
                     before {
                         if (sessions.isModuleWrite()) return@before
                         val session = instanceOrNull as? MediaSession ?: return@before
@@ -425,10 +443,12 @@ class SpotifyPlayerHooker(
                         if (outgoing !== incoming) args[0] = outgoing
                     }
                 }
+                }
 
             type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java)
                 .apply { isAccessible = true }
-                .hook {
+                .also { method ->
+                    hookRuntime.hook(method, "spotify.session.MediaSession#setPlaybackState") {
                     after {
                         val session = instanceOrNull as? MediaSession ?: return@after
                         val state = (args.getOrNull(0) as? PlaybackState)?.state
@@ -437,10 +457,12 @@ class SpotifyPlayerHooker(
                         drainPendingPublication()
                     }
                 }
+                }
 
             type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType)
                 .apply { isAccessible = true }
-                .hook {
+                .also { method ->
+                    hookRuntime.hook(method, "spotify.session.MediaSession#setActive") {
                     after {
                         val session = instanceOrNull as? MediaSession ?: return@after
                         val active = args.getOrNull(0) as? Boolean ?: false
@@ -448,13 +470,16 @@ class SpotifyPlayerHooker(
                         drainPendingPublication()
                     }
                 }
+                }
 
-            type.getDeclaredMethod("release").apply { isAccessible = true }.hook {
-                before {
-                    val session = instanceOrNull as? MediaSession ?: return@before
-                    sessions.onReleased(session)
-                    synchronized(publicationLock) {
-                        if (replaySnapshot?.session?.get() === session) replaySnapshot = null
+            type.getDeclaredMethod("release").apply { isAccessible = true }.also { method ->
+                hookRuntime.hook(method, "spotify.session.MediaSession#release") {
+                    before {
+                        val session = instanceOrNull as? MediaSession ?: return@before
+                        sessions.onReleased(session)
+                        synchronized(publicationLock) {
+                            if (replaySnapshot?.session?.get() === session) replaySnapshot = null
+                        }
                     }
                 }
             }
