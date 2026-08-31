@@ -6,6 +6,7 @@
 
 package io.github.andrealtb.coloroslyrics.provider.poweramp
 
+import android.app.Application
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.ContextWrapper
@@ -18,10 +19,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
@@ -29,15 +28,16 @@ import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.session.PlaybackStateTranslationToggle
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import java.lang.ref.WeakReference
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
-class PowerampPlayerHooker(
-    private val hookContext: Context,
-    private val hostPackage: String,
-    private val hostVersion: String?
-) : YukiBaseHooker() {
+class PowerampPlayerHooker(private val hookContext: ProviderHookContext) {
+    private val hookRuntime = hookContext.runtime
+    private val hostContext = hookContext.application
+    private val hostPackage = hookContext.packageName
+    private val hostVersion = hookContext.hostVersion
 
     private val sessions = PowerampMediaSessionRegistry()
     private val publicationLock = Any()
@@ -65,8 +65,8 @@ class PowerampPlayerHooker(
     private val generationPolicy: TrackGenerationPolicy
         get() = generationController.policy
 
-    override fun onHook() {
-        val resolution = RuntimeModeResolver.resolve(hookContext)
+    fun onHook() {
+        val resolution = RuntimeModeResolver.resolve(hostContext)
         if (!resolution.mode.isSupported) {
             StructuredDiagnostics.logWarning(
                 DiagnosticEvent(
@@ -84,7 +84,8 @@ class PowerampPlayerHooker(
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.POWERAMP,
-            rootSource = YukiHookDebugSource.create(hookContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -123,24 +124,37 @@ class PowerampPlayerHooker(
         installSessionHooks()
         installTrackChangedSendHook()
         registerTrackReceiver()
-        onAppLifecycle {
-            onTerminate { release() }
-        }
+        installApplicationTerminateHook()
+    }
+
+    /**
+     * Replaces the 4.0 onAppLifecycle onTerminate callback: unregister the TRACK_CHANGED
+     * receiver and stop the lyric executor when the host application terminates.
+     */
+    private fun installApplicationTerminateHook() {
+        runCatching {
+            hookRuntime.hook(
+                Application::class.java.getDeclaredMethod("onTerminate"),
+                "poweramp.app.Application#onTerminate"
+            ) {
+                after { release() }
+            }
+        }.onFailure { logFailure("hook", "APP_TERMINATE_HOOK_FAILED", it) }
     }
 
     private fun installTrackChangedSendHook() {
         runCatching {
-            ContextWrapper::class.java
-                .getDeclaredMethod("sendStickyBroadcast", Intent::class.java)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        val intent = args.getOrNull(0) as? Intent ?: return@before
-                        if (intent.action == PowerampPlayerConstants.ACTION_TRACK_CHANGED) {
-                            onTrackChanged(intent, source = "host-send")
-                        }
+            hookRuntime.hook(
+                ContextWrapper::class.java.getDeclaredMethod("sendStickyBroadcast", Intent::class.java),
+                "poweramp.track.ContextWrapper#sendStickyBroadcast"
+            ) {
+                before {
+                    val intent = args.getOrNull(0) as? Intent ?: return@before
+                    if (intent.action == PowerampPlayerConstants.ACTION_TRACK_CHANGED) {
+                        onTrackChanged(intent, source = "host-send")
                     }
                 }
+            }
             StructuredDiagnostics.logInfo(
                 DiagnosticEvent(
                     component = "provider/poweramp",
@@ -161,7 +175,7 @@ class PowerampPlayerHooker(
             }
         }.also { receiver ->
             ContextCompat.registerReceiver(
-                hookContext,
+                hostContext,
                 receiver,
                 filter,
                 ContextCompat.RECEIVER_NOT_EXPORTED
@@ -208,7 +222,7 @@ class PowerampPlayerHooker(
         )
         lyricExecutor.execute {
             val publication = runCatching {
-                PowerampLyricLoader.load(hookContext, snapshot)
+                PowerampLyricLoader.load(hostContext, snapshot)
             }.onFailure {
                 logFailure("lyric", "LOCAL_LYRIC_LOAD_FAILED", it)
             }.getOrNull()
@@ -229,9 +243,8 @@ class PowerampPlayerHooker(
     private fun installSessionHooks() {
         runCatching {
             val type = MediaSession::class.java
-            type.declaredConstructors.forEach { constructor ->
-                constructor.isAccessible = true
-                constructor.hook {
+            type.declaredConstructors.forEachIndexed { index, constructor ->
+                hookRuntime.hook(constructor, "poweramp.session.MediaSession#ctor$index") {
                     after {
                         (instanceOrNull as? MediaSession)?.let {
                             sessions.onConstructed(it, PowerampMediaSessionRegistry.constructorTag(args))
@@ -240,107 +253,110 @@ class PowerampPlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setMetadata", MediaMetadata::class.java)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        if (sessions.isModuleWrite()) return@before
-                        val session = instanceOrNull as? MediaSession ?: return@before
-                        if (sessions.isCastSession(session)) return@before
-                        val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
-                        PowerampArtworkDiagnostics.log(
-                            "HOST_IN",
-                            incoming,
-                            session,
-                            generationPolicy.generation
-                        )
-                        val candidate = PowerampTrackIdentity.fromMetadata(incoming) ?: return@before
-                        generationController.observeTrack(candidate)
-                        var outgoing = incoming
-                        sessions.onHostMetadata(session, candidate, outgoing)
-                        attachPendingToHostMetadata(session, outgoing, candidate)?.let {
-                            outgoing = it
-                        }
+            hookRuntime.hook(
+                type.getDeclaredMethod("setMetadata", MediaMetadata::class.java),
+                "poweramp.session.MediaSession#setMetadata"
+            ) {
+                before {
+                    if (sessions.isModuleWrite()) return@before
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    if (sessions.isCastSession(session)) return@before
+                    val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
+                    PowerampArtworkDiagnostics.log(
+                        "HOST_IN",
+                        incoming,
+                        session,
+                        generationPolicy.generation
+                    )
+                    val candidate = PowerampTrackIdentity.fromMetadata(incoming) ?: return@before
+                    generationController.observeTrack(candidate)
+                    var outgoing = incoming
+                    sessions.onHostMetadata(session, candidate, outgoing)
+                    attachPendingToHostMetadata(session, outgoing, candidate)?.let {
+                        outgoing = it
+                    }
 
-                        val snapshot = synchronized(publicationLock) { replaySnapshot }
-                        val incomingLyricInfo = outgoing.getString("lyricInfo")
-                        val alreadyOwned = PowerampReplayPolicy.isModuleOwned(
-                            incomingLyricInfo,
-                            hostPackage
+                    val snapshot = synchronized(publicationLock) { replaySnapshot }
+                    val incomingLyricInfo = outgoing.getString("lyricInfo")
+                    val alreadyOwned = PowerampReplayPolicy.isModuleOwned(
+                        incomingLyricInfo,
+                        hostPackage
+                    )
+                    if (!alreadyOwned && PowerampReplayPolicy.shouldReplay(
+                            snapshot,
+                            session,
+                            candidate,
+                            generationPolicy.currentTrack,
+                            generationPolicy.generation,
+                            snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
+                            PowerampMetadataArtwork.isReadyForLyricInfo(outgoing),
+                            incomingLyricInfo
                         )
-                        if (!alreadyOwned && PowerampReplayPolicy.shouldReplay(
-                                snapshot,
-                                session,
-                                candidate,
-                                generationPolicy.currentTrack,
-                                generationPolicy.generation,
-                                snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
-                                PowerampMetadataArtwork.isReadyForLyricInfo(outgoing),
-                                incomingLyricInfo
-                            )
-                        ) {
-                            PowerampNativePublisher.buildReplayMetadata(
-                                outgoing,
-                                snapshot!!,
-                                generationPolicy,
-                                hostPackage
-                            ).second?.let { outgoing = it }
-                        }
-                        if (outgoing !== incoming) args[0] = outgoing
-                        PowerampArtworkDiagnostics.log(
-                            "HOST_OUT",
+                    ) {
+                        PowerampNativePublisher.buildReplayMetadata(
                             outgoing,
-                            session,
-                            generationPolicy.generation
-                        )
+                            snapshot!!,
+                            generationPolicy,
+                            hostPackage
+                        ).second?.let { outgoing = it }
                     }
-                    after {
-                        if (sessions.isModuleWrite()) return@after
-                        val session = instanceOrNull as? MediaSession ?: return@after
-                        if (sessions.isCastSession(session)) return@after
-                        val committed = (args.getOrNull(0) as? MediaMetadata)
-                            ?: session.controller.metadata
-                        pokeTranslationActionIfPlaying(
-                            session,
-                            !committed?.getString("lyricInfo").isNullOrBlank()
-                        )
-                    }
+                    if (outgoing !== incoming) args[0] = outgoing
+                    PowerampArtworkDiagnostics.log(
+                        "HOST_OUT",
+                        outgoing,
+                        session,
+                        generationPolicy.generation
+                    )
                 }
-
-            type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        val session = instanceOrNull as? MediaSession ?: return@before
-                        if (sessions.isCastSession(session)) return@before
-                        val original = args.getOrNull(0) as? PlaybackState
-                        // Rewrite host args only. A delayed session.setPlaybackState
-                        // races pause and can zero position.
-                        if (original != null) {
-                            args[0] = injectPublicTranslationToggle(session, original)
-                        }
-                        val state = (args.getOrNull(0) as? PlaybackState)?.state
-                            ?: PlaybackState.STATE_NONE
-                        sessions.onPlaybackState(session, state)
-                        if (translationPokeGuard.get() != true) {
-                            drainPendingPublication()
-                        }
-                    }
+                after {
+                    if (sessions.isModuleWrite()) return@after
+                    val session = instanceOrNull as? MediaSession ?: return@after
+                    if (sessions.isCastSession(session)) return@after
+                    val committed = (args.getOrNull(0) as? MediaMetadata)
+                        ?: session.controller.metadata
+                    pokeTranslationActionIfPlaying(
+                        session,
+                        !committed?.getString("lyricInfo").isNullOrBlank()
+                    )
                 }
+            }
 
-            type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        val session = instanceOrNull as? MediaSession ?: return@before
-                        if (sessions.isCastSession(session)) return@before
-                        val active = args.getOrNull(0) as? Boolean ?: false
-                        sessions.onActive(session, active)
+            hookRuntime.hook(
+                type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java),
+                "poweramp.session.MediaSession#setPlaybackState"
+            ) {
+                before {
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    if (sessions.isCastSession(session)) return@before
+                    val original = args.getOrNull(0) as? PlaybackState
+                    // Rewrite host args only. A delayed session.setPlaybackState
+                    // races pause and can zero position.
+                    if (original != null) {
+                        args[0] = injectPublicTranslationToggle(session, original)
+                    }
+                    val state = (args.getOrNull(0) as? PlaybackState)?.state
+                        ?: PlaybackState.STATE_NONE
+                    sessions.onPlaybackState(session, state)
+                    if (translationPokeGuard.get() != true) {
                         drainPendingPublication()
                     }
                 }
+            }
 
-            type.getDeclaredMethod("release").apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType),
+                "poweramp.session.MediaSession#setActive"
+            ) {
+                before {
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    if (sessions.isCastSession(session)) return@before
+                    val active = args.getOrNull(0) as? Boolean ?: false
+                    sessions.onActive(session, active)
+                    drainPendingPublication()
+                }
+            }
+
+            hookRuntime.hook(type.getDeclaredMethod("release"), "poweramp.session.MediaSession#release") {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     sessions.onReleased(session)
@@ -366,7 +382,7 @@ class PowerampPlayerHooker(
         val pokeToken = if (pokeHostPlaying) SystemClock.elapsedRealtime() else null
         val patched = PlaybackStateTranslationToggle.prependPublicAction(
             original,
-            hookContext,
+            hostContext,
             pokeToken
         )
         if (patched !== original && !translationActionInjectionLogged) {
@@ -418,7 +434,7 @@ class PowerampPlayerHooker(
         }
         val patched = PlaybackStateTranslationToggle.prependPublicAction(
             confirm,
-            hookContext,
+            hostContext,
             SystemClock.elapsedRealtime()
         )
         val stillPlaying = session.controller.playbackState
@@ -596,7 +612,7 @@ class PowerampPlayerHooker(
 
     private fun release() {
         trackReceiver?.let { receiver ->
-            runCatching { hookContext.unregisterReceiver(receiver) }
+            runCatching { hostContext.unregisterReceiver(receiver) }
         }
         trackReceiver = null
         lyricExecutor.shutdownNow()
