@@ -6,12 +6,10 @@
 
 package io.github.andrealtb.coloroslyrics.provider.qishui
 
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookRuntime
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
 
@@ -29,10 +27,10 @@ class QishuiOfficialLyricsHook(
     private var playbackRefreshTarget: PlaybackRefreshTarget? = null
     private var updatePlaybackStateMethod: Method? = null
 
-    fun install(classLoader: ClassLoader?): Boolean {
+    fun install(runtime: ProviderHookRuntime, classLoader: ClassLoader?): Boolean {
         if (installed || classLoader == null) return installed
         val type = runCatching {
-            XposedHelpers.findClass(QishuiPlayerConstants.CORE_REMOTE_CONTROL_CLASS, classLoader)
+            classLoader.loadClass(QishuiPlayerConstants.CORE_REMOTE_CONTROL_CLASS)
         }.getOrElse {
             logFailure("CORE_REMOTE_CONTROL_MISSING", it)
             return false
@@ -52,28 +50,31 @@ class QishuiOfficialLyricsHook(
             )
             return false
         }
-        methods.forEach { method ->
-            method.isAccessible = true
-            XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    val remoteControlContext = param.args.firstOrNull() ?: return
+        methods.forEachIndexed { index, method ->
+            runtime.hook(
+                method,
+                "qishui.internal.CoreRemoteControl#update$index"
+            ) {
+                after {
+                    val remoteControlContext = args.firstOrNull() ?: return@after
                     val playable =
-                        QishuiInternalLyricsDecoder.resolvePlayable(remoteControlContext) ?: return
-                    val id = QishuiInternalLyricsDecoder.playableId(playable) ?: return
+                        QishuiInternalLyricsDecoder.resolvePlayable(remoteControlContext)
+                            ?: return@after
+                    val id = QishuiInternalLyricsDecoder.playableId(playable) ?: return@after
                     rememberPlaybackRefreshTarget(
-                        param.thisObject,
+                        instanceOrNull,
                         remoteControlContext,
                         id
                     )
-                    val authority = authorityProvider() ?: return
-                    if (authority.track.id?.trim() != id.trim()) return
+                    val authority = authorityProvider() ?: return@after
+                    if (authority.track.id?.trim() != id.trim()) return@after
                     val publication = QishuiInternalLyricsDecoder.decode(
                         playable,
                         authority.track
-                    ) ?: return
+                    ) ?: return@after
                     onPublication(publication, authority.generation)
                 }
-            })
+            }
         }
         installed = true
         StructuredDiagnostics.logInfo(

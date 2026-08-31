@@ -6,17 +6,14 @@
 
 package io.github.andrealtb.coloroslyrics.provider.qishui
 
-import android.content.Context
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
@@ -26,14 +23,11 @@ import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPol
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.publisher.NativeLyricInfoPublisher
 import io.github.andrealtb.coloroslyrics.provider.core.session.PlaybackStateTranslationToggle
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import java.util.LinkedHashMap
 import java.util.concurrent.Executors
 
-class QishuiPlayerHooker(
-    private val hookContext: Context,
-    private val hostPackage: String,
-    private val hostVersion: String?
-) : YukiBaseHooker() {
+class QishuiPlayerHooker(private val hookContext: ProviderHookContext) {
     private data class ResolutionRequest(
         val track: TrackIdentity,
         val generation: Long,
@@ -49,9 +43,14 @@ class QishuiPlayerHooker(
         val publicationHash: Int
     )
 
+    private val hookRuntime = hookContext.runtime
+    private val hostContext = hookContext.application
+    private val hostPackage = hookContext.packageName
+    private val hostVersion = hookContext.hostVersion
+
     private val sessions = QishuiMediaSessionRegistry()
     private val generationPolicy = TrackGenerationPolicy()
-    private val cacheResolver = QishuiCacheResolver(hookContext)
+    private val cacheResolver = QishuiCacheResolver(hostContext)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val resolverExecutor = Executors.newSingleThreadExecutor { task ->
         Thread(task, "Qishui-LyricResolver").apply {
@@ -95,20 +94,18 @@ class QishuiPlayerHooker(
         }
     )
 
-    override fun onHook() {
-        val resolution = RuntimeModeResolver.resolve(hookContext)
+    fun onHook() {
+        // Process gating moved to the API 102 entry (detach before any hook is installed).
+        val resolution = RuntimeModeResolver.resolve(hostContext)
         if (!resolution.mode.isSupported) {
             logWarning("bootstrap", "HOOK_DISABLED", resolution.markerSource)
-            return
-        }
-        if (!QishuiPlayerConstants.isPlaybackProcess(resolution.processName)) {
-            logDebug("bootstrap", "PROCESS_SKIPPED", resolution.processName)
             return
         }
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.QISHUI,
-            rootSource = YukiHookDebugSource.create(hookContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -133,7 +130,7 @@ class QishuiPlayerHooker(
             )
         }
         installSessionHooks()
-        officialLyrics.install(hookContext.classLoader)
+        officialLyrics.install(hookRuntime, hookContext.classLoader)
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
                 component = QishuiPlayerConstants.COMPONENT,
@@ -149,9 +146,8 @@ class QishuiPlayerHooker(
     private fun installSessionHooks() {
         runCatching {
             val type = MediaSession::class.java
-            type.declaredConstructors.forEach { constructor ->
-                constructor.isAccessible = true
-                constructor.hook {
+            type.declaredConstructors.forEachIndexed { index, constructor ->
+                hookRuntime.hook(constructor, "qishui.session.MediaSession#ctor$index") {
                     after {
                         (instanceOrNull as? MediaSession)?.let { session ->
                             sessions.onConstructed(
@@ -163,99 +159,102 @@ class QishuiPlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setMetadata", MediaMetadata::class.java)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        if (sessions.isModuleWrite()) return@before
-                        val session = instanceOrNull as? MediaSession ?: return@before
-                        if (sessions.isCastSession(session)) return@before
-                        val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
-                        val track = QishuiTrackMetadata.fromMetadata(incoming) ?: return@before
-                        sessions.onHostMetadata(session, track, incoming)
-                        val generation = observeTrack(track)
-                        var outgoing = attachReplay(session, incoming, track, generation)
-                        if (outgoing === incoming &&
-                            QishuiTrackMetadata.isModuleOwnedLyricInfo(
-                                incoming.getString(QishuiPlayerConstants.METADATA_KEY_LYRIC_INFO)
-                            ) &&
-                            synchronized(publicationLock) { replaySnapshot == null }
-                        ) {
-                            outgoing = QishuiMetadataCopy.stripModuleLyricInfo(incoming)
-                        }
-                        if (outgoing !== incoming) args[0] = outgoing
-                        runOnMain { requestResolution(track, generation) }
+            hookRuntime.hook(
+                type.getDeclaredMethod("setMetadata", MediaMetadata::class.java),
+                "qishui.session.MediaSession#setMetadata"
+            ) {
+                before {
+                    if (sessions.isModuleWrite()) return@before
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    if (sessions.isCastSession(session)) return@before
+                    val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
+                    val track = QishuiTrackMetadata.fromMetadata(incoming) ?: return@before
+                    sessions.onHostMetadata(session, track, incoming)
+                    val generation = observeTrack(track)
+                    var outgoing = attachReplay(session, incoming, track, generation)
+                    if (outgoing === incoming &&
+                        QishuiTrackMetadata.isModuleOwnedLyricInfo(
+                            incoming.getString(QishuiPlayerConstants.METADATA_KEY_LYRIC_INFO)
+                        ) &&
+                        synchronized(publicationLock) { replaySnapshot == null }
+                    ) {
+                        outgoing = QishuiMetadataCopy.stripModuleLyricInfo(incoming)
                     }
+                    if (outgoing !== incoming) args[0] = outgoing
+                    runOnMain { requestResolution(track, generation) }
                 }
+            }
 
-            type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        val original = args.getOrNull(0) as? PlaybackState ?: return@before
-                        val exposeTranslation = QishuiTranslationActionPolicy.shouldExpose(
-                            generationPolicy.generation,
-                            translationGeneration,
-                            translationCount
+            hookRuntime.hook(
+                type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java),
+                "qishui.session.MediaSession#setPlaybackState"
+            ) {
+                before {
+                    val original = args.getOrNull(0) as? PlaybackState ?: return@before
+                    val exposeTranslation = QishuiTranslationActionPolicy.shouldExpose(
+                        generationPolicy.generation,
+                        translationGeneration,
+                        translationCount
+                    )
+                    val patched = if (exposeTranslation) {
+                        PlaybackStateTranslationToggle.prependPublicAction(
+                            original,
+                            hostContext
                         )
-                        val patched = if (exposeTranslation) {
-                            PlaybackStateTranslationToggle.prependPublicAction(
-                                original,
-                                hookContext
+                    } else {
+                        PlaybackStateTranslationToggle.removePublicAction(original)
+                    }
+                    if (patched !== original) {
+                        args[0] = patched
+                        if (exposeTranslation && !translationActionInjectionLogged) {
+                            translationActionInjectionLogged = true
+                            StructuredDiagnostics.logInfo(
+                                DiagnosticEvent(
+                                    component = QishuiPlayerConstants.COMPONENT,
+                                    area = "session",
+                                    event = "TRANSLATION_ACTION_INJECTED",
+                                    process = hookContext.packageName
+                                )
                             )
-                        } else {
-                            PlaybackStateTranslationToggle.removePublicAction(original)
-                        }
-                        if (patched !== original) {
-                            args[0] = patched
-                            if (exposeTranslation && !translationActionInjectionLogged) {
-                                translationActionInjectionLogged = true
-                                StructuredDiagnostics.logInfo(
-                                    DiagnosticEvent(
-                                        component = QishuiPlayerConstants.COMPONENT,
-                                        area = "session",
-                                        event = "TRANSLATION_ACTION_INJECTED",
-                                        process = hookContext.packageName
-                                    )
+                        } else if (!exposeTranslation) {
+                            StructuredDiagnostics.logInfo(
+                                DiagnosticEvent(
+                                    component = QishuiPlayerConstants.COMPONENT,
+                                    area = "session",
+                                    event = "TRANSLATION_ACTION_REMOVED",
+                                    generation = generationPolicy.generation,
+                                    reason = "translation-count=" + translationCount
                                 )
-                            } else if (!exposeTranslation) {
-                                StructuredDiagnostics.logInfo(
-                                    DiagnosticEvent(
-                                        component = QishuiPlayerConstants.COMPONENT,
-                                        area = "session",
-                                        event = "TRANSLATION_ACTION_REMOVED",
-                                        generation = generationPolicy.generation,
-                                        reason = "translation-count=" + translationCount
-                                    )
-                                )
-                            }
-                        }
-                    }
-                    after {
-                        val session = instanceOrNull as? MediaSession ?: return@after
-                        val state = (args.getOrNull(0) as? PlaybackState)?.state
-                            ?: PlaybackState.STATE_NONE
-                        sessions.onPlaybackState(session, state)
-                        drainReplay()
-                        val current = generationPolicy.currentTrack
-                        val generation = generationPolicy.generation
-                        if (current != null && generation > 0L) {
-                            runOnMain { requestResolution(current, generation) }
+                            )
                         }
                     }
                 }
-
-            type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType)
-                .apply { isAccessible = true }
-                .hook {
-                    after {
-                        val session = instanceOrNull as? MediaSession ?: return@after
-                        sessions.onActive(session, args.getOrNull(0) as? Boolean ?: false)
-                        drainReplay()
+                after {
+                    val session = instanceOrNull as? MediaSession ?: return@after
+                    val state = (args.getOrNull(0) as? PlaybackState)?.state
+                        ?: PlaybackState.STATE_NONE
+                    sessions.onPlaybackState(session, state)
+                    drainReplay()
+                    val current = generationPolicy.currentTrack
+                    val generation = generationPolicy.generation
+                    if (current != null && generation > 0L) {
+                        runOnMain { requestResolution(current, generation) }
                     }
                 }
+            }
 
-            type.getDeclaredMethod("release").apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType),
+                "qishui.session.MediaSession#setActive"
+            ) {
+                after {
+                    val session = instanceOrNull as? MediaSession ?: return@after
+                    sessions.onActive(session, args.getOrNull(0) as? Boolean ?: false)
+                    drainReplay()
+                }
+            }
+
+            hookRuntime.hook(type.getDeclaredMethod("release"), "qishui.session.MediaSession#release") {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     sessions.onReleased(session)
