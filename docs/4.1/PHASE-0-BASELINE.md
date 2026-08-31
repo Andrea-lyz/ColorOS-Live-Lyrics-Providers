@@ -281,8 +281,18 @@ QQ 首曲的 5 条法语逐字行被 Bridge `raw-split` 启发式误拆，以及
 `testV5Matrix` 全矩阵回归和源码 forbidden 扫描（Yuki/legacy Xposed 等 token 为 0）。
 测试包：`device-testing/wave-d/`；Apple APK SHA-256
 `73AC328C2516C127AE0335D65FB0D6C87E9C384E383A29A00FA1C5B82933D06D`，Spotify APK
-SHA-256 `774F6AA415FE0AF146920BF20BC89FF5512A9B5ED348320C3A9C071501B41F7A`。
+SHA-256 `83ADDDE18B1E9DBA7501C10521722642F1EEBC3522F6750DB4E237BE08630B3C`。
 首轮 Apple 真机日志 `logs/lyrics-log-20260831-160438.txt` 暴露 bootstrap 误传
 `Application.attach(Context)` 的 base Context，导致 Apple 在安装业务 Hook 前静默返回（`hooks=1`）。
 提交 `eb675b1` 改为传递真实 Application 实例并加入显式断言；共享层/Apple 单测、Debug APK、
 `testV5Matrix` 已重跑通过，新包真机验证待用户执行。Spotify 真机验证同样待用户执行。
+
+Apple 复测日志 `logs/lyrics-log-20260831-161138.txt` 已确认 hooks=10、取词/发布、Bridge
+消费与逐字高亮恢复。Spotify 日志 `logs/lyrics-log-20260831-161617.txt` 确认取词/发布正常，
+但 Bridge 未注册 Spotify `MediaController.Callback`，自绘时钟保持
+`position=0, playing=false`；同时暴露 `Application#onTerminate` 在 attach 阶段取
+`applicationContext` 的空指针。Provider 提交 `0ce244b` 改用真实 Application；Bridge 独立
+blocker 提交 `afb8a35` 在接受 lyricInfo 后仅对唯一目标包活跃 controller 回补 callback，
+不写入或伪造 PlaybackState。Bridge 单测/Debug APK 与 Provider 全矩阵门禁均通过；
+Bridge hotfix APK SHA-256
+`5F8262617508AFE1AB04AFC3FE73F3BA99385244C1EB5DCAB9567F8021EABEC0`，待真机复测。
