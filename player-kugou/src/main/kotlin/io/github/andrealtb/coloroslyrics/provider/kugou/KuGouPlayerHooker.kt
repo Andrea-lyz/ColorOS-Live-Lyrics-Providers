@@ -9,17 +9,13 @@ package io.github.andrealtb.coloroslyrics.provider.kugou
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.os.SystemClock
-import com.highcapable.kavaref.KavaRef.Companion.resolve
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import java.io.File
 import java.util.ArrayDeque
@@ -30,15 +26,25 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-class KuGouPlayerHooker(
-    private val hostPackage: String
-) : YukiBaseHooker() {
+class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
+    private val hookRuntime = hookContext.runtime
+    private val hostContext = hookContext.application
+    private val hostPackage = hookContext.packageName
+    private val processName: String
+        get() = hookContext.processName
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val stateLock = Any()
     private val generationPolicy = TrackGenerationPolicy()
     private val pendingCandidates = ArrayDeque<LyricCandidate>()
     private val localProbeDelaysMs = longArrayOf(0L, 220L, 760L)
+
+    /**
+     * v4.1 replacement for the 4.0 XC_MethodHook objectExtra bridge: before and after of one
+     * lyric load call run on the same thread inside a single interceptor, so a ThreadLocal
+     * carries the per-call snapshot/path/started state.
+     */
+    private val lyricLoadState = ThreadLocal<LyricLoadState?>()
 
     @Volatile
     private var debugConfigAnnounced = false
@@ -54,16 +60,8 @@ class KuGouPlayerHooker(
     private var pendingLocalProbeGeneration = 0L
     private var lastEmittedSignature = ""
 
-    override fun onHook() {
-        if (!KuGouProcessPolicy.shouldHook(hostPackage, processName)) {
-            KuGouDiagnostics.debug(
-                area = "bootstrap",
-                event = "PROCESS_SKIPPED",
-                process = processName,
-                reason = hostPackage
-            )
-            return
-        }
+    fun onHook() {
+        // Process gating moved to the API 102 entry (detach before any hook is installed).
         if (!applyRuntimeAndDebug()) return
         KuGouDiagnostics.info(
             area = "bootstrap",
@@ -77,7 +75,6 @@ class KuGouPlayerHooker(
 
     private fun applyRuntimeAndDebug(): Boolean {
         RuntimeModeResolver.notifyXposedHookActive()
-        val hostContext = appContext
         val resolution = RuntimeModeResolver.resolve(hostContext)
         if (!resolution.mode.isSupported) {
             KuGouDiagnostics.warn(
@@ -89,11 +86,11 @@ class KuGouPlayerHooker(
             )
             return false
         }
-        if (hostContext == null) return true
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.KUGOU,
-            rootSource = YukiHookDebugSource.create(hostContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         if (debugConfigAnnounced) return true
         debugConfigAnnounced = true
@@ -118,7 +115,10 @@ class KuGouPlayerHooker(
 
     private fun hookLyricManager() {
         val method = runCatching {
-            KuGouLyricManagerResolver.resolveLoadMethod(appInfo.sourceDir, appClassLoader!!)
+            KuGouLyricManagerResolver.resolveLoadMethod(
+                hookContext.application.applicationInfo.sourceDir,
+                hookContext.classLoader
+            )
         }.onFailure {
             KuGouDiagnostics.error(
                 area = "hook",
@@ -136,22 +136,20 @@ class KuGouPlayerHooker(
             )
             return
         }
-        XposedBridge.hookMethod(method, object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                val path = param.args.getOrNull(0) as? String ?: return
-                param.setObjectExtra(SNAPSHOT_EXTRA, currentSnapshot())
-                param.setObjectExtra(PATH_EXTRA, path)
-                param.setObjectExtra(STARTED_EXTRA, SystemClock.elapsedRealtime())
+        hookRuntime.hook(method, "kugou.lyric.${method.declaringClass.name}#${method.name}") {
+            before {
+                val path = args.getOrNull(0) as? String ?: return@before
+                lyricLoadState.set(LyricLoadState(currentSnapshot(), path, SystemClock.elapsedRealtime()))
             }
-
-            override fun afterHookedMethod(param: MethodHookParam) {
-                val path = param.getObjectExtra(PATH_EXTRA) as? String
-                    ?: param.args.getOrNull(0) as? String
-                    ?: return
-                val snapshot = param.getObjectExtra(SNAPSHOT_EXTRA) as? TrackSnapshot
-                    ?: currentSnapshot()
-                val startedAt = param.getObjectExtra(STARTED_EXTRA) as? Long
-                    ?: SystemClock.elapsedRealtime()
+            after {
+                val state = lyricLoadState.get()
+                lyricLoadState.remove()
+                val path = state?.path
+                    ?: args.getOrNull(0) as? String
+                    ?: return@after
+                val snapshot = state?.snapshot ?: currentSnapshot()
+                val startedAt = state?.startedAt ?: SystemClock.elapsedRealtime()
+                val loadResult = result
                 KuGouDiagnostics.debug(
                     area = "lyric",
                     event = "KUGOU_KRC_LOAD_CAPTURED",
@@ -159,10 +157,10 @@ class KuGouPlayerHooker(
                     message = "pathHash=${DiagnosticHasher.sha256(path)}"
                 )
                 scope.launch {
-                    handleLyricLoad(param.result, path, snapshot, startedAt)
+                    handleLyricLoad(loadResult, path, snapshot, startedAt)
                 }
             }
-        })
+        }
         KuGouDiagnostics.info(
             area = "hook",
             event = "LYRIC_MANAGER_HOOKED",
@@ -172,21 +170,20 @@ class KuGouPlayerHooker(
     }
 
     private fun hookMediaSession() {
-        "android.media.session.MediaSession".toClass().resolve().apply {
-            firstMethod {
-                name = "setMetadata"
-                parameters(MediaMetadata::class.java)
-            }.hook {
+        runCatching {
+            val setMetadata = MediaSession::class.java
+                .getDeclaredMethod("setMetadata", MediaMetadata::class.java)
+            hookRuntime.hook(setMetadata, "kugou.session.MediaSession#setMetadata") {
                 before {
                     if (KuGouLyricInfoPublisher.isSelfPublishing()) return@before
-                    val session = instance as? MediaSession
+                    val session = instanceOrNull as? MediaSession
                     if (!KuGouPlayerConstants.isPrimarySessionTag(
                             KuGouLyricInfoPublisher.sessionTag(session)
                         )
                     ) {
                         return@before
                     }
-                    val metadata = args[0] as? MediaMetadata ?: return@before
+                    val metadata = args.getOrNull(0) as? MediaMetadata ?: return@before
                     observeMetadata(metadata)
                     args[0] = KuGouLyricInfoPublisher.prepareHostMetadata(
                         session,
@@ -198,6 +195,15 @@ class KuGouPlayerHooker(
                     KuGouLyricInfoPublisher.onHostMetadataApplied()
                 }
             }
+        }.onFailure {
+            KuGouDiagnostics.error(
+                area = "session",
+                event = "SESSION_HOOK_FAILED",
+                process = processName,
+                message = it.message,
+                throwable = it
+            )
+            return
         }
         KuGouDiagnostics.info(
             area = "hook",
@@ -502,12 +508,11 @@ class KuGouPlayerHooker(
     }
 
     private fun candidateLyricDirectories(): List<File> {
-        val ctx = appContext ?: return emptyList()
         return listOf(
-            File(ctx.filesDir, "kugou/lyrics"),
-            File(ctx.filesDir, "lyrics"),
-            File(ctx.cacheDir, "kugou/lyrics"),
-            File(ctx.cacheDir, "lyrics")
+            File(hostContext.filesDir, "kugou/lyrics"),
+            File(hostContext.filesDir, "lyrics"),
+            File(hostContext.cacheDir, "kugou/lyrics"),
+            File(hostContext.cacheDir, "lyrics")
         ).filter { it.isDirectory }
     }
 
@@ -576,6 +581,12 @@ class KuGouPlayerHooker(
         val generation: Long
     )
 
+    private data class LyricLoadState(
+        val snapshot: TrackSnapshot,
+        val path: String,
+        val startedAt: Long
+    )
+
     private data class LyricCandidate(
         val lyrics: List<RichLyricLine>,
         val capturedId: String?,
@@ -589,9 +600,6 @@ class KuGouPlayerHooker(
     )
 
     private companion object {
-        const val SNAPSHOT_EXTRA = "cll.kugou.snapshot"
-        const val PATH_EXTRA = "cll.kugou.path"
-        const val STARTED_EXTRA = "cll.kugou.started"
         const val MAX_PENDING = 8
     }
 }

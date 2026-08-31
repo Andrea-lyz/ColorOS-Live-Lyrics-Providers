@@ -8,9 +8,11 @@ import com.android.build.api.dsl.ApplicationExtension
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.ksp)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// v4.1: libxposed API 102 dependency, R8 rules and resource verification convention.
+apply(from = rootProject.file("gradle/provider-app-convention.gradle.kts"))
 
 configure<ApplicationExtension> {
     namespace = "io.github.andrealtb.coloroslyrics.provider.kugou"
@@ -69,26 +71,17 @@ configure<ApplicationExtension> {
 
 dependencies {
     implementation(project(":provider-core"))
+    implementation(project(":provider-hook-api102"))
+    implementation(project(":provider-settings-api102"))
     implementation(project(":reflection-core"))
     implementation(project(":parser-lrc"))
     implementation(project(":parser-krc"))
 
-    implementation(libs.yukihookapi.api)
-    implementation(libs.kavaref.core)
-    implementation(libs.kavaref.extension)
     implementation(libs.dexkit)
-    compileOnly(libs.xposed.api)
-    ksp(libs.yukihookapi.ksp.xposed)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))
-}
-
-tasks.configureEach {
-    if (name.startsWith("ksp") && name.contains("UnitTest")) {
-        enabled = false
-    }
 }
