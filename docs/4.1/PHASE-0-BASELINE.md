@@ -1,7 +1,7 @@
 # v4.1.0 Phase 0：基线冻结与迁移台账
 
-> 状态：Phase 0 基线记录完成；Phase 1 共享层与 Wave A 首个 Provider（Salt）已在
-> 本地构建/单测层级完成，**尚未真机验证**。
+> 状态：Phase 0/1 与 Wave A–C 已完成；Salt/Cone/KuWo、LX/Poweramp/Metrolist、
+> KuGou/QQ/QiShui 共 9/12 Provider 已通过本地门禁与用户真机回归，Wave D–E 待执行。
 > 上游计划：工作区根目录 `todo.md`（ColorOS Live Lyrics Bridge v4.1.0 TODO）。
 
 ## 1. 冻结基线（2026-08-31）
@@ -239,4 +239,19 @@ QiShui 按 `QishuiTranslationActionPolicy` 动态注入/移除。三个模块均
 `verifyXposedApi102Resources`、debug APK 构建、`testV5Matrix` 全矩阵回归，且
 `player-kugou`/`player-qq`/`player-qishui`/`share:extensions-android` 源码级
 forbidden 扫描（XposedBridge/XC_MethodHook/XposedHelpers/Yuki 等 11 个 token）为 0；
-真机验证待用户执行。
+真机回归证据见 §12。
+
+## 12. Wave C 真机回归证据（2026-08-31，用户执行，结论：全部通过）
+
+| Provider | 日志 | 关键证据 |
+|---|---|---|
+| KuGou / Lite | `logs/lyrics-log-20260831-140051-kugou.txt` | 标准版与 Lite 的 main/message 进程均在业务 Hook 前 `PROCESS_SKIPPED`，两个 support 进程分别 `PROCESS_ACCEPTED`、`hooks=3`；`TRACK_BOUND`×8、`KUGOU_KRC_LOAD_CAPTURED`×8、`KUGOU_LYRIC_PARSED`×8、`NATIVE_LYRICINFO_PATCHED`×8，Bridge 消费 KuGou/Lite payload×20；无崩溃或 Hook 异常 |
+| QQ | `logs/lyrics-log-20260831-150221.txt` | main `PROCESS_SKIPPED`，`:QQPlayerService` 以 API 102 `PROCESS_ACCEPTED`；`DEBUG_CONFIG_APPLIED reason=enabled`、`MEDIA_SESSION_HOOKED`、`ON_LOAD_SUC_HOOKED`、`SEEDLING_HOOKED`、`hooks=4`；首曲《海的女儿》generation 2 稳定，48 行中 46 行翻译成功发布，Bridge 消费 QQ payload×10；无崩溃或 Hook 异常 |
+| QiShui | `logs/lyrics-log-20260831-151912.txt` | `com.luna.music` 主进程以 API 102 接受，`CoreRemoteControl#update methods=1`、`hooks=8`；Cassandra generation 2 为 49/49 行，切至 The Other Side Of Paradise generation 3 为 55/55 行并 `NATIVE_LYRIC_INFO_COMMITTED`；旧缓存回调被 `STALE_RESOLUTION_DROPPED`，Bridge 分别解析 49/49、55/55 且翻译 action 可点击；无崩溃或 Hook 异常 |
+
+QQ 首曲的 5 条法语逐字行被 Bridge `raw-split` 启发式误拆，以及 02:01.270 零宽尾部
+占位被过滤；KuGou《回家的路》的标题行错绑翻译与零宽尾部占位丢失，均已按用户反馈定性为
+独立、非阻断的 Bridge 解析问题，不改变 Wave C Provider API 102 迁移验收结果。
+
+至此 Wave A + Wave B + Wave C 共 9/12 Provider 完成迁移与用户真机回归；Phase 5 发布门禁
+仍需 Wave D（Apple / Spotify）与 Wave E（NetEase）完成迁移和设备验证。
