@@ -1,7 +1,7 @@
 # v4.1.0 Phase 0：基线冻结与迁移台账
 
-> 状态：Phase 0/1 与 Wave A–D 已完成；11/12 Provider 已通过本地门禁，其中
-> Wave A–C 的 9/12 已完成用户真机回归；Wave D 待真机，Wave E（NetEase）待执行。
+> 状态：Phase 0/1 与 Wave A–D 已完成；11/12 Provider 已通过本地门禁与用户真机回归；
+> 仅 Wave E（NetEase）待执行。
 > 上游计划：工作区根目录 `todo.md`（ColorOS Live Lyrics Bridge v4.1.0 TODO）。
 
 ## 1. 冻结基线（2026-08-31）
@@ -191,7 +191,7 @@ pending 附着、定性不支持翻译（不注入 TOGGLE_TRANSLATION）、KSP u
 workaround 随 Yuki 入口一并删除。
 
 三个模块均已通过模块单测、`verifyXposedApi102Resources`、debug APK 构建与
-`testV5Matrix` 全矩阵回归；真机验证待用户执行。
+`testV5Matrix` 全矩阵回归；真机证据见 §10。
 
 ## 10. Wave B 真机回归证据（2026-08-31，用户执行，结论：全部通过）
 
@@ -254,7 +254,7 @@ QQ 首曲的 5 条法语逐字行被 Bridge `raw-split` 启发式误拆，以及
 独立、非阻断的 Bridge 解析问题，不改变 Wave C Provider API 102 迁移验收结果。
 
 至此 Wave A + Wave B + Wave C 共 9/12 Provider 完成迁移与用户真机回归；Phase 5 发布门禁
-仍需 Wave D（Apple / Spotify）完成设备验证，并完成 Wave E（NetEase）迁移与设备验证。
+仍需完成 Wave E（NetEase）迁移与设备验证。
 
 ## 13. Wave D Hook ledger（Apple / Spotify，已迁移，本地门禁通过）
 
@@ -285,7 +285,7 @@ SHA-256 `83ADDDE18B1E9DBA7501C10521722642F1EEBC3522F6750DB4E237BE08630B3C`。
 首轮 Apple 真机日志 `logs/lyrics-log-20260831-160438.txt` 暴露 bootstrap 误传
 `Application.attach(Context)` 的 base Context，导致 Apple 在安装业务 Hook 前静默返回（`hooks=1`）。
 提交 `eb675b1` 改为传递真实 Application 实例并加入显式断言；共享层/Apple 单测、Debug APK、
-`testV5Matrix` 已重跑通过，新包真机验证待用户执行。Spotify 真机验证同样待用户执行。
+`testV5Matrix` 已重跑通过；最终真机证据见下文。
 
 Apple 复测日志 `logs/lyrics-log-20260831-161138.txt` 已确认 hooks=10、取词/发布、Bridge
 消费与逐字高亮恢复。Spotify 日志 `logs/lyrics-log-20260831-161617.txt` 确认取词/发布正常，
@@ -295,4 +295,12 @@ Apple 复测日志 `logs/lyrics-log-20260831-161138.txt` 已确认 hooks=10、�
 blocker 提交 `afb8a35` 在接受 lyricInfo 后仅对唯一目标包活跃 controller 回补 callback，
 不写入或伪造 PlaybackState。Bridge 单测/Debug APK 与 Provider 全矩阵门禁均通过；
 Bridge hotfix APK SHA-256
-`5F8262617508AFE1AB04AFC3FE73F3BA99385244C1EB5DCAB9567F8021EABEC0`，待真机复测。
+`5F8262617508AFE1AB04AFC3FE73F3BA99385244C1EB5DCAB9567F8021EABEC0`。
+
+最终 Spotify 复测日志 `logs/lyrics-log-20260831-163823.txt` 已确认：主进程
+`PROCESS_ACCEPTED`、webview 附加包 `PROCESS_SKIPPED`、`hooks=11`，且不再出现
+`APPLICATION_TERMINATE_HOOK_FAILED`；generation 1→2 切歌、缓存/取词、
+`NATIVE_LYRIC_INFO_COMMITTED` 与 Bridge payload 解析完整。Bridge 自绘位置从 21.5s 持续推进
+至 49s，新曲从 1.2s 推进至 10.1s，`playing=true`、`active=true`、
+`scaleActiveIndex` 连续变化，暂停态 PlaybackState 亦正常。至此 Apple 与 Spotify 均完成用户
+真机回归，Wave D 结论：全部通过。
