@@ -1,7 +1,7 @@
 # v4.1.0 Phase 0：基线冻结与迁移台账
 
-> 状态：Phase 0/1 与 Wave A–C 已完成；Salt/Cone/KuWo、LX/Poweramp/Metrolist、
-> KuGou/QQ/QiShui 共 9/12 Provider 已通过本地门禁与用户真机回归，Wave D–E 待执行。
+> 状态：Phase 0/1 与 Wave A–D 已完成；11/12 Provider 已通过本地门禁，其中
+> Wave A–C 的 9/12 已完成用户真机回归；Wave D 待真机，Wave E（NetEase）待执行。
 > 上游计划：工作区根目录 `todo.md`（ColorOS Live Lyrics Bridge v4.1.0 TODO）。
 
 ## 1. 冻结基线（2026-08-31）
@@ -254,4 +254,32 @@ QQ 首曲的 5 条法语逐字行被 Bridge `raw-split` 启发式误拆，以及
 独立、非阻断的 Bridge 解析问题，不改变 Wave C Provider API 102 迁移验收结果。
 
 至此 Wave A + Wave B + Wave C 共 9/12 Provider 完成迁移与用户真机回归；Phase 5 发布门禁
-仍需 Wave D（Apple / Spotify）与 Wave E（NetEase）完成迁移和设备验证。
+仍需 Wave D（Apple / Spotify）完成设备验证，并完成 Wave E（NetEase）迁移与设备验证。
+
+## 13. Wave D Hook ledger（Apple / Spotify，已迁移，本地门禁通过）
+
+### Apple Music（`player-apple`）
+
+| # | 目标 | 4.0 形态 | 4.1 处理 |
+|---|---|---|---|
+| 1 | PlaybackItem mapper（多候选） | Yuki method after | `apple:apple.playback.<class>#<method><index>`；保留 DexKit/fallback 解析与 Adam ID 缓存 |
+| 2 | `PlayerLyricsViewModel#loadLyrics(PlaybackItem)` | Yuki before | `apple:apple.lyric.<class>#loadLyrics`；请求/重试/poll 生命周期不变 |
+| 3 | `buildTimeRangeToLyricsMap(SongInfoPtr)` | Yuki after | `apple:apple.lyric.<class>#buildTimeRangeToLyricsMap`；JNI 解析、翻译/发音 lane 策略不变 |
+| 4 | `MediaSession` 构造器/setMetadata/setPlaybackState/setActive/release | Yuki | `apple:apple.session.MediaSession#*`；pending/replay、封面与 cast 门禁不变 |
+| 5 | package/process 路由 | Yuki `loadApp` | 唯一 `AppleModuleEntry` + entry 层 scope-only policy，安装前路由 |
+
+### Spotify（`player-spotify`）
+
+| # | 目标 | 4.0 形态 | 4.1 处理 |
+|---|---|---|---|
+| 1 | shaded/Cronet/OkHttp header 构造器/方法 | Yuki constructor/method Hook | `spotify:spotify.headers.*`；仅保留 header 键名，fetch/cache/retry 行为不变 |
+| 2 | `MediaSession` 构造器/setMetadata/setPlaybackState/setActive/release | Yuki | `spotify:spotify.session.MediaSession#*`；广告/episode/cast、generation、pending/replay 不变 |
+| 3 | `Application#onTerminate` | Yuki `onAppLifecycle` | `spotify:spotify.app.<application>#onTerminate`；继续取消 `fetchScope` |
+| 4 | 主进程门禁 | hooker 内 `isPlaybackProcess` | 唯一 `SpotifyModuleEntry` + entry 层 `SpotifyMainProcessPolicy`；拒绝进程在业务 Hook 前 detach |
+
+两个模块均已通过定向单测、`verifyXposedApi102Resources`、Debug APK 构建、
+`testV5Matrix` 全矩阵回归和源码 forbidden 扫描（Yuki/legacy Xposed 等 token 为 0）。
+测试包：`device-testing/wave-d/`；Apple APK SHA-256
+`B429BA786127FEF6348621AF5B56A9E323BD29976EED5C0F3C5D2C2675CF5CEC`，Spotify APK
+SHA-256 `6B153EF80D221CF410B1A4A647823B1A5AB1FABB3A93A8306EA90F984609A705`。
+真机验证待用户执行。
