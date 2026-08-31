@@ -40,9 +40,9 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
     private val localProbeDelaysMs = longArrayOf(0L, 220L, 760L)
 
     /**
-     * v4.1 replacement for the 4.0 XC_MethodHook objectExtra bridge: before and after of one
-     * lyric load call run on the same thread inside a single interceptor, so a ThreadLocal
-     * carries the per-call snapshot/path/started state.
+     * v4.1 replacement for the 4.0 legacy hook objectExtra bridge: before and after of one
+     * lyric load call run on the same thread inside a single API 102 interceptor, so a
+     * ThreadLocal carries the per-call snapshot/path/started state.
      */
     private val lyricLoadState = ThreadLocal<LyricLoadState?>()
 
