@@ -8,22 +8,20 @@ package io.github.andrealtb.coloroslyrics.provider.qq
 
 import android.media.MediaMetadata
 import android.media.session.MediaSession
-import com.highcapable.kavaref.KavaRef.Companion.resolve
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 
-class QqPlayerHooker(
-    private val hostPackage: String
-) : YukiBaseHooker() {
+class QqPlayerHooker(private val hookContext: ProviderHookContext) {
+    private val hookRuntime = hookContext.runtime
+    private val hostPackage = hookContext.packageName
+    private val processName: String
+        get() = hookContext.processName
 
     private val stateLock = Any()
     private val generationPolicy = TrackGenerationPolicy()
@@ -41,16 +39,8 @@ class QqPlayerHooker(
     private var lastLyricReadyGeneration = 0L
     private var cachedTranslationBySongId = linkedMapOf<String, Any>()
 
-    override fun onHook() {
-        if (!QqProcessPolicy.shouldHook(hostPackage, processName)) {
-            QqDiagnostics.debug(
-                area = "bootstrap",
-                event = "PROCESS_SKIPPED",
-                process = processName,
-                reason = hostPackage
-            )
-            return
-        }
+    fun onHook() {
+        // Process gating moved to the API 102 entry (detach before any hook is installed).
         if (!applyRuntimeAndDebug()) return
         QqDiagnostics.info(
             area = "bootstrap",
@@ -65,8 +55,7 @@ class QqPlayerHooker(
 
     private fun applyRuntimeAndDebug(): Boolean {
         RuntimeModeResolver.notifyXposedHookActive()
-        val hostContext = appContext
-        val resolution = RuntimeModeResolver.resolve(hostContext)
+        val resolution = RuntimeModeResolver.resolve(hookContext.application)
         if (!resolution.mode.isSupported) {
             QqDiagnostics.warn(
                 area = "bootstrap",
@@ -77,11 +66,11 @@ class QqPlayerHooker(
             )
             return false
         }
-        if (hostContext == null) return true
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.QQ,
-            rootSource = YukiHookDebugSource.create(hostContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         if (debugConfigAnnounced) return true
         debugConfigAnnounced = true
@@ -105,15 +94,14 @@ class QqPlayerHooker(
     }
 
     private fun hookMediaSession() {
-        "android.media.session.MediaSession".toClass().resolve().apply {
-            firstMethod {
-                name = "setMetadata"
-                parameters(MediaMetadata::class.java)
-            }.hook {
+        runCatching {
+            val setMetadata = MediaSession::class.java
+                .getDeclaredMethod("setMetadata", MediaMetadata::class.java)
+            hookRuntime.hook(setMetadata, "qq.session.MediaSession#setMetadata") {
                 before {
                     if (QqLyricInfoPublisher.isSelfPublishing()) return@before
-                    val session = instance as? MediaSession ?: return@before
-                    val metadata = args[0] as? MediaMetadata ?: return@before
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    val metadata = args.getOrNull(0) as? MediaMetadata ?: return@before
                     observeMetadata(metadata)
                     args[0] = QqLyricInfoPublisher.prepareHostMetadata(
                         session,
@@ -125,6 +113,15 @@ class QqPlayerHooker(
                     QqLyricInfoPublisher.onHostMetadataApplied()
                 }
             }
+        }.onFailure {
+            QqDiagnostics.error(
+                area = "session",
+                event = "SESSION_HOOK_FAILED",
+                process = processName,
+                message = it.message,
+                throwable = it
+            )
+            return
         }
         QqDiagnostics.info(
             area = "hook",
@@ -135,7 +132,10 @@ class QqPlayerHooker(
 
     private fun hookOnLoadSuc() {
         val method = runCatching {
-            QqLyricHookResolver.resolveOnLoadSuc(appClassLoader!!, appInfo.sourceDir)
+            QqLyricHookResolver.resolveOnLoadSuc(
+                hookContext.classLoader,
+                hookContext.application.applicationInfo.sourceDir
+            )
         }.onFailure {
             QqDiagnostics.error(
                 area = "hook",
@@ -153,9 +153,9 @@ class QqPlayerHooker(
             )
             return
         }
-        XposedBridge.hookMethod(method, object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                val bean = param.args.getOrNull(0) ?: return
+        hookRuntime.hook(method, "qq.lyric.${method.declaringClass.name}#${method.name}") {
+            after {
+                val bean = args.getOrNull(0) ?: return@after
                 val (track, models) = QqSongInfoReader.readFromLoadBean(bean)
                 bindTrack(track, "load-bean")
                 if (models.translation != null && !track.id.isNullOrBlank()) {
@@ -169,7 +169,7 @@ class QqPlayerHooker(
                     "load-bean"
                 )
             }
-        })
+        }
         QqDiagnostics.info(
             area = "hook",
             event = "ON_LOAD_SUC_HOOKED",
@@ -180,7 +180,10 @@ class QqPlayerHooker(
 
     private fun hookSeedlingLyricInfo() {
         val method = runCatching {
-            QqLyricHookResolver.resolveSeedlingMethod(appInfo.sourceDir, appClassLoader!!)
+            QqLyricHookResolver.resolveSeedlingMethod(
+                hookContext.application.applicationInfo.sourceDir,
+                hookContext.classLoader
+            )
         }.onFailure {
             QqDiagnostics.error(
                 area = "hook",
@@ -198,11 +201,11 @@ class QqPlayerHooker(
             )
             return
         }
-        XposedBridge.hookMethod(method, object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                val builder = param.args.getOrNull(0)
-                val songInfo = param.args.getOrNull(1)
-                val lyric = param.args.getOrNull(2)
+        hookRuntime.hook(method, "qq.seedling.${method.declaringClass.name}#${method.name}") {
+            after {
+                val builder = args.getOrNull(0)
+                val songInfo = args.getOrNull(1)
+                val lyric = args.getOrNull(2)
                 val track = QqSongInfoReader.read(songInfo)
                 bindTrack(track, "seedling")
                 val cachedTrans = track.id?.let { cachedTranslationBySongId[it] }
@@ -241,7 +244,7 @@ class QqPlayerHooker(
                     }
                 }
             }
-        })
+        }
         QqDiagnostics.info(
             area = "hook",
             event = "SEEDLING_HOOKED",
