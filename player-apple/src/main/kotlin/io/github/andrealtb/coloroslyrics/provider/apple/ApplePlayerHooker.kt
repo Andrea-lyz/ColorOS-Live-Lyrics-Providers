@@ -13,10 +13,8 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
@@ -24,6 +22,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.andrealtb.coloroslyrics.provider.reflection.CandidateResolver
 import io.github.andrealtb.coloroslyrics.provider.reflection.DexKitBridge
 import java.lang.ref.WeakReference
@@ -31,10 +30,16 @@ import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 
 class ApplePlayerHooker(
-    private val hookContext: Context,
-    private val hostPackage: String,
-    private val hostVersion: String?
-) : YukiBaseHooker() {
+    providerContext: ProviderHookContext
+) {
+
+    private val hookContext: Context = providerContext.application
+    private val hostPackage: String = providerContext.packageName
+    private val hostVersion: String? = providerContext.hostVersion
+    private val hookRuntime = providerContext.runtime
+    private val appClassLoader: ClassLoader = providerContext.classLoader
+    private val debugSource = providerContext.debugSource
+    private val frameworkSink = providerContext.frameworkSink
 
     private val sessions = AppleMediaSessionRegistry()
     private val publicationLock = Any()
@@ -88,7 +93,7 @@ class ApplePlayerHooker(
     private val generationPolicy: TrackGenerationPolicy
         get() = generationController.policy
 
-    override fun onHook() {
+    fun onHook() {
         val resolution = RuntimeModeResolver.resolve(hookContext)
         if (!resolution.mode.isSupported) {
             StructuredDiagnostics.logWarning(
@@ -107,7 +112,8 @@ class ApplePlayerHooker(
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.APPLE,
-            rootSource = YukiHookDebugSource.create(hookContext)
+            rootSource = debugSource,
+            frameworkSink = frameworkSink
         )
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -145,7 +151,7 @@ class ApplePlayerHooker(
 
         diskCache = AppleDiskSongCache(hookContext)
         val application = (hookContext.applicationContext as? Application) ?: return
-        val loader = appClassLoader ?: hookContext.classLoader
+        val loader = appClassLoader
         lyricRequester = AppleLyricRequester(loader, application)
 
         installSessionHooks()
@@ -171,9 +177,12 @@ class ApplePlayerHooker(
             if (methods.isEmpty()) {
                 error("playback item mapper method not found")
             }
-            methods.forEach { method ->
+            methods.forEachIndexed { index, method ->
                 method.isAccessible = true
-                method.hook {
+                hookRuntime.hook(
+                    method,
+                    "apple.playback.${method.declaringClass.name}#${method.name}$index"
+                ) {
                     after {
                         onPlaybackItemObserved(result, requestIfMissing = true)
                     }
@@ -198,7 +207,10 @@ class ApplePlayerHooker(
                 ?: error("loadLyrics method not found")
             lyricRequester?.setLoadLyricsMethod(loadMethod)
 
-            loadMethod.hook {
+            hookRuntime.hook(
+                loadMethod,
+                "apple.lyric.${loadMethod.declaringClass.name}#${loadMethod.name}"
+            ) {
                 before {
                     onPlaybackItemObserved(args.getOrNull(0), requestIfMissing = false)
                 }
@@ -219,7 +231,10 @@ class ApplePlayerHooker(
             val method = findLyricBuildMethod(viewModelClass, songInfoPtrClass)
                 ?: error("buildTimeRangeToLyricsMap method not found")
             method.isAccessible = true
-            method.hook {
+            hookRuntime.hook(
+                method,
+                "apple.lyric.${method.declaringClass.name}#${method.name}"
+            ) {
                 after {
                     val songNative = AppleNativeCalls.unwrapPtr(args.getOrNull(0)) ?: return@after
                     onLyricsBuilt(songNative)
@@ -239,9 +254,9 @@ class ApplePlayerHooker(
     private fun installSessionHooks() {
         runCatching {
             val type = MediaSession::class.java
-            type.declaredConstructors.forEach { constructor ->
+            type.declaredConstructors.forEachIndexed { index, constructor ->
                 constructor.isAccessible = true
-                constructor.hook {
+                hookRuntime.hook(constructor, "apple.session.MediaSession#constructor$index") {
                     after {
                         (instanceOrNull as? MediaSession)?.let {
                             sessions.onConstructed(it, AppleMediaSessionRegistry.constructorTag(args))
@@ -252,7 +267,8 @@ class ApplePlayerHooker(
 
             type.getDeclaredMethod("setMetadata", MediaMetadata::class.java)
                 .apply { isAccessible = true }
-                .hook {
+                .also { method ->
+                    hookRuntime.hook(method, "apple.session.MediaSession#setMetadata") {
                     before {
                         if (sessions.isModuleWrite()) return@before
                         val session = instanceOrNull as? MediaSession ?: return@before
@@ -296,10 +312,12 @@ class ApplePlayerHooker(
                         if (outgoing !== incoming) args[0] = outgoing
                     }
                 }
+                }
 
             type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java)
                 .apply { isAccessible = true }
-                .hook {
+                .also { method ->
+                    hookRuntime.hook(method, "apple.session.MediaSession#setPlaybackState") {
                     after {
                         val session = instanceOrNull as? MediaSession ?: return@after
                         val state = (args.getOrNull(0) as? PlaybackState)?.state
@@ -308,10 +326,12 @@ class ApplePlayerHooker(
                         drainPendingPublication()
                     }
                 }
+                }
 
             type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType)
                 .apply { isAccessible = true }
-                .hook {
+                .also { method ->
+                    hookRuntime.hook(method, "apple.session.MediaSession#setActive") {
                     after {
                         val session = instanceOrNull as? MediaSession ?: return@after
                         val active = args.getOrNull(0) as? Boolean ?: false
@@ -319,13 +339,16 @@ class ApplePlayerHooker(
                         drainPendingPublication()
                     }
                 }
+                }
 
-            type.getDeclaredMethod("release").apply { isAccessible = true }.hook {
-                before {
-                    val session = instanceOrNull as? MediaSession ?: return@before
-                    sessions.onReleased(session)
-                    synchronized(publicationLock) {
-                        if (replaySnapshot?.session?.get() === session) replaySnapshot = null
+            type.getDeclaredMethod("release").apply { isAccessible = true }.also { method ->
+                hookRuntime.hook(method, "apple.session.MediaSession#release") {
+                    before {
+                        val session = instanceOrNull as? MediaSession ?: return@before
+                        sessions.onReleased(session)
+                        synchronized(publicationLock) {
+                            if (replaySnapshot?.session?.get() === session) replaySnapshot = null
+                        }
                     }
                 }
             }
@@ -510,7 +533,7 @@ class ApplePlayerHooker(
 
     private fun onLyricsBuilt(songNative: Any) {
         val language = AppleLocaleUtil.systemLyricsLanguage(
-            appClassLoader ?: hookContext.classLoader
+            appClassLoader
         )
         AppleSongParser.applySystemTranslation(songNative, language)
         val parsed = AppleSongParser.parse(songNative) ?: return
