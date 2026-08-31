@@ -8,9 +8,11 @@ import com.android.build.api.dsl.ApplicationExtension
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.ksp)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// v4.1: libxposed API 102 dependency, R8 rules and resource verification convention.
+apply(from = rootProject.file("gradle/provider-app-convention.gradle.kts"))
 
 configure<ApplicationExtension> {
     namespace = "io.github.andrealtb.coloroslyrics.provider.metrolist"
@@ -64,14 +66,12 @@ configure<ApplicationExtension> {
 
 dependencies {
     implementation(project(":provider-core"))
+    implementation(project(":provider-hook-api102"))
+    implementation(project(":provider-settings-api102"))
     implementation(project(":reflection-core"))
     implementation(project(":parser-lrc"))
     implementation(project(":parser-ttml"))
     implementation(project(":parser-krc"))
-
-    implementation(libs.yukihookapi.api)
-    compileOnly(libs.xposed.api)
-    ksp(libs.yukihookapi.ksp.xposed)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.okhttp)
@@ -79,13 +79,4 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))
-}
-
-// YukiHook KSP is only needed for the Xposed entry. Unit-test compilation on the
-// gradle-ascii subst drive fails when KSP relativizes canonical D: test paths
-// against the R: project root.
-tasks.configureEach {
-    if (name.startsWith("ksp") && name.contains("UnitTest")) {
-        enabled = false
-    }
 }

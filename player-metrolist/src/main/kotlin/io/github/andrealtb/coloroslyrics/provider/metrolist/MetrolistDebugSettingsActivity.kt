@@ -6,8 +6,8 @@
 
 package io.github.andrealtb.coloroslyrics.provider.metrolist
 
-import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugSettingsActivity
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
+import io.github.andrealtb.coloroslyrics.provider.settings102.ProviderDebugSettingsActivity
 
 class MetrolistDebugSettingsActivity : ProviderDebugSettingsActivity() {
     override val providerId: ProviderId = ProviderId.METROLIST
@@ -15,4 +15,3 @@ class MetrolistDebugSettingsActivity : ProviderDebugSettingsActivity() {
     override val targetPackageDescription: String =
         "目标播放器：com.metrolist.music"
 }
-

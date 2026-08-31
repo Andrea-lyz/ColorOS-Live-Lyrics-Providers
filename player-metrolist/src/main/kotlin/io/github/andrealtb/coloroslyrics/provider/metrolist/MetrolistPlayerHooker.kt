@@ -6,24 +6,21 @@
 
 package io.github.andrealtb.coloroslyrics.provider.metrolist
 
-import android.content.Context
+import android.app.Application
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.Looper
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import com.highcapable.yukihookapi.hook.factory.method
-import com.highcapable.yukihookapi.hook.factory.toClass
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,11 +30,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
 
-class MetrolistPlayerHooker(
-    private val hookContext: Context,
-    private val hostPackage: String,
-    private val hostVersion: String?
-) : YukiBaseHooker() {
+class MetrolistPlayerHooker(private val hookContext: ProviderHookContext) {
+    private val hookRuntime = hookContext.runtime
+    private val hostContext = hookContext.application
+    private val hostPackage = hookContext.packageName
+    private val hostVersion = hookContext.hostVersion
 
     private val sessions = MetrolistMediaSessionRegistry()
     private val publicationLock = Any()
@@ -75,8 +72,8 @@ class MetrolistPlayerHooker(
     private val generationPolicy: TrackGenerationPolicy
         get() = generationController.policy
 
-    override fun onHook() {
-        val resolution = RuntimeModeResolver.resolve(hookContext)
+    fun onHook() {
+        val resolution = RuntimeModeResolver.resolve(hostContext)
         if (!resolution.mode.isSupported) {
             StructuredDiagnostics.logWarning(
                 DiagnosticEvent(
@@ -94,7 +91,8 @@ class MetrolistPlayerHooker(
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.METROLIST,
-            rootSource = YukiHookDebugSource.create(hookContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -132,29 +130,41 @@ class MetrolistPlayerHooker(
 
         installSessionHooks()
         installMusicServiceHook()
-        onAppLifecycle {
-            onTerminate { fetchScope.cancel() }
-        }
+        installApplicationTerminateHook()
+    }
+
+    /**
+     * Replaces the 4.0 onAppLifecycle onTerminate callback: cancel the lyric fetch scope when
+     * the host application terminates.
+     */
+    private fun installApplicationTerminateHook() {
+        runCatching {
+            hookRuntime.hook(
+                Application::class.java.getDeclaredMethod("onTerminate"),
+                "metrolist.app.Application#onTerminate"
+            ) {
+                after { fetchScope.cancel() }
+            }
+        }.onFailure { logFailure("hook", "APP_TERMINATE_HOOK_FAILED", it) }
     }
 
     private fun installMusicServiceHook() {
         val serviceClass = runCatching {
-            MetrolistPlayerConstants.MUSIC_SERVICE_CLASS.toClass()
+            hookContext.classLoader.loadClass(MetrolistPlayerConstants.MUSIC_SERVICE_CLASS)
         }.getOrElse {
             logFailure("hook", "MUSIC_SERVICE_CLASS_FAILED", it)
             return
         }
 
         runCatching {
-            serviceClass
-                .method {
-                    name = MetrolistPlayerConstants.MUSIC_SERVICE_ON_CREATE
-                    paramCount = 0
-                }.hook {
-                    after {
-                        instance?.let { service -> hookedMusicService = service }
-                    }
+            val onCreate = serviceClass.declaredMethods.firstOrNull {
+                it.name == MetrolistPlayerConstants.MUSIC_SERVICE_ON_CREATE && it.parameterCount == 0
+            } ?: throw NoSuchMethodException(MetrolistPlayerConstants.MUSIC_SERVICE_ON_CREATE)
+            hookRuntime.hook(onCreate, "metrolist.service.MusicService#onCreate") {
+                after {
+                    instanceOrNull?.let { service -> hookedMusicService = service }
                 }
+            }
             StructuredDiagnostics.logInfo(
                 DiagnosticEvent(
                     component = "provider/metrolist",
@@ -168,17 +178,16 @@ class MetrolistPlayerHooker(
         }
 
         runCatching {
-            serviceClass
-                .method {
-                    name = MetrolistPlayerConstants.MUSIC_SERVICE_ON_EVENTS
-                    paramCount = 2
-                }.hook {
-                    after {
-                        val service = instance ?: return@after
-                        hookedMusicService = service
-                        onMusicServiceEvents(service, drainPending = true)
-                    }
+            val onEvents = serviceClass.declaredMethods.firstOrNull {
+                it.name == MetrolistPlayerConstants.MUSIC_SERVICE_ON_EVENTS && it.parameterCount == 2
+            } ?: throw NoSuchMethodException(MetrolistPlayerConstants.MUSIC_SERVICE_ON_EVENTS)
+            hookRuntime.hook(onEvents, "metrolist.service.MusicService#onEvents") {
+                after {
+                    val service = instanceOrNull ?: return@after
+                    hookedMusicService = service
+                    onMusicServiceEvents(service, drainPending = true)
                 }
+            }
             StructuredDiagnostics.logInfo(
                 DiagnosticEvent(
                     component = "provider/metrolist",
@@ -223,7 +232,7 @@ class MetrolistPlayerHooker(
                 )
                 fetchJob = fetchScope.launch {
                     val publication = try {
-                        MetrolistLyricsFetcher.fetchLyrics(hookContext, track, generation)
+                        MetrolistLyricsFetcher.fetchLyrics(hostContext, track, generation)
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Throwable) {
@@ -251,9 +260,8 @@ class MetrolistPlayerHooker(
     private fun installSessionHooks() {
         runCatching {
             val type = MediaSession::class.java
-            type.declaredConstructors.forEach { constructor ->
-                constructor.isAccessible = true
-                constructor.hook {
+            type.declaredConstructors.forEachIndexed { index, constructor ->
+                hookRuntime.hook(constructor, "metrolist.session.MediaSession#ctor$index") {
                     after {
                         (instanceOrNull as? MediaSession)?.let {
                             sessions.onConstructed(it, MetrolistMediaSessionRegistry.constructorTag(args))
@@ -262,75 +270,78 @@ class MetrolistPlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setMetadata", MediaMetadata::class.java)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        if (sessions.isModuleWrite()) return@before
-                        val session = instanceOrNull as? MediaSession ?: return@before
-                        val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
-                        val platformTrack = MetrolistMediaSessionRegistry.trackFrom(incoming)
-                        var outgoing = incoming
-                        sessions.onHostMetadata(session, platformTrack, outgoing)
-                        hookedMusicService?.let { onMusicServiceEvents(it, drainPending = false) }
-                        val hostTrack = generationPolicy.currentTrack
-                        val overlayTrack = hostTrack ?: platformTrack ?: return@before
-                        attachPendingToHostMetadata(session, outgoing, overlayTrack)?.let {
-                            outgoing = it
-                        }
+            hookRuntime.hook(
+                type.getDeclaredMethod("setMetadata", MediaMetadata::class.java),
+                "metrolist.session.MediaSession#setMetadata"
+            ) {
+                before {
+                    if (sessions.isModuleWrite()) return@before
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
+                    val platformTrack = MetrolistMediaSessionRegistry.trackFrom(incoming)
+                    var outgoing = incoming
+                    sessions.onHostMetadata(session, platformTrack, outgoing)
+                    hookedMusicService?.let { onMusicServiceEvents(it, drainPending = false) }
+                    val hostTrack = generationPolicy.currentTrack
+                    val overlayTrack = hostTrack ?: platformTrack ?: return@before
+                    attachPendingToHostMetadata(session, outgoing, overlayTrack)?.let {
+                        outgoing = it
+                    }
 
-                        val snapshot = synchronized(publicationLock) { replaySnapshot }
-                        val incomingLyricInfo = outgoing.getString("lyricInfo")
-                        val alreadyOwned = MetrolistReplayPolicy.isModuleOwned(
-                            incomingLyricInfo,
-                            hostPackage
+                    val snapshot = synchronized(publicationLock) { replaySnapshot }
+                    val incomingLyricInfo = outgoing.getString("lyricInfo")
+                    val alreadyOwned = MetrolistReplayPolicy.isModuleOwned(
+                        incomingLyricInfo,
+                        hostPackage
+                    )
+                    if (!alreadyOwned && MetrolistReplayPolicy.shouldReplay(
+                            snapshot,
+                            session,
+                            platformTrack ?: overlayTrack,
+                            hostTrack,
+                            generationPolicy.generation,
+                            snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
+                            MetrolistMetadataArtwork.isReadyForLyricInfo(outgoing),
+                            incomingLyricInfo
                         )
-                        if (!alreadyOwned && MetrolistReplayPolicy.shouldReplay(
-                                snapshot,
-                                session,
-                                platformTrack ?: overlayTrack,
-                                hostTrack,
-                                generationPolicy.generation,
-                                snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
-                                MetrolistMetadataArtwork.isReadyForLyricInfo(outgoing),
-                                incomingLyricInfo
-                            )
-                        ) {
-                            MetrolistNativePublisher.buildReplayMetadata(
-                                outgoing,
-                                snapshot!!,
-                                generationPolicy,
-                                hostPackage
-                            ).second?.let { outgoing = it }
-                        }
-                        if (outgoing !== incoming) args[0] = outgoing
+                    ) {
+                        MetrolistNativePublisher.buildReplayMetadata(
+                            outgoing,
+                            snapshot!!,
+                            generationPolicy,
+                            hostPackage
+                        ).second?.let { outgoing = it }
                     }
+                    if (outgoing !== incoming) args[0] = outgoing
                 }
+            }
 
-            type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        val session = instanceOrNull as? MediaSession ?: return@before
-                        val state = (args.getOrNull(0) as? PlaybackState)?.state
-                            ?: PlaybackState.STATE_NONE
-                        sessions.onPlaybackState(session, state)
-                        drainPendingPublication()
-                    }
+            hookRuntime.hook(
+                type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java),
+                "metrolist.session.MediaSession#setPlaybackState"
+            ) {
+                before {
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    val state = (args.getOrNull(0) as? PlaybackState)?.state
+                        ?: PlaybackState.STATE_NONE
+                    sessions.onPlaybackState(session, state)
+                    drainPendingPublication()
                 }
+            }
 
-            type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType)
-                .apply { isAccessible = true }
-                .hook {
-                    before {
-                        val session = instanceOrNull as? MediaSession ?: return@before
-                        val active = args.getOrNull(0) as? Boolean ?: false
-                        sessions.onActive(session, active)
-                        drainPendingPublication()
-                    }
+            hookRuntime.hook(
+                type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType),
+                "metrolist.session.MediaSession#setActive"
+            ) {
+                before {
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    val active = args.getOrNull(0) as? Boolean ?: false
+                    sessions.onActive(session, active)
+                    drainPendingPublication()
                 }
+            }
 
-            type.getDeclaredMethod("release").apply { isAccessible = true }.hook {
+            hookRuntime.hook(type.getDeclaredMethod("release"), "metrolist.session.MediaSession#release") {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     sessions.onReleased(session)
