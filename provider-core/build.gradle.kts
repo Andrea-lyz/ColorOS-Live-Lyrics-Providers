@@ -44,8 +44,6 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.serialization.json)
-    implementation(libs.yukihookapi.api)
-    compileOnly(libs.xposed.api)
 
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))

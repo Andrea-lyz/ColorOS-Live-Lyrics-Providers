@@ -30,13 +30,3 @@ class LogcatSink : DiagnosticSink {
         }
     }
 }
-
-class XposedSink : DiagnosticSink {
-    override fun log(level: Int, tag: String, message: String, throwable: Throwable?) {
-        runCatching {
-            val formatted = "[$tag] $message"
-            de.robv.android.xposed.XposedBridge.log(formatted)
-            throwable?.let { de.robv.android.xposed.XposedBridge.log(it) }
-        }
-    }
-}

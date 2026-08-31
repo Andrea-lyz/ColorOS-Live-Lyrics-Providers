@@ -1,4 +1,3 @@
 -dontwarn java.lang.reflect.AnnotatedType
--keep class io.github.andrealtb.coloroslyrics.provider.salt.HookEntry { *; }
 -keep class io.github.andrealtb.coloroslyrics.provider.salt.** { *; }
 -repackageclasses ''

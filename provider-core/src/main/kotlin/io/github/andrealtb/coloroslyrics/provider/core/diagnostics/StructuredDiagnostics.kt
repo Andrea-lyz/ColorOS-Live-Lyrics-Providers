@@ -29,18 +29,12 @@ object StructuredDiagnostics {
         isDebugEnabled = debugEnabled
     }
 
-    fun configureForRuntime(mode: RuntimeMode, debugEnabled: Boolean) {
-        val frameworkSinks = if (mode == RuntimeMode.ROOT_MODULE) listOf(XposedSink()) else emptyList()
-        configure(debugEnabled, frameworkSinks)
-    }
-
-    /**
-     * v4.1 variant with an injected framework sink. Used by libxposed API 102 entries through
-     * FrameworkLogSink; passing null keeps the logcat-only configuration. The legacy overload
-     * above stays for providers that have not migrated yet and is removed with the final
-     * legacy cleanup.
-     */
-    fun configureForRuntime(mode: RuntimeMode, debugEnabled: Boolean, frameworkSink: DiagnosticSink?) {
+    /** API 102 entries inject their framework sink; null keeps logcat-only diagnostics. */
+    fun configureForRuntime(
+        mode: RuntimeMode,
+        debugEnabled: Boolean,
+        frameworkSink: DiagnosticSink?
+    ) {
         val frameworkSinks = if (mode == RuntimeMode.ROOT_MODULE && frameworkSink != null) {
             listOf(frameworkSink)
         } else {

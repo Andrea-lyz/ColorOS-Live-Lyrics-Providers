@@ -39,5 +39,4 @@ configure<LibraryExtension> {
 
 dependencies {
     api(project(":share:extensions-kt"))
-    compileOnly(libs.xposed.api)
 }

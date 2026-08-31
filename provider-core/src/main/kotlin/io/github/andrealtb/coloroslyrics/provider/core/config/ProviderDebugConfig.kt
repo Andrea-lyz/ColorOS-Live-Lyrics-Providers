@@ -6,8 +6,6 @@
 
 package io.github.andrealtb.coloroslyrics.provider.core.config
 
-import android.content.Context
-import android.content.SharedPreferences
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticSink
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeMode
@@ -37,11 +35,6 @@ fun interface ProviderDebugSource {
 data class ProviderDebugResolution(
     val enabled: Boolean,
     val reason: String
-)
-
-data class OpenedModulePrefs(
-    val prefs: SharedPreferences,
-    val usingLsposedSharedPrefs: Boolean
 )
 
 object ProviderDebugConfig {
@@ -86,75 +79,16 @@ object ProviderDebugConfig {
         mode: RuntimeMode,
         provider: ProviderId,
         rootSource: ProviderDebugSource? = null
-    ): Boolean = applyDiagnostics(mode, provider, rootSource).enabled
+    ): Boolean = applyDiagnostics(mode, provider, rootSource, frameworkSink = null).enabled
 
     fun applyDiagnostics(
         mode: RuntimeMode,
         provider: ProviderId,
-        rootSource: ProviderDebugSource? = null
-    ): ProviderDebugResolution {
-        val resolution = resolveDetailed(mode, provider, rootSource)
-        StructuredDiagnostics.configureForRuntime(mode, resolution.enabled)
-        return resolution
-    }
-
-    /**
-     * v4.1 variant used by libxposed API 102 entries: the framework sink is injected by the
-     * modern runtime instead of constructing the legacy Xposed bridge sink here.
-     */
-    fun applyDiagnostics(
-        mode: RuntimeMode,
-        provider: ProviderId,
-        rootSource: ProviderDebugSource?,
-        frameworkSink: DiagnosticSink?
+        rootSource: ProviderDebugSource? = null,
+        frameworkSink: DiagnosticSink? = null
     ): ProviderDebugResolution {
         val resolution = resolveDetailed(mode, provider, rootSource)
         StructuredDiagnostics.configureForRuntime(mode, resolution.enabled, frameworkSink)
         return resolution
     }
-
-    fun openModulePrefs(moduleContext: Context, provider: ProviderId): OpenedModulePrefs {
-        val name = prefsName(provider)
-        return try {
-            @Suppress("DEPRECATION")
-            OpenedModulePrefs(
-                prefs = moduleContext.getSharedPreferences(name, Context.MODE_WORLD_READABLE),
-                usingLsposedSharedPrefs = true
-            )
-        } catch (_: SecurityException) {
-            OpenedModulePrefs(
-                prefs = moduleContext.getSharedPreferences(name, Context.MODE_PRIVATE),
-                usingLsposedSharedPrefs = false
-            )
-        }
-    }
-
-    fun sharedPreferencesSource(moduleContext: Context): ProviderDebugSource =
-        ProviderDebugSource { provider ->
-            openModulePrefs(moduleContext, provider).prefs.getBoolean(KEY_DEBUG_ENABLED, false)
-        }
-
-    fun setRootDebugEnabled(moduleContext: Context?, provider: ProviderId, enabled: Boolean): Boolean {
-        if (moduleContext == null) return false
-        return runCatching {
-            openModulePrefs(moduleContext, provider)
-                .prefs
-                .edit()
-                .putBoolean(KEY_DEBUG_ENABLED, enabled)
-                .commit()
-        }.getOrDefault(false)
-    }
-
-    fun readXposedSwitch(modulePackage: String, provider: ProviderId): Boolean = runCatching {
-        val type = Class.forName("de.robv.android.xposed.XSharedPreferences")
-        val prefs = type.getConstructor(String::class.java, String::class.java)
-            .newInstance(modulePackage, prefsName(provider))
-        runCatching { type.getMethod("makeWorldReadable").invoke(prefs) }
-        type.getMethod("reload").invoke(prefs)
-        type.getMethod(
-            "getBoolean",
-            String::class.java,
-            Boolean::class.javaPrimitiveType
-        ).invoke(prefs, KEY_DEBUG_ENABLED, false) as Boolean
-    }.getOrDefault(false)
 }
