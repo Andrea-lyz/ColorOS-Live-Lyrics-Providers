@@ -126,3 +126,25 @@ checkout 只做签名审查，不进入 Provider 源码树。
 改为 `findBluetoothA2dpOverrides` 受限反射解析器（失败返回 null，KuWo 侧 fail-open 记录
 BLUETOOTH_OVERRIDE_SKIPPED）；KuWo 模块删除 KavaRef 依赖。官方 lyricInfo append、writer
 result capture、5 槽翻译与封面路径未触碰。
+
+## 8. Wave A 真机回归证据（2026-08-31，用户执行，结论：全部通过）
+
+| Provider | 日志 | 关键证据 |
+|---|---|---|
+| Salt | `logs/lyrics-log-20260831-110257-salt-player.txt` | 单进程 `hooks=9`；`DEBUG_CONFIG_APPLIED reason=enabled`（Remote Preferences 读端生效）；`SALT_FINAL_PUBLISHED`×7 跨 generation；pending→`SALT_HOST_METADATA_LYRIC_INFO_ATTACHED`→drain 完整；`TRANSLATION_ACTION_INJECTED reason=public`；蓝牙 relay `SALT_RELAY_IDENTITY_RESOLVED`×19；空歌词 `EMPTY_LYRIC_SKIPPED`/`INVALID_INPUT` fail-open；Bridge `NATIVE_LYRIC_RECEIVED`×16 含翻译+封面 |
+| Cone / GP | `logs/lyrics-log-20260831-111523-cone.txt` | GP（`hooks=8`）与标准包（`hooks=8`）独立进程各自 bootstrap；广播接收器与 `ON_TRACKS_CHANGED_HOOK_INSTALLED` 双入口安装；`CONE_FINAL_PUBLISHED`×5；GP 侧 `TRANSLATION_ACTION_INJECTED` 且 Bridge actions 含 TOGGLE_TRANSLATION 恰好一次 |
+| KuWo | `logs/lyrics-log-20260831-112138-kuwo.txt` | main+`:service` 两轮重启各 `hooks=7`；DexKit `cn.kuwo.mod.lyrics.e0#f` + LRCX `j6.f#a` 解析；`LYRIC_FETCH_HOOKED`（API 102 替代直接 XposedBridge）；`LYRIC_READY`×14 含逐字 TIMING_SAMPLE；`LYRIC_CACHED_PENDING` 串歌防护；`IMMEDIATE_PUBLISH`×4；Bridge 侧翻译+封面 URI 消费；无 `BLUETOOTH_OVERRIDE_SKIPPED` |
+
+三份日志 `level=ERROR` 与 `AndroidRuntime/FATAL` 命中均为 0。
+
+补充说明：
+
+1. Cone 标准包未记录 `TRANSLATION_ACTION_INJECTED` 属预期：宿主启动时恢复了已含
+   TOGGLE_TRANSLATION 的 PlaybackState，`prependPublicAction` 检测到已存在返回原实例，
+   不重复注入；Bridge 侧 actions count=1 证实无重复。
+2. KuWo `PROCESS_SKIPPED`×1 为 `cn.kuwo.player` 进程内
+   `com.google.android.webview` 的附加包回调，门禁正确 detach；main+`:service`
+   双进程接受与 4.0 scope-only 语义一致。
+3. 本批捕获仅覆盖 logcat 侧；framework log 双写未单独导出 LSPosed 日志包核对，
+   留待发布前真机门禁（Phase 5）统一验证。
+4. Wave A 完成仅覆盖 3/12 Provider；Phase 5 发布门禁仍要求全部 12 Provider 真机通过。
