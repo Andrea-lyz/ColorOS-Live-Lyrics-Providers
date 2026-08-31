@@ -148,3 +148,47 @@ result capture、5 槽翻译与封面路径未触碰。
 3. 本批捕获仅覆盖 logcat 侧；framework log 双写未单独导出 LSPosed 日志包核对，
    留待发布前真机门禁（Phase 5）统一验证。
 4. Wave A 完成仅覆盖 3/12 Provider；Phase 5 发布门禁仍要求全部 12 Provider 真机通过。
+
+## 9. Wave B Hook ledger（LX / Poweramp / Metrolist，已迁移，本地门禁通过）
+
+### LX / Walnut（`player-lx`）
+
+| # | 目标 | 4.0 形态 | 4.1 hook id |
+|---|---|---|---|
+| 1 | `LyricModule#setLyric(String, String)`（官方/Walnut/lxnetease 候选解析） | Yuki after | `lx:lx.lyric.<LyricModule>#<setLyric>` |
+| 2 | `MediaSession` 全部构造器 | Yuki after | `lx:lx.session.MediaSession#ctor<index>` |
+| 3 | `MediaSession#setMetadata` | Yuki before，改写 args[0] | `lx:lx.session.MediaSession#setMetadata` |
+| 4 | `MediaSession#setPlaybackState` | Yuki before，翻译 action 注入 | `lx:lx.session.MediaSession#setPlaybackState` |
+| 5 | `MediaSession#setActive` / `#release` | Yuki before | `lx:lx.session.MediaSession#setActive` / `#release` |
+
+保持点：双宿主 hostPackage 隔离、蓝牙 TITLE/ARTIST projection 忽略策略、
+URI/bitmap 封面就绪门禁（PENDING_ARTWORK）、replay 所有权判定。
+
+### Poweramp（`player-poweramp`）
+
+| # | 目标 | 4.0 形态 | 4.1 hook id |
+|---|---|---|---|
+| 1 | `ContextWrapper#sendStickyBroadcast(Intent)`（TRACK_CHANGED host-send） | Yuki before | `poweramp:poweramp.track.ContextWrapper#sendStickyBroadcast` |
+| 2 | TRACK_CHANGED 广播接收器（NOT_EXPORTED） | 非 Hook，保留 | — |
+| 3 | `MediaSession` 构造器 / setMetadata(before+after) / setPlaybackState / setActive / release | Yuki | `poweramp:poweramp.session.MediaSession#*` |
+| 4 | `Application#onTerminate`（receiver 反注册 + executor 关闭） | Yuki onAppLifecycle | `poweramp:poweramp.app.Application#onTerminate` |
+
+保持点：翻译 poke 一次性守卫（ThreadLocal + generation CAS）、暂停竞态保护
+（只改宿主 args，不延迟 setPlaybackState）、cast session 排除、本地歌词
+（.lrc/TagLib）与两阶段封面。
+
+### Metrolist（`player-metrolist`）
+
+| # | 目标 | 4.0 形态 | 4.1 hook id |
+|---|---|---|---|
+| 1 | `MusicService#onCreate()`（按名称+参数数解析） | Yuki method 工厂 after | `metrolist:metrolist.service.MusicService#onCreate` |
+| 2 | `MusicService#onEvents(*, *)` | Yuki method 工厂 after | `metrolist:metrolist.service.MusicService#onEvents` |
+| 3 | `MediaSession` 构造器 / setMetadata / setPlaybackState / setActive / release | Yuki | `metrolist:metrolist.session.MediaSession#*` |
+| 4 | `Application#onTerminate`（fetchScope 取消） | Yuki onAppLifecycle | `metrolist:metrolist.app.Application#onTerminate` |
+
+保持点：host track bind、provider order（BetterLyrics/LrcLib/KuGou）、
+pending 附着、定性不支持翻译（不注入 TOGGLE_TRANSLATION）、KSP unit-test
+workaround 随 Yuki 入口一并删除。
+
+三个模块均已通过模块单测、`verifyXposedApi102Resources`、debug APK 构建与
+`testV5Matrix` 全矩阵回归；真机验证待用户执行。
