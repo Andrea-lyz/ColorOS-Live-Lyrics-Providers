@@ -6,8 +6,8 @@
 
 package io.github.andrealtb.coloroslyrics.provider.cone
 
-import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugSettingsActivity
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
+import io.github.andrealtb.coloroslyrics.provider.settings102.ProviderDebugSettingsActivity
 
 class ConeDebugSettingsActivity : ProviderDebugSettingsActivity() {
     override val providerId: ProviderId = ProviderId.CONE

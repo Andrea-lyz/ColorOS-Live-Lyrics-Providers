@@ -14,24 +14,23 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
 import io.github.andrealtb.coloroslyrics.provider.core.session.PlaybackStateTranslationToggle
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.andrealtb.coloroslyrics.provider.reflection.ReflectionCache
 import java.lang.ref.WeakReference
 
-class ConePlayerHooker(
-    private val hookContext: Context,
-    private val hostPackage: String,
-    private val hostVersion: String?
-) : YukiBaseHooker() {
+class ConePlayerHooker(private val hookContext: ProviderHookContext) {
+    private val hookRuntime = hookContext.runtime
+    private val hostContext = hookContext.application
+    private val hostPackage = hookContext.packageName
+    private val hostVersion = hookContext.hostVersion
 
     private val sessions = ConeMediaSessionRegistry()
     private val candidatePolicy = ConeLyricCandidatePolicy()
@@ -56,8 +55,8 @@ class ConePlayerHooker(
     @Volatile
     private var translationActionInjectionLogged = false
 
-    override fun onHook() {
-        val resolution = RuntimeModeResolver.resolve(hookContext)
+    fun onHook() {
+        val resolution = RuntimeModeResolver.resolve(hostContext)
         if (!resolution.mode.isSupported) {
             StructuredDiagnostics.logWarning(
                 DiagnosticEvent(
@@ -75,7 +74,8 @@ class ConePlayerHooker(
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.CONE,
-            rootSource = YukiHookDebugSource.create(hookContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -128,9 +128,9 @@ class ConePlayerHooker(
                 }
                 val filter = IntentFilter(ConePlayerConstants.ACTION_CURRENT_LYRIC_CHANGED)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    hookContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    hostContext.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
                 } else {
-                    hookContext.registerReceiver(receiver, filter)
+                    hostContext.registerReceiver(receiver, filter)
                 }
                 broadcastReceiverRegistered = true
                 StructuredDiagnostics.logInfo(
@@ -176,8 +176,7 @@ class ConePlayerHooker(
                 if (method.name == "onTracksChanged" && paramTypes.size == 2 &&
                     paramTypes[1].name == ConePlayerConstants.MEDIA3_TRACKS_CLASS
                 ) {
-                    method.isAccessible = true
-                    method.hook {
+                    hookRuntime.hook(method, "cone.service.MediaPlayerService#${method.name}") {
                         after {
                             val tracks = args.getOrNull(1) ?: return@after
                             onTracksChanged(tracks)
@@ -219,9 +218,8 @@ class ConePlayerHooker(
     private fun installSessionHooks() {
         runCatching {
             val type = MediaSession::class.java
-            type.declaredConstructors.forEach { constructor ->
-                constructor.isAccessible = true
-                constructor.hook {
+            type.declaredConstructors.forEachIndexed { index, constructor ->
+                hookRuntime.hook(constructor, "cone.session.MediaSession#ctor$index") {
                     after {
                         (instanceOrNull as? MediaSession)?.let {
                             sessions.onConstructed(it, ConeMediaSessionRegistry.constructorTag(args))
@@ -230,7 +228,10 @@ class ConePlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setMetadata", MediaMetadata::class.java).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setMetadata", MediaMetadata::class.java),
+                "cone.session.MediaSession#setMetadata"
+            ) {
                 before {
                     if (sessions.isModuleWrite()) return@before
                     val session = instanceOrNull as? MediaSession ?: return@before
@@ -260,7 +261,10 @@ class ConePlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setPlaybackState", PlaybackState::class.java),
+                "cone.session.MediaSession#setPlaybackState"
+            ) {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val original = args.getOrNull(0) as? PlaybackState
@@ -272,7 +276,10 @@ class ConePlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType).apply { isAccessible = true }.hook {
+            hookRuntime.hook(
+                type.getDeclaredMethod("setActive", Boolean::class.javaPrimitiveType),
+                "cone.session.MediaSession#setActive"
+            ) {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val active = args.getOrNull(0) as? Boolean ?: false
@@ -282,7 +289,7 @@ class ConePlayerHooker(
                 }
             }
 
-            type.getDeclaredMethod("release").apply { isAccessible = true }.hook {
+            hookRuntime.hook(type.getDeclaredMethod("release"), "cone.session.MediaSession#release") {
                 before {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     sessions.onReleased(session)
@@ -295,7 +302,7 @@ class ConePlayerHooker(
     }
 
     private fun injectPublicTranslationToggle(original: PlaybackState): PlaybackState {
-        val patched = PlaybackStateTranslationToggle.prependPublicAction(original, hookContext)
+        val patched = PlaybackStateTranslationToggle.prependPublicAction(original, hostContext)
         if (patched !== original && !translationActionInjectionLogged) {
             translationActionInjectionLogged = true
             StructuredDiagnostics.logInfo(
