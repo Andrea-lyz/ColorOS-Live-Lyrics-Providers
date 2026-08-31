@@ -8,8 +8,7 @@ package io.github.andrealtb.coloroslyrics.provider.netease
 
 import android.os.Handler
 import android.os.Message
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookRuntime
 import java.lang.reflect.Method
 
 /**
@@ -22,6 +21,7 @@ class NeteaseOfficialLyricHooks(
     private val processName: String,
     private val apkPath: String,
     private val classLoader: ClassLoader,
+    private val hookRuntime: ProviderHookRuntime,
     private val coordinator: NeteaseLyricSessionCoordinator,
     private val onRuntimeEntry: () -> Unit
 ) {
@@ -58,16 +58,19 @@ class NeteaseOfficialLyricHooks(
     }
 
     private fun hookLyricWrite(method: Method) {
-        XposedBridge.hookMethod(method, object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
+        hookRuntime.hook(
+            method,
+            "netease.writer.${method.declaringClass.name}#${method.name}"
+        ) {
+            before {
                 pendingEncode.remove()
                 runCatching {
                     val publication = coordinator.captureOfficial(
                         snapshot = NeteaseLyricInfoReader.read(
-                            param.args.getOrNull(0),
-                            param.args.getOrNull(1)
+                            args.getOrNull(0),
+                            args.getOrNull(1)
                         ),
-                        musicInfoPresent = param.args.getOrNull(1) != null,
+                        musicInfoPresent = args.getOrNull(1) != null,
                         captureOrigin = "lyric-info"
                     ) ?: return@runCatching
                     pendingEncode.set(publication)
@@ -92,7 +95,7 @@ class NeteaseOfficialLyricHooks(
                 }
             }
 
-            override fun afterHookedMethod(param: MethodHookParam) {
+            after {
                 val pending = pendingEncode.get()
                 NeteaseDiagnostics.info(
                     area = "lyric",
@@ -105,7 +108,7 @@ class NeteaseOfficialLyricHooks(
                 )
                 pendingEncode.remove()
             }
-        })
+        }
         logHooked("LYRIC_WRITE_HOOKED", method.declaringClass.name + "#" + method.name)
     }
 
@@ -129,8 +132,11 @@ class NeteaseOfficialLyricHooks(
             )
             return
         }
-        XposedBridge.hookMethod(method, object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
+        hookRuntime.hook(
+            method,
+            "netease.encoder.${method.declaringClass.name}#${method.name}"
+        ) {
+            after {
                 runCatching {
                     val publication = pendingEncode.get()
                     if (publication == null) {
@@ -140,12 +146,12 @@ class NeteaseOfficialLyricHooks(
                             process = processName,
                             session = "no-pending",
                             reason = "no-pending",
-                            message = "hostChars=${(param.result as? String)?.length ?: 0} " +
+                            message = "hostChars=${(result as? String)?.length ?: 0} " +
                                 threadNote()
                         )
                         return@runCatching
                     }
-                    val existing = param.result as? String
+                    val existing = result as? String
                     val encoded = NeteaseLyricInfoPayloadEncoder.encode(
                         track = publication.track,
                         lines = publication.lines,
@@ -167,7 +173,7 @@ class NeteaseOfficialLyricHooks(
                         )
                         return@runCatching
                     }
-                    param.result = encoded.value
+                    result = encoded.value
                     NeteaseDiagnostics.info(
                         area = "publisher",
                         event = "NATIVE_LYRICINFO_PATCHED",
@@ -189,7 +195,7 @@ class NeteaseOfficialLyricHooks(
                     )
                 }
             }
-        })
+        }
         logHooked("ENCODER_HOOKED", method.declaringClass.name + "#" + method.name)
     }
 
@@ -204,27 +210,29 @@ class NeteaseOfficialLyricHooks(
             )
             return
         }
-        val hook = object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                runCatching {
-                    val musicInfo = param.args.getOrNull(0) ?: return@runCatching
-                    coordinator.bindTrack(
-                        NeteaseLyricInfoReader.read(null, musicInfo).track,
-                        "track-bind"
-                    )
-                }.onFailure { error ->
-                    NeteaseDiagnostics.error(
-                        area = "identity",
-                        event = "TRACK_BIND_HOOK_FAILED",
-                        process = processName,
-                        message = error.message,
-                        throwable = error
-                    )
+        methods.forEach { method ->
+            hookRuntime.hook(
+                method,
+                "netease.track.${method.declaringClass.name}#${method.name}"
+            ) {
+                before {
+                    runCatching {
+                        val musicInfo = args.getOrNull(0) ?: return@runCatching
+                        coordinator.bindTrack(
+                            NeteaseLyricInfoReader.read(null, musicInfo).track,
+                            "track-bind"
+                        )
+                    }.onFailure { error ->
+                        NeteaseDiagnostics.error(
+                            area = "identity",
+                            event = "TRACK_BIND_HOOK_FAILED",
+                            process = processName,
+                            message = error.message,
+                            throwable = error
+                        )
+                    }
                 }
             }
-        }
-        methods.forEach { method ->
-            XposedBridge.hookMethod(method, hook)
             logHooked("TRACK_BIND_HOOKED", method.declaringClass.name + "#" + method.name)
         }
     }
@@ -238,11 +246,11 @@ class NeteaseOfficialLyricHooks(
             "dispatchMessage",
             Message::class.java
         )
-        XposedBridge.hookMethod(dispatch, object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                val message = param.args.getOrNull(0) as? Message ?: return
-                val handler = param.thisObject as? Handler ?: return
-                val lyric = message.obj ?: return
+        hookRuntime.hook(dispatch, "netease.dispatch.Handler#dispatchMessage") {
+            after {
+                val message = args.getOrNull(0) as? Message ?: return@after
+                val handler = instanceOrNull as? Handler ?: return@after
+                val lyric = message.obj ?: return@after
                 if (!NeteaseLyricHookResolver.matchesLyricDispatch(
                         expectedHandlerClassName = expectedHandlerName,
                         actualHandlerClassName = handler.javaClass.name,
@@ -250,7 +258,7 @@ class NeteaseOfficialLyricHooks(
                         payloadTypeName = lyric.javaClass.name
                     )
                 ) {
-                    return
+                    return@after
                 }
                 runCatching {
                     onRuntimeEntry()
@@ -306,7 +314,7 @@ class NeteaseOfficialLyricHooks(
                     )
                 }
             }
-        })
+        }
         logHooked(
             event = "LYRIC_MESSAGE_HOOKED",
             target = "android.os.Handler#dispatchMessage",

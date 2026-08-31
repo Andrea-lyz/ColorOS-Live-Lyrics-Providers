@@ -8,30 +8,29 @@ package io.github.andrealtb.coloroslyrics.provider.netease
 
 import android.media.MediaMetadata
 import android.media.session.MediaSession
-import com.highcapable.kavaref.KavaRef.Companion.resolve
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 
 /** Composition root for profile selection, platform metadata, and diagnostics. */
 class NeteasePlayerHooker(
-    private val hostPackage: String
-) : YukiBaseHooker() {
+    private val hookContext: ProviderHookContext
+) {
+    private val hookRuntime = hookContext.runtime
+    private val hostPackage = hookContext.packageName
+    private val processName: String
+        get() = hookContext.processName
 
     @Volatile
     private var debugConfigAnnounced = false
-
-    @Volatile
-    private var debugConfigSkipLogged = false
 
     private lateinit var coordinator: NeteaseLyricSessionCoordinator
     private var constructedSession: NeteaseConstructedLyricSession? = null
     private var officialHooks: NeteaseOfficialLyricHooks? = null
 
-    override fun onHook() {
+    fun onHook() {
         val profile = NeteaseRuntimeProfile.resolve(hostPackage, processName)
         if (profile == null) {
             NeteaseDiagnostics.info(
@@ -65,20 +64,19 @@ class NeteasePlayerHooker(
                 officialHooks = NeteaseOfficialLyricHooks(
                     hostPackage = hostPackage,
                     processName = processName,
-                    apkPath = appInfo.sourceDir,
-                    classLoader = requireNotNull(appClassLoader),
+                    apkPath = hookContext.application.applicationInfo.sourceDir,
+                    classLoader = hookContext.classLoader,
+                    hookRuntime = hookRuntime,
                     coordinator = coordinator,
                     onRuntimeEntry = { applyRuntimeAndDebug() }
                 ).also { it.install() }
             }
         }
-        hookApplicationDebugConfig()
     }
 
     private fun applyRuntimeAndDebug(): Boolean {
         RuntimeModeResolver.notifyXposedHookActive()
-        val hostContext = appContext
-        val resolution = RuntimeModeResolver.resolve(hostContext)
+        val resolution = RuntimeModeResolver.resolve(hookContext.application)
         if (!resolution.mode.isSupported) {
             NeteaseDiagnostics.warn(
                 area = "bootstrap",
@@ -89,22 +87,11 @@ class NeteasePlayerHooker(
             )
             return false
         }
-        if (hostContext == null) {
-            if (!debugConfigSkipLogged) {
-                debugConfigSkipLogged = true
-                NeteaseDiagnostics.info(
-                    area = "bootstrap",
-                    event = "DEBUG_CONFIG_SKIPPED",
-                    process = processName,
-                    reason = "no-host-context"
-                )
-            }
-            return true
-        }
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.NETEASE,
-            rootSource = YukiHookDebugSource.create(hostContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         if (debugConfigAnnounced) return true
         debugConfigAnnounced = true
@@ -128,15 +115,14 @@ class NeteasePlayerHooker(
     }
 
     private fun hookMediaSession(profile: NeteaseRuntimeProfile) {
-        "android.media.session.MediaSession".toClass().resolve().apply {
-            firstMethod {
-                name = "setMetadata"
-                parameters(MediaMetadata::class.java)
-            }.hook {
+        runCatching {
+            val setMetadata = MediaSession::class.java
+                .getDeclaredMethod("setMetadata", MediaMetadata::class.java)
+            hookRuntime.hook(setMetadata, "netease.session.MediaSession#setMetadata") {
                 before {
                     if (NeteaseLyricInfoPublisher.isSelfPublishing()) return@before
-                    val session = instance as? MediaSession ?: return@before
-                    val metadata = args[0] as? MediaMetadata ?: return@before
+                    val session = instanceOrNull as? MediaSession ?: return@before
+                    val metadata = args.getOrNull(0) as? MediaMetadata ?: return@before
                     val prepared = NeteaseLyricInfoPublisher.prepareHostMetadata(
                         session,
                         metadata,
@@ -146,6 +132,15 @@ class NeteasePlayerHooker(
                     observeMetadata(prepared, profile)
                 }
             }
+        }.onFailure {
+            NeteaseDiagnostics.error(
+                area = "session",
+                event = "SESSION_HOOK_FAILED",
+                process = processName,
+                message = it.message,
+                throwable = it
+            )
+            return
         }
         logHooked("MEDIA_SESSION_HOOKED", "android.media.session.MediaSession#setMetadata")
     }
@@ -183,23 +178,6 @@ class NeteasePlayerHooker(
             current.track?.let { track ->
                 constructedSession?.request(track, current.generation)
             }
-        }
-    }
-
-    private fun hookApplicationDebugConfig() {
-        runCatching {
-            "android.app.Application".toClass().resolve().firstMethod {
-                name = "onCreate"
-            }.hook {
-                after { applyRuntimeAndDebug() }
-            }
-        }.onFailure {
-            NeteaseDiagnostics.warn(
-                area = "bootstrap",
-                event = "DEBUG_CONFIG_RETRY_MISSING",
-                process = processName,
-                message = it.message
-            )
         }
     }
 

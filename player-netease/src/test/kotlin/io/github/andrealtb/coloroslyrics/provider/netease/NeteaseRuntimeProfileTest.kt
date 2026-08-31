@@ -7,7 +7,9 @@
 package io.github.andrealtb.coloroslyrics.provider.netease
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NeteaseRuntimeProfileTest {
@@ -55,5 +57,46 @@ class NeteaseRuntimeProfileTest {
             )
         )
         assertNull(NeteaseRuntimeProfile.resolve("com.example", "com.example"))
+    }
+
+    @Test
+    fun api102EntryAcceptsOnlyTheFourProfileProcesses() {
+        assertEquals(
+            setOf(
+                NeteasePlayerConstants.HOST_PACKAGE,
+                NeteasePlayerConstants.HONOR_HOST_PACKAGE
+            ),
+            NeteaseProfileProcessPolicy.packages
+        )
+        assertTrue(
+            NeteaseProfileProcessPolicy.accepts(
+                NeteasePlayerConstants.HOST_PACKAGE,
+                NeteasePlayerConstants.HOST_PACKAGE
+            )
+        )
+        assertTrue(
+            NeteaseProfileProcessPolicy.accepts(
+                NeteasePlayerConstants.HOST_PACKAGE,
+                NeteasePlayerConstants.NETEASE_PLAY_PROCESS
+            )
+        )
+        assertTrue(
+            NeteaseProfileProcessPolicy.accepts(
+                NeteasePlayerConstants.HONOR_HOST_PACKAGE,
+                NeteasePlayerConstants.HONOR_HOST_PACKAGE
+            )
+        )
+        assertTrue(
+            NeteaseProfileProcessPolicy.accepts(
+                NeteasePlayerConstants.HONOR_HOST_PACKAGE,
+                NeteasePlayerConstants.HONOR_PLAY_PROCESS
+            )
+        )
+        assertFalse(
+            NeteaseProfileProcessPolicy.accepts(
+                NeteasePlayerConstants.HOST_PACKAGE,
+                NeteasePlayerConstants.HOST_PACKAGE + ":push"
+            )
+        )
     }
 }
