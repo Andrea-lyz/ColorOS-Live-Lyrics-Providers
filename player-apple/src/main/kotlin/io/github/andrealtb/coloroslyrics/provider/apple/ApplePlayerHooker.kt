@@ -150,7 +150,9 @@ class ApplePlayerHooker(
         )
 
         diskCache = AppleDiskSongCache(hookContext)
-        val application = (hookContext.applicationContext as? Application) ?: return
+        val application = checkNotNull(
+            (hookContext as? Application) ?: (hookContext.applicationContext as? Application)
+        ) { "API 102 bootstrap did not provide the host Application instance" }
         val loader = appClassLoader
         lyricRequester = AppleLyricRequester(loader, application)
 

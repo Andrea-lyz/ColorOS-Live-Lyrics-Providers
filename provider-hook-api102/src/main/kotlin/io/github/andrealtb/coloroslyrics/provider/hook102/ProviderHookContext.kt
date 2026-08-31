@@ -20,7 +20,7 @@ class ProviderHookContext(
     val packageName: String,
     val processName: String,
     val classLoader: ClassLoader,
-    /** Host application context, available after Application.attach. */
+    /** Actual host [android.app.Application] instance, exposed as Context after attach. */
     val application: Context,
     val hostVersion: String?,
     val runtime: ProviderHookRuntime,

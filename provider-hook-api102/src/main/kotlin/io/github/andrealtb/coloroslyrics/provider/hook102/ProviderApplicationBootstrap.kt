@@ -39,8 +39,12 @@ internal class ProviderApplicationBootstrap(
             val attach = Application::class.java.getDeclaredMethod("attach", Context::class.java)
             val installed = runtime.hook(attach, "app.attach") {
                 after {
-                    val hostContext = args.getOrNull(0) as? Context ?: return@after
-                    bootstrapHost(hostContext, param, processName)
+                    // Application.attach(Context) receives the base context as arg0, while
+                    // business installers that own application-scoped workers need the actual
+                    // Application instance. Yuki's old onCreate lifecycle supplied that
+                    // instance; preserve the same contract after the API 102 migration.
+                    val hostApplication = instanceOrNull as? Application ?: return@after
+                    bootstrapHost(hostApplication, param, processName)
                 }
             }
             if (!installed) {
