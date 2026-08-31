@@ -192,3 +192,17 @@ workaround 随 Yuki 入口一并删除。
 
 三个模块均已通过模块单测、`verifyXposedApi102Resources`、debug APK 构建与
 `testV5Matrix` 全矩阵回归；真机验证待用户执行。
+
+## 10. Wave B 真机回归证据（2026-08-31，用户执行，结论：全部通过）
+
+| Provider | 日志 | 关键证据 |
+|---|---|---|
+| LX / Walnut | `logs/lyrics-log-20260831-124343-LX.txt` | 官方 1.8.4 与 Walnut 26.08.19 各自 `hooks=8`；`LYRIC_MODULE_HOOK_INSTALLED` 分别命中 `cn.toside...` 与 `com.lxwalnut...` LyricModule；`LX_FINAL_PUBLISHED`×6、pending→PENDING_ARTWORK→ATTACHED→DRAINED 完整；蓝牙 `LX_BLUETOOTH_PROJECTION_IGNORED`×11 与 `LX_PUBLISHED_LYRIC_TITLE_PROJECTION_IGNORED`×5；`EMPTY_CLEARED`×8；两宿主各一次 `TRANSLATION_ACTION_INJECTED`；Bridge 消费官方×9 + Walnut×7（URI 封面） |
+| Poweramp | `logs/lyrics-log-20260831-124907-Poweramp.txt` | `TRACK_CHANGED_SEND_HOOK_INSTALLED` + `TRACK_CHANGED_RECEIVER_INSTALLED`；`TRACK_BOUND`×4（source=host-send，path=true）；`TRANSLATION_ACTION_POKED` 恰好每代一次（generation 1–4 无重复，poke 门禁成立）；`POWERAMP_FINAL_PUBLISHED`×3 + ATTACHED×3；Bridge 消费×8 |
+| Metrolist | `logs/lyrics-log-20260831-124722-metrolist.txt` | `MUSIC_SERVICE_CREATE_HOOK_INSTALLED` + `MUSIC_SERVICE_HOOK_INSTALLED`（onCreate/onEvents 按名称+参数数解析）；`TRACK_BOUND`×3 → `LYRIC_PROVIDERS_SELECTED/TRY/HIT` 主动检索；`METROLIST_FINAL_PUBLISHED`×2 + Coil 封面 pending attach；Bridge Rule0 actions 无 TOGGLE_TRANSLATION（无翻译契约成立）；`PROCESS_SKIPPED` 为 webview 附加包，门禁正确 |
+
+三份日志 `level=ERROR` 命中均为 0；Poweramp 日志中 4 行 `AndroidRuntime|FATAL`
+模式匹配为误报（Bridge 解析 trace 输出了歌名含 “Fatal” 的 LRC `[ti:]` 头），无真实崩溃。
+
+至此 Wave A + Wave B 共 6/12 Provider 完成迁移与真机回归；Phase 5 发布门禁仍需
+剩余 6 个 Provider（Wave C/D/E）真机通过。
