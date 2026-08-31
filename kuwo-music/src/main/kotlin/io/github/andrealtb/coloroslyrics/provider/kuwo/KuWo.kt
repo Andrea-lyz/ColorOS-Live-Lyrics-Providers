@@ -6,19 +6,16 @@
 
 package io.github.andrealtb.coloroslyrics.provider.kuwo
 
+import android.app.Application
 import android.media.MediaMetadata
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
-import com.highcapable.kavaref.KavaRef.Companion.resolve
-import com.highcapable.yukihookapi.hook.entity.YukiBaseHooker
-import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XposedBridge
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugConfig
 import io.github.andrealtb.coloroslyrics.provider.core.config.ProviderId
-import io.github.andrealtb.coloroslyrics.provider.core.config.YukiHookDebugSource
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
+import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.proify.extensions.android.AndroidUtils
 import io.github.proify.extensions.toRichLyricLines
 import io.github.proify.lrckit.LrcParser
@@ -39,7 +36,16 @@ import java.lang.ref.WeakReference
  *   -> 串歌校验（请求时的 Music 与当前曲目比对）
  *   -> LRC/LRCX 解析 -> Song -> 酷我原生 MediaSession lyricInfo
  */
-open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
+class KuWo(private val hookContext: ProviderHookContext) {
+    private val hookRuntime = hookContext.runtime
+
+    // v4.1: explicit ProviderHookContext accessors replace the Yuki global context properties.
+    // Original names are kept so the business code below stays untouched.
+    private val appClassLoader: ClassLoader
+        get() = hookContext.classLoader
+    private val processName: String
+        get() = hookContext.processName
+
     @Volatile
     private var currentTrackKey: String? = null
 
@@ -91,11 +97,11 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     @Volatile
     private var debugConfigAnnounced = false
 
-    override fun onHook() {
+    fun onHook() {
         if (!applyRuntimeAndDebug()) {
             return
         }
-        AndroidUtils.openBluetoothA2dpOn(appClassLoader)
+        installBluetoothStateOverrides()
         KuWoDiagnostics.info(
             area = "bootstrap",
             event = "PROCESS_READY",
@@ -103,21 +109,14 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
         )
         mainHandler = createMainHandler()
         resolveKuWoInternals()
-        onAppLifecycle {
-            onCreate {
-                applyRuntimeAndDebug()
-            }
-            onTerminate {
-                runCatching { lyricRetryExecutor.shutdownNow() }
-            }
-        }
+        installApplicationLifecycleHooks()
         hookMediaSession()
         hookKuWoLyric()
     }
 
     private fun applyRuntimeAndDebug(): Boolean {
         RuntimeModeResolver.notifyXposedHookActive()
-        val hostContext = appContext
+        val hostContext = hookContext.application
         val resolution = RuntimeModeResolver.resolve(hostContext)
         if (!resolution.mode.isSupported) {
             KuWoDiagnostics.warn(
@@ -129,13 +128,11 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
             )
             return false
         }
-        if (hostContext == null) {
-            return true
-        }
         val debug = ProviderDebugConfig.applyDiagnostics(
             mode = resolution.mode,
             provider = ProviderId.KUWO,
-            rootSource = YukiHookDebugSource.create(hostContext)
+            rootSource = hookContext.debugSource,
+            frameworkSink = hookContext.frameworkSink
         )
         if (debugConfigAnnounced) {
             return true
@@ -166,7 +163,7 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
 
     private fun resolveKuWoInternals() {
         runCatching {
-            KuWoDexKitResolver.resolve(appInfo.sourceDir, appClassLoader)
+            KuWoDexKitResolver.resolve(hookContext.application.applicationInfo.sourceDir, appClassLoader)
         }.onSuccess { targets ->
             resolvedLyricFetchMethod = targets?.lyricFetchMethod
             KuWoOfficialLrcxAdapter.setResolvedParserMethod(targets?.lrcxParserMethod)
@@ -194,22 +191,21 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
         method.declaringClass.name + "#" + method.name
 
     private fun hookMediaSession() {
-        "android.media.session.MediaSession".toClass().resolve().apply {
-            firstMethod {
-                name = "setMetadata"
-                parameters("android.media.MediaMetadata")
-            }.hook {
+        runCatching {
+            val setMetadata = android.media.session.MediaSession::class.java
+                .getDeclaredMethod("setMetadata", MediaMetadata::class.java)
+            hookRuntime.hook(setMetadata, "kuwo.session.MediaSession#setMetadata") {
                 before {
-                    val metadata = args[0] as? MediaMetadata ?: return@before
+                    val metadata = args.getOrNull(0) as? MediaMetadata ?: return@before
                     val decision = KuWoLyricInfoPublisher.prepareHostMetadata(metadata)
                     args[0] = decision.metadata
-                    (instance as? android.media.session.MediaSession)?.let { session ->
+                    (instanceOrNull as? android.media.session.MediaSession)?.let { session ->
                         latestSessionRef = WeakReference(session)
                         latestHostMetadata = decision.metadata
                     }
                 }
                 after {
-                    val metadata = args[0] as? MediaMetadata ?: return@after
+                    val metadata = args.getOrNull(0) as? MediaMetadata ?: return@after
                     if (!KuWoLyricInfoPublisher.onHostMetadataApplied()) {
                         return@after
                     }
@@ -246,6 +242,13 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
                     }
                 }
             }
+        }.onFailure { throwable ->
+            KuWoDiagnostics.error(
+                area = "session",
+                event = "SESSION_HOOK_FAILED",
+                process = processName,
+                throwable = throwable
+            )
         }
     }
 
@@ -259,24 +262,24 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
             )
             return
         }
-        XposedBridge.hookMethod(method, object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
+        hookRuntime.hook(method, "kuwo.lyrics.${method.declaringClass.name}#${method.name}") {
+            after {
                 runCatching {
-                    val music = param.args.getOrNull(0)
+                    val music = args.getOrNull(0)
                     val fetchCall = KuWoLyricFetchRetryPolicy.FetchCall(
                         rid = music?.let { readMusicString(it, "getRid") },
                         trackKey = music?.let { readMusicTrackKey(it) }
                     )
                     lastFetchInvoke = KuWoLyricFetchRetryPolicy.FetchInvoke(
                         method = method,
-                        instance = param.thisObject,
-                        args = param.args.copyOf(),
+                        instance = instanceOrNull,
+                        args = args.copyOf(),
                         call = fetchCall
                     )
-                    val result = param.result
-                    if (result != null && isAvailableLyricsInfo(result)) {
+                    val fetchResult = result
+                    if (fetchResult != null && isAvailableLyricsInfo(fetchResult)) {
                         lyricRetryPolicy.noteFetchSucceeded(fetchCall)
-                        handleLyricsInfo(result, music)
+                        handleLyricsInfo(fetchResult, music)
                         return@runCatching
                     }
                     scheduleLyricFetchRetry(
@@ -292,7 +295,7 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
                     )
                 }
             }
-        })
+        }
         KuWoDiagnostics.debug(
             area = "hook",
             event = "LYRIC_FETCH_HOOKED",
@@ -302,13 +305,65 @@ open class KuWo(val tag: String = "KuWoProvider") : YukiBaseHooker() {
     }
 
     /**
+     * v4.1 replacement for AndroidUtils.openBluetoothA2dpOn: force the two Bluetooth state
+     * getters to true through the API 102 runtime (equivalent to the 4.0 constant replacement).
+     */
+    private fun installBluetoothStateOverrides() {
+        val overrides = AndroidUtils.findBluetoothA2dpOverrides(appClassLoader)
+        if (overrides == null) {
+            KuWoDiagnostics.debug(
+                area = "bootstrap",
+                event = "BLUETOOTH_OVERRIDE_SKIPPED",
+                process = processName,
+                reason = "lookup-failed"
+            )
+            return
+        }
+        val (isBluetoothA2dpOn, isAdapterEnabled) = overrides
+        hookRuntime.hook(isBluetoothA2dpOn, "kuwo.bluetooth.AudioManager#isBluetoothA2dpOn") {
+            before { result = true }
+        }
+        hookRuntime.hook(isAdapterEnabled, "kuwo.bluetooth.BluetoothAdapter#isEnabled") {
+            before { result = true }
+        }
+    }
+
+    /**
+     * Replays the 4.0 onAppLifecycle behavior: re-apply runtime/debug on Application.onCreate
+     * and shut the lyric retry executor down on Application.onTerminate.
+     */
+    private fun installApplicationLifecycleHooks() {
+        runCatching {
+            val applicationClass = Application::class.java
+            hookRuntime.hook(
+                applicationClass.getDeclaredMethod("onCreate"),
+                "kuwo.app.Application#onCreate"
+            ) {
+                after { applyRuntimeAndDebug() }
+            }
+            hookRuntime.hook(
+                applicationClass.getDeclaredMethod("onTerminate"),
+                "kuwo.app.Application#onTerminate"
+            ) {
+                after { runCatching { lyricRetryExecutor.shutdownNow() } }
+            }
+        }.onFailure { throwable ->
+            KuWoDiagnostics.error(
+                area = "bootstrap",
+                event = "APP_LIFECYCLE_HOOK_FAILED",
+                process = processName,
+                throwable = throwable
+            )
+        }
+    }
+
+    /**
      * 字面名优先；后续混淆名变化时在此追加 DexKit 结构兜底。
      */
     private fun findLyricFetchMethod(): Method? {
         resolvedLyricFetchMethod?.let { return it }
         return runCatching {
-            val clazz = appClassLoader?.loadClass("cn.kuwo.mod.lyrics.e0")
-                ?: return null
+            val clazz = appClassLoader.loadClass("cn.kuwo.mod.lyrics.e0")
             clazz.declaredMethods.firstOrNull { candidate ->
                 candidate.name == "f" &&
                     candidate.parameterCount == 3 &&

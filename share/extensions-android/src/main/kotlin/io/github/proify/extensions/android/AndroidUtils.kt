@@ -6,27 +6,26 @@
 
 package io.github.proify.extensions.android
 
-import de.robv.android.xposed.XC_MethodReplacement
-import de.robv.android.xposed.XposedHelpers
+import java.lang.reflect.Method
 
 /**
  * @author Lin
  */
 object AndroidUtils {
-    fun openBluetoothA2dpOn(classLoader: ClassLoader?) {
-        if (classLoader == null) return
-        XposedHelpers.findAndHookMethod(
-            "android.media.AudioManager",
-            classLoader,
-            "isBluetoothA2dpOn",
-            XC_MethodReplacement.returnConstant(true)
-        )
-        XposedHelpers.findAndHookMethod(
-            "android.bluetooth.BluetoothAdapter",
-            classLoader,
-            "isEnabled",
-            XC_MethodReplacement.returnConstant(true)
-        )
+    /**
+     * v4.1: resolves the framework methods the KuWo provider overrides to force Bluetooth audio
+     * state on, without any legacy Xposed helper. Callers install the constant-true hooks via
+     * their libxposed API 102 runtime and fail open when this returns null.
+     */
+    fun findBluetoothA2dpOverrides(classLoader: ClassLoader?): Pair<Method, Method>? {
+        if (classLoader == null) return null
+        return runCatching {
+            val isBluetoothA2dpOn = classLoader.loadClass("android.media.AudioManager")
+                .getDeclaredMethod("isBluetoothA2dpOn")
+            val isEnabled = classLoader.loadClass("android.bluetooth.BluetoothAdapter")
+                .getDeclaredMethod("isEnabled")
+            isBluetoothA2dpOn to isEnabled
+        }.getOrNull()
     }
 
 //    fun getStringForStateInt(state: Int): String {

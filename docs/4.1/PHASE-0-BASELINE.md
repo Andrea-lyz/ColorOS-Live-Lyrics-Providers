@@ -96,3 +96,33 @@ checkout 只做签名审查，不进入 Provider 源码树。
   蓝牙/翻译按钮/Debug 开关 Remote Preferences 写读、MODULE_LOADED/PROCESS_ACCEPTED/
   HOOK_INSTALL_SUMMARY 事件、Manager 无废弃警告）。
 - Bridge 本轮未改动。
+
+## 6. Cone Hook ledger（Wave A #2，已迁移）
+
+| # | 目标 | 4.0 形态 | 4.1 hook id | 语义保持点 |
+|---|---|---|---|---|
+| 1 | `MediaSession` 全部构造器 | Yuki after | `cone:cone.session.MediaSession#ctor<index>` | 构造登记 + constructorTag(args) |
+| 2 | `MediaSession#setMetadata` | Yuki before，改写 args[0] | `cone:cone.session.MediaSession#setMetadata` | pending 附着、replay（携带 hostPackage 区分双宿主） |
+| 3 | `MediaSession#setPlaybackState` | Yuki before，改写 args[0] | `cone:cone.session.MediaSession#setPlaybackState` | 公开翻译 action 注入、状态登记、pending drain |
+| 4 | `MediaSession#setActive` | Yuki before | `cone:cone.session.MediaSession#setActive` | active 登记 + pending drain |
+| 5 | `MediaSession#release` | Yuki before | `cone:cone.session.MediaSession#release` | 会话释放 + replay 快照清理 |
+| 6 | `MediaPlayerService#onTracksChanged(*, Tracks)` | Yuki after（按参数形状匹配） | `cone:cone.service.MediaPlayerService#onTracksChanged` | 曲目元数据歌词提取入口不变 |
+
+非 Hook 行为：`ACTION_CURRENT_LYRIC_CHANGED` 模块内广播接收器保留（RECEIVER_NOT_EXPORTED
+按版本分支）；双宿主 `ink.trantor.coneplayer` / `ink.trantor.coneplayer.gp` 通过
+每进程独立 `ProviderHookContext.packageName` 隔离，发布器继续携带 hostPackage。
+
+## 7. KuWo Hook ledger（Wave A #3，已迁移）
+
+| # | 目标 | 4.0 形态 | 4.1 hook id | 语义保持点 |
+|---|---|---|---|---|
+| 1 | `MediaSession#setMetadata` | KavaRef 定位 + Yuki before/after | `kuwo:kuwo.session.MediaSession#setMetadata` | before 重建宿主 metadata；after 捕获 title/artist/mediaId、generation 推进、pending emit |
+| 2 | KuWo 歌词抓取 `cn.kuwo.mod.lyrics.e0#f(Music,boolean,Music)`（DexKit+字面名兜底） | 直接 `XposedBridge.hookMethod` + `XC_MethodHook` | `kuwo:kuwo.lyrics.<declaringClass>#<method>` | after 捕获 result/args 副本、串歌校验、重试调度不变 |
+| 3 | `AudioManager#isBluetoothA2dpOn` | `XposedHelpers` + `XC_MethodReplacement.returnConstant(true)` | `kuwo:kuwo.bluetooth.AudioManager#isBluetoothA2dpOn` | 常量 true 替换（before skip + result=true） |
+| 4 | `BluetoothAdapter#isEnabled` | 同上 | `kuwo:kuwo.bluetooth.BluetoothAdapter#isEnabled` | 同上 |
+| 5 | `Application#onCreate` / `Application#onTerminate` | Yuki `onAppLifecycle` | `kuwo:kuwo.app.Application#onCreate` / `#onTerminate` | onCreate 复查 debug 配置（一次性通告守卫）、onTerminate 关闭重试执行器 |
+
+配套清理：`share:extensions-android/AndroidUtils` 删除 `XposedHelpers`/`XC_MethodReplacement`，
+改为 `findBluetoothA2dpOverrides` 受限反射解析器（失败返回 null，KuWo 侧 fail-open 记录
+BLUETOOTH_OVERRIDE_SKIPPED）；KuWo 模块删除 KavaRef 依赖。官方 lyricInfo append、writer
+result capture、5 槽翻译与封面路径未触碰。
