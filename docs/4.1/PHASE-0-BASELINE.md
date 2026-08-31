@@ -206,3 +206,37 @@ workaround 随 Yuki 入口一并删除。
 
 至此 Wave A + Wave B 共 6/12 Provider 完成迁移与真机回归；Phase 5 发布门禁仍需
 剩余 6 个 Provider（Wave C/D/E）真机通过。
+
+## 11. Wave C Hook ledger（KuGou / QQ / QiShui，已迁移，本地门禁通过）
+
+### KuGou（`player-kugou`）
+
+| # | 目标 | 4.0 形态 | 4.1 处理 |
+|---|---|---|---|
+| 1 | `LyricManager` 加载方法（DexKit/解析） | 直接 `XposedBridge.hookMethod` + `XC_MethodHook` objectExtra | `kugou:kugou.lyric.<class>#<method>`；objectExtra 前后桥替换为 ThreadLocal 单次调用状态 |
+| 2 | `MediaSession#setMetadata` before+after | KavaRef + Yuki | `kugou:kugou.session.MediaSession#setMetadata` |
+| 3 | `:support` / `.support` 进程门禁 | hooker 内 `KuGouProcessPolicy.shouldHook` | entry 层 `KuGouSupportProcessPolicy` 适配器，拒绝进程在安装前 detach |
+
+### QQ（`player-qq`）
+
+| # | 目标 | 4.0 形态 | 4.1 处理 |
+|---|---|---|---|
+| 1 | `onLoadSuc` 加载 bean 捕获（DexKit 解析） | 直接 `XposedBridge.hookMethod` | `qq:qq.lyric.<class>#<method>` |
+| 2 | seedling writer（`builder` 就地补 lyricInfo） | 直接 `XposedBridge.hookMethod` | `qq:qq.seedling.<class>#<method>` |
+| 3 | `MediaSession#setMetadata` before+after | KavaRef + Yuki | `qq:qq.session.MediaSession#setMetadata` |
+| 4 | `:QQPlayerService` 进程门禁 | hooker 内 `QqProcessPolicy.shouldHook` | entry 层 `QqServiceProcessPolicy` 适配器 |
+
+### QiShui（`player-qishui`）
+
+| # | 目标 | 4.0 形态 | 4.1 处理 |
+|---|---|---|---|
+| 1 | `CoreRemoteControl#update`（可多重载） | `XposedHelpers.findClass` + `XposedBridge.hookMethod` | `classLoader.loadClass` + `qishui:qishui.internal.CoreRemoteControl#update<index>`；playback refresh target 记录保留 |
+| 2 | `MediaSession` 构造器/setMetadata/setPlaybackState(before+after)/setActive/release | Yuki | `qishui:qishui.session.MediaSession#*` |
+| 3 | 主进程门禁（`isPlaybackProcess`） | hooker 内判断 | entry 层 `QishuiMainProcessPolicy` 适配器 |
+
+三个模块的翻译策略按 4.0 保留：KuGou/QQ 不注入公开翻译 action（Bridge 5 槽收藏覆盖），
+QiShui 按 `QishuiTranslationActionPolicy` 动态注入/移除。三个模块均已通过模块单测、
+`verifyXposedApi102Resources`、debug APK 构建、`testV5Matrix` 全矩阵回归，且
+`player-kugou`/`player-qq`/`player-qishui`/`share:extensions-android` 源码级
+forbidden 扫描（XposedBridge/XC_MethodHook/XposedHelpers/Yuki 等 11 个 token）为 0；
+真机验证待用户执行。
