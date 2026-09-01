@@ -255,8 +255,13 @@ QQ 首曲的 5 条法语逐字行被 Bridge `raw-split` 启发式误拆，以及
 占位被过滤；KuGou《回家的路》的标题行错绑翻译与零宽尾部占位丢失，均已按用户反馈定性为
 独立、非阻断的 Bridge 解析问题，不改变 Wave C Provider API 102 迁移验收结果。Bridge
 提交 `f374c2b` 已完成本地修复：延迟首词的逐字行按结构保留、标题/制作信息禁止作为翻译
-alias、零宽尾部占位保留 official slot；486 个单测与 Debug APK 构建通过，仍待 QQ/KuGou
-真机复测。
+alias、零宽尾部占位保留 official slot；486 个单测与 Debug APK 构建通过。2026-09-01
+用户确认 QQ《海的女儿》与 KuGou《回家的路》真机复测通过。
+
+同日新日志 `logs/lyrics-log-20260901-065012.txt` 暴露独立 P0：状态栏媒体卡片重新 bind 时，
+OPlus `setSemanticButton` 对 Bridge 写入的 `Icon.TYPE_BITMAP` 调用 `getResPackage()`，导致
+SystemUI FATAL/重启。Bridge 提交 `e0b7320` 已把 semantic icon 收口为资源型 Icon，并在写入前
+fail-open 校验；487 个单测与 Debug APK 构建通过，真机复测待完成，因此仍阻断发布门禁。
 
 至此 Wave A + Wave B + Wave C 共 9/12 Provider 完成迁移与用户真机回归；Phase 5 发布门禁
 仍需完成 Wave E（NetEase）迁移与设备验证。
