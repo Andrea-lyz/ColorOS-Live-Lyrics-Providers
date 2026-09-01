@@ -65,6 +65,8 @@ tasks.register("verifyXposedApi102Resources") {
         val entry = providers.firstOrNull { it["module"] == moduleName }
             ?: throw GradleException("Module $moduleName is missing from v5-provider-matrix.json")
         val expectedScopes = (entry["scopes"] as List<*>).map { it.toString() }.toSet()
+        val expectedEntryClass = entry["entryClass"]?.toString()
+            ?: throw GradleException("Module $moduleName is missing entryClass in v5-provider-matrix.json")
 
         val xposedDirectory = File(moduleDirectory, "src/main/resources/META-INF/xposed")
         val modulePropFile = File(xposedDirectory, "module.prop")
@@ -85,11 +87,11 @@ tasks.register("verifyXposedApi102Resources") {
                 line.substring(0, split).trim() to line.substring(split + 1).trim()
             }
         val expectedModuleProp = mapOf(
-            "minApiVersion" to "102",
-            "targetApiVersion" to "102",
-            "staticScope" to "true",
-            "exceptionMode" to "protective",
-            "autoHotReload" to "false"
+            "minApiVersion" to matrix["xposedMinApiVersion"].toString(),
+            "targetApiVersion" to matrix["xposedTargetApiVersion"].toString(),
+            "staticScope" to matrix["xposedStaticScope"].toString(),
+            "exceptionMode" to matrix["xposedExceptionMode"].toString(),
+            "autoHotReload" to matrix["xposedAutoHotReload"].toString()
         )
         if (moduleProp != expectedModuleProp) {
             throw GradleException("module.prop mismatch. expected=$expectedModuleProp actual=$moduleProp")
@@ -100,6 +102,11 @@ tasks.register("verifyXposedApi102Resources") {
             throw GradleException("java_init.list must contain exactly one entry class, found $entryClasses")
         }
         val entryClass = entryClasses.single()
+        if (entryClass != expectedEntryClass) {
+            throw GradleException(
+                "java_init.list mismatch for $moduleName. expected=$expectedEntryClass actual=$entryClass"
+            )
+        }
         val entrySimpleName = entryClass.substringAfterLast('.')
         val sourceRoots = listOf("src/main/kotlin", "src/main/java").map { File(moduleDirectory, it) }
         val entrySourceDeclared = sourceRoots.filter { it.isDirectory }.any { root ->

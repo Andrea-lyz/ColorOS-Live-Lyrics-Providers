@@ -6,7 +6,8 @@ Installing the optional `io.github.andrealtb.lockscreenlyrics` Bridge adds gener
 AOD, translation controls, appearance settings, and compatibility enhancements.
 
 The complete v5 matrix has passed its applicable device gates and contains exactly 12 installable
-Provider applications.
+Provider applications. Since 4.1, every Provider uses one libxposed API 102 entry, static scope,
+and Remote Preferences for debug configuration.
 
 [中文](README.md)
 
@@ -14,7 +15,7 @@ Developer entry points:
 
 - [Provider adaptation guide](docs/4.0/PROVIDER-ADAPTATION-GUIDE.md)
 - [Provider 适配技术指南（中文）](docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md)
-- [Player-owned `lyricInfo` protocol](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.0/docs/PLAYER_INTEGRATION.md)
+- [Player-owned `lyricInfo` protocol](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.1/docs/PLAYER_INTEGRATION.md)
 
 ## v5 Provider matrix
 

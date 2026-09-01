@@ -5,7 +5,8 @@
 `io.github.andrealtb.lockscreenlyrics` Bridge 后可获得通用逐字渲染、AOD、翻译按钮、
 样式与兼容增强。
 
-当前 v5 适配矩阵已全部完成并通过对应设备门禁。
+当前 v5 适配矩阵已全部完成并通过对应设备门禁。4.1 起，12 个 Provider 均使用唯一的
+libxposed API 102 入口、静态作用域与 Remote Preferences Debug 配置。
 
 [English](README-English.md)
 
@@ -13,7 +14,7 @@
 
 - [Provider 适配技术指南](docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md)
 - [Provider adaptation guide (English)](docs/4.0/PROVIDER-ADAPTATION-GUIDE.md)
-- [播放器主动发布 `lyricInfo` 协议](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.0/docs/PLAYER_INTEGRATION.zh-CN.md)
+- [播放器主动发布 `lyricInfo` 协议](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.1/docs/PLAYER_INTEGRATION.zh-CN.md)
 
 ## v5 Provider 矩阵
 

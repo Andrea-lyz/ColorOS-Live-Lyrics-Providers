@@ -1,5 +1,9 @@
 # ColorOS Live Lyrics Providers 4.0
 
+> 当前 `4.1` 发布分支在保留本页 4.0 原生 `lyricInfo` 行为基线的同时，已将全部 12 个
+> Provider 迁移到 libxposed API 102、现代 `META-INF/xposed` 资源与 Remote Preferences。
+> 迁移台账见 [`../4.1/PHASE-0-BASELINE.md`](../4.1/PHASE-0-BASELINE.md)。
+
 这是从旧 `LyricProvider` 独立出来的 4.0 Provider 仓库。Phase 0 的初始 source commit 为旧仓库 `master` 的 `292a7da3f88a87e8c6df6b4ae4f56455b6856c72`；当前分支为 `4.0`。
 
 Phase 1 的中立 core/parser/diagnostics 已完成；Phase 2 的 Salt/Cone Root Provider 已完成，

@@ -59,9 +59,10 @@ player-<name>/
   build.gradle.kts
   proguard-rules.pro
   src/main/AndroidManifest.xml
-  src/main/assets/xposed_init
-  src/main/res/values/arrays.xml
-  src/main/kotlin/.../HookEntry.kt
+  src/main/resources/META-INF/xposed/module.prop
+  src/main/resources/META-INF/xposed/java_init.list
+  src/main/resources/META-INF/xposed/scope.list
+  src/main/kotlin/.../<Player>ModuleEntry.kt
   src/test/kotlin/...
 ```
 
@@ -74,15 +75,16 @@ io.github.andrealtb.coloroslyrics.provider.<player>
 Requirements:
 
 - `minSdk=27`, root compile/target SDK values, Java/Kotlin 17 bytecode;
-- `xposedmodule=true`, `xposedminversion=93`, `xposedsharedprefs=true`;
-- an exported debug-settings launcher activity backed by the module's own preferences;
-- `@array/xposed_scope` containing only supported host packages;
+- one libxposed API 102 `XposedModule` entry with `compileOnly` API and service-backed module UI;
+- `module.prop` with API 102 minimum/target, static scope, protective exception mode, and Hot Reload disabled;
+- an exported debug-settings launcher activity backed by libxposed Remote Preferences;
+- `scope.list` containing only supported host packages;
 - the target player's launcher icon, not another Provider's placeholder;
 - release signing from the environment variables already used by the matrix build.
 
 Add the module to `settings.gradle.kts`, root `v5ProviderModules`, and
 `release/v5-provider-matrix.json`. The machine contract must list application ID, internal version,
-canonical asset name, scopes, process-policy evidence, and validated host versions.
+canonical asset name, entry class, scopes, process-policy evidence, and validated host versions.
 
 ## 3. Process and session gate
 
@@ -240,9 +242,11 @@ Bridge side.
 
 ## 10. Debug and privacy
 
-Use one `ProviderId` and one module-owned debug preferences file. Open module preferences with
-`MODE_WORLD_READABLE` so the hooked player can read the exported LSPosed preferences. The switch is
-off by default and must not change hook, identity, generation, parsing, or publication behavior.
+Use one `ProviderId` and one module-owned libxposed Remote Preferences group. The shared module
+application and settings service own the write side; the hooked player reads the remote group after
+process bootstrap. The switch is off by default and must not change hook, identity, generation,
+parsing, or publication behavior. Hot Reload is disabled, so a full player-process restart is
+required after changing Debug.
 
 Structured events use:
 

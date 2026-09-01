@@ -55,9 +55,10 @@ player-<name>/
   build.gradle.kts
   proguard-rules.pro
   src/main/AndroidManifest.xml
-  src/main/assets/xposed_init
-  src/main/res/values/arrays.xml
-  src/main/kotlin/.../HookEntry.kt
+  src/main/resources/META-INF/xposed/module.prop
+  src/main/resources/META-INF/xposed/java_init.list
+  src/main/resources/META-INF/xposed/scope.list
+  src/main/kotlin/.../<Player>ModuleEntry.kt
   src/test/kotlin/...
 ```
 
@@ -70,15 +71,16 @@ io.github.andrealtb.coloroslyrics.provider.<player>
 要求：
 
 - `minSdk=27`，compile/target SDK 跟随根工程，Java/Kotlin 17 bytecode；
-- `xposedmodule=true`、`xposedminversion=93`、`xposedsharedprefs=true`；
-- 导出的独立调试设置 launcher Activity，读取本模块 preferences；
-- `@array/xposed_scope` 只包含支持的宿主包；
+- 唯一的 libxposed API 102 `XposedModule` 入口，API 使用 `compileOnly`，模块 UI 使用 service；
+- `module.prop` 固定 API 102 最低/目标、静态 scope、protective exception mode，并关闭 Hot Reload；
+- 导出的独立调试设置 launcher Activity，使用 libxposed Remote Preferences；
+- `scope.list` 只包含支持的宿主包；
 - 复用目标播放器 launcher 图标，不拿其他 Provider 图标占位；
 - release 签名统一读取矩阵构建已约定的环境变量。
 
 把 module 加入 `settings.gradle.kts`、根 `v5ProviderModules` 和
 `release/v5-provider-matrix.json`。机器契约必须记录 applicationId、内部版本、规范资产
-名、scope、进程策略证据和已验证宿主版本。
+名、entry class、scope、进程策略证据和已验证宿主版本。
 
 ## 3. 进程与 MediaSession 门禁
 
@@ -228,9 +230,10 @@ Bridge 收藏槽显示路线。
 
 ## 10. Debug 与隐私
 
-每个模块使用一份 `ProviderId` 和自有 debug preferences。模块设置页先用
-`MODE_WORLD_READABLE` 打开 preferences，供播放器进程读取 LSPosed 导出配置。开关默认
-关闭，且不能改变 hook、身份、generation、解析或发布行为。
+每个模块使用一份 `ProviderId` 和自有 libxposed Remote Preferences group。共享模块
+Application 与 settings service 负责写端，播放器进程在 bootstrap 后读取远端配置。开关
+默认关闭，且不能改变 hook、身份、generation、解析或发布行为。Hot Reload 已关闭，切换
+Debug 后必须完全重启播放器进程。
 
 结构化事件格式：
 
