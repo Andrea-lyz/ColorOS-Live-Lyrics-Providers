@@ -1,7 +1,8 @@
 # v4.1.0 Phase 0：基线冻结与迁移台账
 
-> 状态：Phase 0/1 与 Wave A–D 已完成；12/12 Provider 已完成 API 102 源码迁移与
-> 本地 Debug 全矩阵门禁；11/12 已通过用户真机回归，仅 Wave E（NetEase）待真机验证。
+> 状态：Phase 0/1 与 Wave A–E 已完成；12/12 Provider 已完成 API 102 源码迁移、
+> 本地 Debug 全矩阵门禁与用户真机回归。Wave E 的 9.0.40 构造 profile 按特殊安装前提
+> 由用户暂时验收通过，具体证据限制见 §15。
 > 上游计划：工作区根目录 `todo.md`（ColorOS Live Lyrics Bridge v4.1.0 TODO）。
 
 ## 1. 冻结基线（2026-08-31）
@@ -346,5 +347,35 @@ Yuki/legacy Xposed 依赖；Apple/Spotify 设置页同时改回共享 Remote Pre
 - NetEase Debug APK SHA-256：
   `A84887181C61CA6F2EE407B7B0A82FD71332AD4DDC06830B6D43EF659397358E`，v2 debug 签名通过。
 
-当前结论仅为源码、本地测试、APK 结构与 Debug 全矩阵通过；Wave E 的四 profile 真机等价性、
-Remote Preferences 开关和 LSPosed 废弃警告消失仍待用户设备验证，不提前标记 Wave E 完成。
+以上为 Wave E 的源码、本地测试、APK 结构与 Debug 全矩阵门禁；后续设备证据与用户验收
+结论见 §15。
+
+## 15. Wave E 真机回归证据（2026-09-01，用户执行，结论：暂时通过）
+
+日志 `logs/lyrics-log-20260901-061521.txt`（SHA-256
+`FF5C4BB6D34CF87A2B214455A14ACB2ACECD1CE8E0B7FED868EC0078414DB75C`）覆盖网易云官方版
+主进程与荣耀版主进程：两者均以 API 102 `official_append` 路由进入，分别安装 11/12 个
+Hook；网易云发布 42/42 与 98/85 行翻译 payload，荣耀 writer→encoder 的
+`PENDING_ENCODE_SET/CLEARED` 成对出现并发布完整 raw/translation。Bridge 消费、逐行/逐字
+高亮、翻译切换、暂停与切歌正常，Provider/Bridge 无 ERROR、WARN、Hook 失败或 FATAL。
+`OVERLAY_SKIPPED reason=identity-mismatch` 是跨曲旧 overlay 的预期 fail-open 丢弃。
+
+日志 `logs/lyrics-log-20260901-062538.txt`（SHA-256
+`CF7F5DFE26C509B766C20BA9CDE139991DE988CFABD0E970E38A87DFF0A295EA`）确认修改版 9.0.40 的
+`com.netease.cloudmusic:play` 以 API 102 `policy=constructed` 被接受，Remote Preferences
+开启态出现 `DEBUG_CONFIG_APPLIED reason=enabled` / `DEBUG_LOGGING_ENABLED`，随后
+`PROCESS_READY reason=CONSTRUCTED`、`MEDIA_SESSION_HOOKED`、`CONSTRUCTED_PROFILE_READY` 与
+`hooks=2` 均成立。
+
+该修改版直接安装后主进程连续 5 次在宿主 UI 初始化阶段崩溃：主要栈为
+`MyMusicFragmentV3#onCreateView` 的 `org.json.JSONException`，另一次为
+`AIDJBreathView` inflate 失败；崩溃栈没有 Provider 类。修改版主进程缺少官方 writer，因而
+`LYRIC_WRITE_MISSING` 与 4.0 静态结论一致。由于宿主未稳定运行，本窗口没有产生 `:play` 的
+`TRACK_BOUND`、`CONSTRUCTED_FETCH_HIT` 或 `source=netease-constructed`，不能把本日志表述为
+完整构造发布链复验。
+
+用户确认 9.0.40 需要特殊安装方式，直接安装闪退属于该宿主样本的已知使用前提，并明确要求
+本轮先标记通过。结合 4.0 已完成的 9.0.40 构造链真机基线与本次 API 102 entry/profile/Hook
+安装证据，Wave E 按“用户临时验收通过”收口；特殊安装方法和完整 constructed 发布链复验
+作为非阻断限制保留。`officialLyricRepair=true` 目标歌曲本轮仍未触发，重复别名专项修复保持
+独立的非阻断验证项。
