@@ -26,7 +26,6 @@ import java.lang.reflect.Method
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
-import java.lang.ref.WeakReference
 
 /**
  * KuWo 歌词 Provider。
@@ -68,7 +67,7 @@ class KuWo(private val hookContext: ProviderHookContext) {
     private var lastEmittedGeneration = 0L
 
     @Volatile
-    private var latestSessionRef: WeakReference<android.media.session.MediaSession>? = null
+    private var latestSession: android.media.session.MediaSession? = null
 
     @Volatile
     private var currentMediaId: String? = null
@@ -91,6 +90,15 @@ class KuWo(private val hookContext: ProviderHookContext) {
             Thread(runnable, "KuWoLyricRetry").apply { isDaemon = true }
         }
 
+    private val artworkFetchExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "KuWoArtworkFetch").apply { isDaemon = true }
+    }
+
+    private val artworkFetchLock = Any()
+
+    @Volatile
+    private var pendingArtworkFetchKey = ""
+
     @Volatile
     private var lastFetchInvoke: KuWoLyricFetchRetryPolicy.FetchInvoke? = null
 
@@ -101,6 +109,7 @@ class KuWo(private val hookContext: ProviderHookContext) {
         if (!applyRuntimeAndDebug()) {
             return
         }
+
         installBluetoothStateOverrides()
         KuWoDiagnostics.info(
             area = "bootstrap",
@@ -200,7 +209,9 @@ class KuWo(private val hookContext: ProviderHookContext) {
                     val decision = KuWoLyricInfoPublisher.prepareHostMetadata(metadata)
                     args[0] = decision.metadata
                     (instanceOrNull as? android.media.session.MediaSession)?.let { session ->
-                        latestSessionRef = WeakReference(session)
+                        // The remote session and its callback stub do not keep this Java wrapper
+                        // alive for us. Provider owns one current-session binding for its process.
+                        latestSession = session
                         latestHostMetadata = decision.metadata
                     }
                 }
@@ -533,7 +544,17 @@ class KuWo(private val hookContext: ProviderHookContext) {
     }
 
     private fun scheduleImmediateLyricPublish(generation: Long) {
-        if (latestSessionRef?.get() == null || latestHostMetadata == null) return
+        val session = latestSession
+        val metadata = latestHostMetadata
+        if (session == null || metadata == null) {
+            KuWoDiagnostics.debug(
+                area = "publish",
+                event = "IMMEDIATE_PUBLISH_SKIPPED",
+                process = processName,
+                reason = if (session == null) "session-unavailable" else "metadata-unavailable"
+            )
+            return
+        }
         val handler = mainHandler
         if (handler == null) {
             KuWoDiagnostics.debug(
@@ -546,7 +567,7 @@ class KuWo(private val hookContext: ProviderHookContext) {
         }
         handler.postDelayed({
             if (generation != currentTrackGeneration) return@postDelayed
-            val target = latestSessionRef?.get()
+            val target = latestSession
             val hostMetadata = latestHostMetadata
             if (target == null || hostMetadata == null) return@postDelayed
             try {
@@ -566,6 +587,77 @@ class KuWo(private val hookContext: ProviderHookContext) {
                 )
             }
         }, 80L)
+        scheduleArtworkCompletion(generation, metadata)
+    }
+
+    private fun scheduleArtworkCompletion(generation: Long, sourceMetadata: MediaMetadata) {
+        if (sourceMetadata.hasKuWoArtworkBitmap()) return
+        val fetchIdentity = currentTrackIdentity ?: return
+        val uri = KUWO_ARTWORK_URI_KEYS.firstNotNullOfOrNull { key ->
+            sourceMetadata.getString(key)?.takeIf { it.isNotBlank() }
+        } ?: return
+        val fetchKey = "$generation|${uri.hashCode()}"
+        synchronized(artworkFetchLock) {
+            if (pendingArtworkFetchKey == fetchKey) return
+            pendingArtworkFetchKey = fetchKey
+        }
+        artworkFetchExecutor.execute {
+            val fetched = runCatching { KuWoArtworkFetcher.fetch(sourceMetadata) }
+            synchronized(artworkFetchLock) {
+                if (pendingArtworkFetchKey == fetchKey) pendingArtworkFetchKey = ""
+            }
+            val bitmap = fetched.getOrNull()
+            if (bitmap == null) {
+                KuWoDiagnostics.debug(
+                    area = "artwork",
+                    event = "ARTWORK_COMPLETION_SKIPPED",
+                    process = processName,
+                    reason = fetched.exceptionOrNull()?.javaClass?.simpleName ?: "unavailable"
+                )
+                return@execute
+            }
+            if (generation != currentTrackGeneration
+                || fetchIdentity != currentTrackIdentity
+                || latestHostMetadata?.hasKuWoArtworkBitmap() == true) {
+                bitmap.recycle()
+                return@execute
+            }
+            val completedMetadata = KuWoArtworkFetcher.withArtworkBitmap(sourceMetadata, bitmap)
+            val targetHandler = mainHandler ?: run {
+                bitmap.recycle()
+                return@execute
+            }
+            targetHandler.post {
+                if (generation != currentTrackGeneration
+                    || fetchIdentity != currentTrackIdentity
+                    || latestHostMetadata?.hasKuWoArtworkBitmap() == true) {
+                    bitmap.recycle()
+                    return@post
+                }
+                val target = latestSession ?: run {
+                    bitmap.recycle()
+                    return@post
+                }
+                latestHostMetadata = completedMetadata
+                runCatching { target.setMetadata(completedMetadata) }
+                    .onSuccess {
+                        KuWoDiagnostics.debug(
+                            area = "artwork",
+                            event = "ARTWORK_COMPLETION_PUBLISHED",
+                            process = processName,
+                            message = "gen=$generation size=${bitmap.width}x${bitmap.height}"
+                        )
+                    }
+                    .onFailure { throwable ->
+                        KuWoDiagnostics.error(
+                            area = "artwork",
+                            event = "ARTWORK_COMPLETION_FAILED",
+                            process = processName,
+                            throwable = throwable
+                        )
+                    }
+            }
+        }
     }
 
     private fun logLyricTimingSample(song: Song) {
