@@ -258,10 +258,15 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
             ),
             songIdFromLyricInfo = songId
         )
-        val generation = generationPolicy.onTrackObserved(track)
+        val generation = generationPolicy.onTrackObserved(
+            KuGouTrackIdentity.generationIdentity(track)
+        )
         val changed: Boolean
         synchronized(stateLock) {
-            changed = generation != currentGeneration || currentTrack?.id != track.id
+            // mediaId/songId enrichment is not a track transition. Generation is owned by the
+            // stable title/artist/duration identity above; keep the latest full track only as the
+            // publication/matching carrier.
+            changed = generation != currentGeneration
             currentTrack = track
             currentGeneration = generation
             if (changed) {

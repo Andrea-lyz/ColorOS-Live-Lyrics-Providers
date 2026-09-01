@@ -95,6 +95,41 @@ class KuGouOfficialLyricInfoEncoderTest {
     }
 
     @Test
+    fun replacesNonMonotonicColdStartOfficialLyricWithSanitizedTimeline() {
+        val track = TrackIdentity(id = "song-id", title = "回家的路", artist = "HOYO-MiX")
+        val lines = listOf(
+            RichLyricLine(290L, 377L, 87L, "作词 Lyricist：木木 Woods"),
+            RichLyricLine(298L, 388L, 90L, "作曲 Composer：尤裴佳"),
+            RichLyricLine(
+                670L,
+                3_479L,
+                2_809L,
+                "当你走上回家的路",
+                words = listOf(LyricWord(670L, 3_479L, 2_809L, "当你走上回家的路"))
+            )
+        )
+        val existing = """{"id":0,"songId":"song-id","lyricType":0,"lyric":"[00:00.700]回家的路 - HOYO-MiX\n[00:00.290]作词 Lyricist：木木 Woods\n[00:00.298]作曲 Composer：尤裴佳\n[00:00.670]当你走上回家的路\n","noLyric":false}"""
+
+        val encoded = KuGouOfficialLyricInfoEncoder.encode(
+            track,
+            lines,
+            1L,
+            KuGouPlayerConstants.STANDARD_PACKAGE,
+            existing
+        )
+        requireNotNull(encoded)
+
+        assertFalse(encoded.plainLyric.contains("[00:00.700]回家的路 - HOYO-MiX"))
+        assertTrue(encoded.plainLyric.contains("[00:00.290]作词 Lyricist：木木 Woods"))
+        assertTrue(encoded.plainLyric.contains("[00:00.298]作曲 Composer：尤裴佳"))
+        assertTrue(encoded.plainLyric.contains("[00:00.670]当你走上回家的路"))
+        assertTrue(
+            encoded.plainLyric.indexOf("[00:00.290]") <
+                encoded.plainLyric.indexOf("[00:00.670]")
+        )
+    }
+
+    @Test
     fun extractorsReadOfficialStringAndNumericFields() {
         val json = """{"id":0,"songId":"abc","lyric":"line\n"}"""
         assertEquals("abc", KuGouOfficialLyricInfoEncoder.extractJsonString(json, "songId"))

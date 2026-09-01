@@ -20,6 +20,8 @@ object KuGouOfficialLyricInfoEncoder {
     private val WHITESPACE_REGEX = Regex("\\s+")
     private val TIMED_LRC_REGEX =
         Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
+    private val LRC_LINE_TIME_REGEX =
+        Regex("""^\[([0-9]{1,3}):([0-9]{2})(?:[.:]([0-9]{1,3}))?]""")
     private val JSON_STRING_FIELD =
         Regex(""""([^"\\]+)":\s*"((?:\\.|[^"\\])*)"""")
 
@@ -48,6 +50,7 @@ object KuGouOfficialLyricInfoEncoder {
         val officialLyric = extractJsonString(existing, "lyric")
             ?.takeIf { it.isNotBlank() }
             ?.let { stripPromoLinesFromLrc(it) }
+            ?.takeIf { isNonDecreasingTimedLrc(it) }
             ?: plainLyric
         val songId = firstNonBlank(
             extractJsonString(existing, "songId"),
@@ -195,6 +198,28 @@ object KuGouOfficialLyricInfoEncoder {
         text.replace('\r', ' ').replace('\n', ' ').replace(WHITESPACE_REGEX, " ").trim()
 
     private fun containsTimedLrc(value: String): Boolean = TIMED_LRC_REGEX.containsMatchIn(value)
+
+    private fun isNonDecreasingTimedLrc(value: String): Boolean {
+        var previousTime = -1L
+        var timedLines = 0
+        value.lineSequence().forEach { line ->
+            val match = LRC_LINE_TIME_REGEX.find(line.trim()) ?: return@forEach
+            val minutes = match.groupValues[1].toLongOrNull() ?: return false
+            val seconds = match.groupValues[2].toLongOrNull() ?: return false
+            val fraction = match.groupValues[3]
+            val millis = when (fraction.length) {
+                0 -> 0L
+                1 -> fraction.toLongOrNull()?.times(100L) ?: return false
+                2 -> fraction.toLongOrNull()?.times(10L) ?: return false
+                else -> fraction.take(3).toLongOrNull() ?: return false
+            }
+            val currentTime = minutes * 60_000L + seconds * 1_000L + millis
+            if (previousTime > currentTime) return false
+            previousTime = currentTime
+            timedLines++
+        }
+        return timedLines > 0
+    }
 
     private fun formatLrcTime(ms: Long): String {
         val min = ms / 60000

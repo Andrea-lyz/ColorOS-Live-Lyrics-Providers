@@ -28,6 +28,13 @@ object KuGouTrackIdentity {
         ).filter { it.isNotBlank() }.toSet()
     }
 
+    /**
+     * KuGou fills the same metadata transaction in stages: title/artist first, then mediaId,
+     * and finally the official lyricInfo songId. Those IDs use different namespaces and must
+     * remain publication aliases rather than generation boundaries.
+     */
+    fun generationIdentity(track: TrackIdentity): TrackIdentity = track.copy(id = null)
+
     fun sanitize(
         hostPackage: String,
         title: String?,

@@ -6,6 +6,7 @@
 
 package io.github.andrealtb.coloroslyrics.provider.kugou
 
+import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -42,5 +43,56 @@ class KuGouTrackIdentityTest {
         )
         assertEquals("She's the Best (Explicit)", track.title)
         assertEquals("Troye Sivan", track.artist)
+    }
+
+    @Test
+    fun identifierNamespaceEnrichmentDoesNotAdvanceGeneration() {
+        val fallback = KuGouTrackIdentity.sanitize(
+            hostPackage = KuGouPlayerConstants.STANDARD_PACKAGE,
+            title = "回家的路",
+            artist = "HOYO-MiX",
+            album = "原神-灼火之心",
+            durationMs = 171_000L,
+            mediaId = null,
+            songIdFromLyricInfo = null
+        )
+        val withMediaId = KuGouTrackIdentity.sanitize(
+            hostPackage = KuGouPlayerConstants.STANDARD_PACKAGE,
+            title = "回家的路",
+            artist = "HOYO-MiX",
+            album = "原神-灼火之心",
+            durationMs = 171_000L,
+            mediaId = "media-namespace-id",
+            songIdFromLyricInfo = null
+        )
+        val withSongId = KuGouTrackIdentity.sanitize(
+            hostPackage = KuGouPlayerConstants.STANDARD_PACKAGE,
+            title = "回家的路",
+            artist = "HOYO-MiX",
+            album = "原神-灼火之心",
+            durationMs = 171_000L,
+            mediaId = "media-namespace-id",
+            songIdFromLyricInfo = "official-song-id"
+        )
+
+        assertNotEquals(fallback.id, withMediaId.id)
+        assertNotEquals(withMediaId.id, withSongId.id)
+
+        val policy = TrackGenerationPolicy()
+        val generation = policy.onTrackObserved(KuGouTrackIdentity.generationIdentity(fallback))
+        assertEquals(
+            generation,
+            policy.onTrackObserved(KuGouTrackIdentity.generationIdentity(withMediaId))
+        )
+        assertEquals(
+            generation,
+            policy.onTrackObserved(KuGouTrackIdentity.generationIdentity(withSongId))
+        )
+
+        val nextTrack = withSongId.copy(title = "星间旅行", id = "next-song-id")
+        assertEquals(
+            generation + 1L,
+            policy.onTrackObserved(KuGouTrackIdentity.generationIdentity(nextTrack))
+        )
     }
 }
