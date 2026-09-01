@@ -253,7 +253,10 @@ forbidden 扫描（XposedBridge/XC_MethodHook/XposedHelpers/Yuki 等 11 个 toke
 
 QQ 首曲的 5 条法语逐字行被 Bridge `raw-split` 启发式误拆，以及 02:01.270 零宽尾部
 占位被过滤；KuGou《回家的路》的标题行错绑翻译与零宽尾部占位丢失，均已按用户反馈定性为
-独立、非阻断的 Bridge 解析问题，不改变 Wave C Provider API 102 迁移验收结果。
+独立、非阻断的 Bridge 解析问题，不改变 Wave C Provider API 102 迁移验收结果。Bridge
+提交 `f374c2b` 已完成本地修复：延迟首词的逐字行按结构保留、标题/制作信息禁止作为翻译
+alias、零宽尾部占位保留 official slot；486 个单测与 Debug APK 构建通过，仍待 QQ/KuGou
+真机复测。
 
 至此 Wave A + Wave B + Wave C 共 9/12 Provider 完成迁移与用户真机回归；Phase 5 发布门禁
 仍需完成 Wave E（NetEase）迁移与设备验证。
