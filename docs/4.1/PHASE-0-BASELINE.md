@@ -261,7 +261,8 @@ alias、零宽尾部占位保留 official slot；486 个单测与 Debug APK 构�
 同日新日志 `logs/lyrics-log-20260901-065012.txt` 暴露独立 P0：状态栏媒体卡片重新 bind 时，
 OPlus `setSemanticButton` 对 Bridge 写入的 `Icon.TYPE_BITMAP` 调用 `getResPackage()`，导致
 SystemUI FATAL/重启。Bridge 提交 `e0b7320` 已把 semantic icon 收口为资源型 Icon，并在写入前
-fail-open 校验；487 个单测与 Debug APK 构建通过，真机复测待完成，因此仍阻断发布门禁。
+fail-open 校验；487 个单测与 Debug APK 构建通过。2026-09-01 用户真机确认状态栏媒体卡片
+点击、进入播放器及返回流程不再导致 SystemUI 崩溃重启，P0 验收通过并解除发布阻断。
 
 至此 Wave A + Wave B + Wave C 共 9/12 Provider 完成迁移与用户真机回归；Phase 5 发布门禁
 仍需完成 Wave E（NetEase）迁移与设备验证。
