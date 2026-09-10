@@ -63,3 +63,6 @@ include(":share:extensions-android")
 include(":share:lrckit")
 include(":share:yrckit")
 include(":kuwo-music")
+
+// P1 read-only Universal App. Not part of the v5 player matrix.
+include(":universal-provider")
