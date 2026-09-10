@@ -34,6 +34,7 @@ Developer entry points:
 | Apple Music | `:player-apple` | `io.github.andrealtb.coloroslyrics.provider.apple` | `com.apple.android.music` | `6.5.2` |
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | QiShui | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
+| Universal Player | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system` (select target packages in its app) | ColorOS 16 / Android 16 |
 | Universal Player | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system` (choose target players in its app) | ColorOS 16 / Android 16 |
 
 The adaptation baseline is the host sample used for static reverse engineering, implementation,
@@ -42,6 +43,26 @@ that change obfuscation structures or internal lyric flows still require renewed
 
 Metrolist and Spotify do not expose translations. Other modules use either the public action or
 the Bridge five-slot control according to player-specific evidence. QQ Music HD is out of scope.
+
+## Universal Player Provider
+
+Universal Player Provider (`Provider-Universal 1.0.0 (1)`) is for players without a dedicated
+adapter that still create a standard Android `MediaSession`. It has static scope only in
+`system_server` and receives an explicit target-package list from its settings app; unselected music,
+video, and other media apps are never observed, queried for lyrics, or written with `lyricInfo`.
+
+After installing the APK, open **Universal Player Provider**: select target apps on the Players page,
+set lyric-source priority on Sources, and enable word timing, translations, raw lyrics, or sanitized
+diagnostics as needed. The module preserves existing host metadata and appends standard
+`MediaMetadata["lyricInfo"]` only to a selected active MediaSession. ColorOS SystemUI can consume it
+directly; with Bridge installed, Bridge continues to own SystemUI rendering, AOD, and translation
+controls.
+
+Never enable a dedicated Provider and Universal Provider for the same player. Disable Bluetooth,
+car-lyrics, or similar features that overwrite the media title with the current lyric line, otherwise
+first-track matching, caching, and track-change recognition can be unreliable. Issue reports need
+sanitized logs, the selected package, and reproduction steps; never include complete lyrics, cookies,
+tokens, or personal media paths.
 
 The Universal Player Provider is a `system_server` MediaSession adapter. Select only the players
 you want it to handle in its settings app; unselected apps are not injected. Disable Bluetooth,

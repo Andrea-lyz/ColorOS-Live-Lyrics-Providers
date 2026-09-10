@@ -33,6 +33,7 @@ Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`�
 | Apple Music | `:player-apple` | `io.github.andrealtb.coloroslyrics.provider.apple` | `com.apple.android.music` | `6.5.2` |
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | 汽水音乐 | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
+| 通用播放器 | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system`（在设置 App 中选择目标包） | ColorOS 16 / Android 16 |
 | 通用播放器 | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system`（在 App 内选择目标播放器） | ColorOS 16 / Android 16 |
 
 “适配基线版本”是静态逆向、实现和设备收口所使用的宿主样本，不表示 Provider 仅支持
@@ -40,6 +41,21 @@ Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`�
 
 Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用公开 action 或 Bridge
 五槽按钮。QQ音乐 仅支持标准版，不包含 QQ音乐 HD。
+
+## 通用播放器 Provider
+
+通用播放器 Provider（`Provider-Universal 1.0.0 (1)`）面向没有专属适配、但会创建标准 Android
+`MediaSession` 的播放器。它以静态 scope 仅运行在 `system_server`，从设置 App 同步用户明确选择的
+目标包；没有被选择的音乐、视频和其他媒体 App 不会被观察、联网取词或写入 `lyricInfo`。
+
+安装 APK 后打开 **Universal Player Provider**：在“播放器”页选择目标 App，在“来源”页调整歌词源
+优先级，并按需打开逐字、翻译、原始歌词和脱敏诊断。模块会保留宿主已有 metadata，仅向选中播放器
+当前活跃 MediaSession 附加标准 `MediaMetadata["lyricInfo"]`。它可单独供 ColorOS SystemUI 消费；
+安装 Bridge 后，Bridge 仍只负责 SystemUI 的渲染、AOD 和翻译控制增强。
+
+同一播放器不要同时使用专属 Provider 与通用 Provider。使用通用 Provider 时关闭播放器的蓝牙歌词、
+车载歌词或其他会把当前歌词行覆写到媒体标题的功能；否则首曲匹配、缓存和切歌识别可能不可靠。反馈
+问题时提供脱敏日志、目标包名和复现步骤，不要上传完整歌词、cookie、token 或私人媒体路径。
 
 通用播放器 Provider 是 `system_server` 的 MediaSession 适配层：在其设置 App 中明确选择
 需要接管的播放器，未选择的应用不会被注入。使用时请关闭播放器的蓝牙歌词、车载歌词或
