@@ -133,3 +133,7 @@ project and its contributors for the early player adaptations, reverse-engineeri
 baseline. Although this repository has been comprehensively rebuilt almost end to end around the
 standard v5 `lyricInfo` contract, the Root/LSPosed architecture, and each player's internal lyric
 flow, its evolution still benefits from the original project's exploration and community work.
+
+Thanks to [Lyrico](https://github.com/Replica0110/Lyrico) and
+[Lyrico-Plugins](https://github.com/Replica0110/Lyrico-Plugins) for their open-source work and
+inspiration around local music metadata, lyric management, and plugin-based lyric sources.

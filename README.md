@@ -123,3 +123,7 @@ Release 构建使用 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、
 贡献者，为早期播放器适配、逆向思路和代码基线提供了重要参考。尽管本仓库围绕标准
 v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了近乎从头到尾的全面
 重构，这段演进仍离不开原项目及社区贡献者的探索与积累。
+
+感谢 [Lyrico](https://github.com/Replica0110/Lyrico) 与
+[Lyrico-Plugins](https://github.com/Replica0110/Lyrico-Plugins) 在本地音乐元数据、歌词管理和
+插件化歌词源方面提供的开源工作与启发。
