@@ -5,8 +5,9 @@
 `io.github.andrealtb.lockscreenlyrics` Bridge 后可获得通用逐字渲染、AOD、翻译按钮、
 样式与兼容增强。
 
-当前 v5 适配矩阵已全部完成并通过对应设备门禁。4.1 起，12 个 Provider 均使用唯一的
-libxposed API 102 入口、静态作用域与 Remote Preferences Debug 配置。
+当前 v5 发布矩阵包含 13 个可安装 Provider：12 个播放器专属模块与 1 个通用播放器
+Provider。所有模块均使用 libxposed API 102 入口、静态作用域与保护性异常策略；通用
+Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`。
 
 [English](README-English.md)
 
@@ -32,12 +33,18 @@ libxposed API 102 入口、静态作用域与 Remote Preferences Debug 配置。
 | Apple Music | `:player-apple` | `io.github.andrealtb.coloroslyrics.provider.apple` | `com.apple.android.music` | `6.5.2` |
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | 汽水音乐 | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
+| 通用播放器 | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system`（在 App 内选择目标播放器） | ColorOS 16 / Android 16 |
 
 “适配基线版本”是静态逆向、实现和设备收口所使用的宿主样本，不表示 Provider 仅支持
 该版本；宿主升级后如混淆结构或内部歌词链路发生变化，仍需重新验证。
 
 Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用公开 action 或 Bridge
 五槽按钮。QQ音乐 仅支持标准版，不包含 QQ音乐 HD。
+
+通用播放器 Provider 是 `system_server` 的 MediaSession 适配层：在其设置 App 中明确选择
+需要接管的播放器，未选择的应用不会被注入。使用时请关闭播放器的蓝牙歌词、车载歌词或
+类似功能；当前版本不支持它们与通用 Provider 同时启用，详见
+[`UNIVERSAL-PROVIDER-KNOWN-ISSUES.zh-CN.md`](docs/4.1/UNIVERSAL-PROVIDER-KNOWN-ISSUES.zh-CN.md)。
 
 ## 架构
 

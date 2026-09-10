@@ -5,9 +5,10 @@ module publishes standard `MediaMetadata["lyricInfo"]` that ColorOS SystemUI can
 Installing the optional `io.github.andrealtb.lockscreenlyrics` Bridge adds generic word rendering,
 AOD, translation controls, appearance settings, and compatibility enhancements.
 
-The complete v5 matrix has passed its applicable device gates and contains exactly 12 installable
-Provider applications. Since 4.1, every Provider uses one libxposed API 102 entry, static scope,
-and Remote Preferences for debug configuration.
+The v5 release matrix contains 13 installable Provider applications: 12 player-specific modules
+and one Universal Player Provider. Every module uses a libxposed API 102 entry, static scope, and
+protective exception handling; the Universal Provider settings app runs separately while its module
+logic is limited to `system_server`.
 
 [中文](README.md)
 
@@ -33,6 +34,7 @@ Developer entry points:
 | Apple Music | `:player-apple` | `io.github.andrealtb.coloroslyrics.provider.apple` | `com.apple.android.music` | `6.5.2` |
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | QiShui | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
+| Universal Player | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system` (choose target players in its app) | ColorOS 16 / Android 16 |
 
 The adaptation baseline is the host sample used for static reverse engineering, implementation,
 and device closure. It does not mean that the Provider supports only that version; host updates
@@ -40,6 +42,11 @@ that change obfuscation structures or internal lyric flows still require renewed
 
 Metrolist and Spotify do not expose translations. Other modules use either the public action or
 the Bridge five-slot control according to player-specific evidence. QQ Music HD is out of scope.
+
+The Universal Player Provider is a `system_server` MediaSession adapter. Select only the players
+you want it to handle in its settings app; unselected apps are not injected. Disable Bluetooth,
+car-lyrics, or similar player features while using it: they are not currently compatible with the
+Universal Provider. See the [known issues](docs/4.1/UNIVERSAL-PROVIDER-KNOWN-ISSUES.zh-CN.md).
 
 ## Architecture
 

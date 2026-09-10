@@ -44,8 +44,8 @@ foreach ($provider in @($contract.providers)) {
     $collected += Get-Item -LiteralPath $targetPath
 }
 
-if ($collected.Count -ne 12) {
-    throw "Expected 12 Provider APKs, collected $($collected.Count)."
+if ($collected.Count -ne @($contract.providers).Count) {
+    throw "Expected $(@($contract.providers).Count) Provider APKs, collected $($collected.Count)."
 }
 
 $duplicateNames = @($collected | Group-Object Name | Where-Object { $_.Count -ne 1 })

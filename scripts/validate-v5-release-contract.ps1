@@ -55,10 +55,10 @@ $settings = Get-Content -LiteralPath $settingsPath -Raw
 $versionCatalog = Get-Content -LiteralPath $versionCatalogPath -Raw
 $providers = @($contract.providers)
 
-Assert-Contract ($contract.schema -eq 2) 'unsupported schema'
-Assert-Contract ($contract.suiteVersion -eq '4.1.1') 'unexpected suiteVersion'
-Assert-Contract ($contract.sourceTag -eq 'providers-v1.1.1') 'unexpected sourceTag'
-Assert-Contract ($providers.Count -eq 12) 'matrix must contain exactly 12 Providers'
+Assert-Contract ($contract.schema -eq 3) 'unsupported schema'
+Assert-Contract ($contract.suiteVersion -eq '4.2.0') 'unexpected suiteVersion'
+Assert-Contract ($contract.sourceTag -eq 'providers-v1.2.0') 'unexpected sourceTag'
+Assert-Contract ($providers.Count -eq 13) 'matrix must contain exactly 13 Providers'
 Assert-Contract ($contract.minSdk -eq 27) 'matrix minSdk must be 27'
 Assert-Contract ($contract.compileSdk -eq 37) 'matrix compileSdk must be 37'
 Assert-Contract ($contract.targetSdk -eq 37) 'matrix targetSdk must be 37'
@@ -184,7 +184,13 @@ foreach ($provider in $providers) {
     foreach ($legacyMetadata in @('xposedmodule', 'xposeddescription', 'xposedminversion', 'xposedsharedprefs', 'xposedscope')) {
         Assert-Contract (-not $manifest.Contains('android:name="' + $legacyMetadata + '"')) "$module manifest contains legacy metadata: $legacyMetadata"
     }
-    Assert-Contract ($manifest.Contains('ProviderModuleApplication')) "$module manifest does not use ProviderModuleApplication"
+    $applicationClass = [string]$provider.applicationClass
+    if ([string]::IsNullOrWhiteSpace($applicationClass)) {
+        Assert-Contract ($manifest.Contains('ProviderModuleApplication')) "$module manifest does not use ProviderModuleApplication"
+    } else {
+        Assert-Contract ($applicationClass -match '^[A-Za-z_][A-Za-z0-9_]*$') "$module applicationClass is invalid"
+        Assert-Contract ($manifest.Contains('.' + $applicationClass)) "$module manifest application differs"
+    }
     Assert-Contract (-not (Test-Path -LiteralPath (Join-Path $moduleDir 'src\main\assets\xposed_init'))) "$module contains legacy assets/xposed_init"
     Assert-Contract (-not (Test-Path -LiteralPath (Join-Path $moduleDir 'src\main\resources\META-INF\yukihookapi_init'))) "$module contains legacy yukihookapi_init"
 

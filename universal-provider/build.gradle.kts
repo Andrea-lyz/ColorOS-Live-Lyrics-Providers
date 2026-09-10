@@ -5,6 +5,8 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
+apply(from = rootProject.file("gradle/provider-app-convention.gradle.kts"))
+
 configure<ApplicationExtension> {
     namespace = "io.github.andrealtb.coloroslyrics.provider.universal"
     compileSdk {

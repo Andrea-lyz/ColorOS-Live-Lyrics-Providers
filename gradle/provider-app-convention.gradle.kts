@@ -141,8 +141,13 @@ tasks.register("verifyXposedApi102Resources") {
                 throw GradleException("Legacy Xposed meta-data still declared in manifest: $name")
             }
         }
-        if (!manifestText.contains("ProviderModuleApplication")) {
-            throw GradleException("Manifest application must use the shared ProviderModuleApplication")
+        val configuredApplicationClass = entry["applicationClass"]?.toString()
+        if (configuredApplicationClass.isNullOrBlank()) {
+            if (!manifestText.contains("ProviderModuleApplication")) {
+                throw GradleException("Manifest application must use the shared ProviderModuleApplication")
+            }
+        } else if (!manifestText.contains(".$configuredApplicationClass")) {
+            throw GradleException("Manifest application differs from matrix applicationClass: $configuredApplicationClass")
         }
 
         logger.lifecycle(
