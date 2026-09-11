@@ -71,6 +71,7 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 ```powershell
 .\gradlew.bat assembleV5MatrixDebug
 .\gradlew.bat assembleV5MatrixRelease
+.\gradlew.bat :player-readify:testDebugUnitTest :player-readify:lintDebug :player-readify:assembleDebug
 ```
 
 单模块示例：
@@ -100,6 +101,12 @@ Release 构建使用 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、
 v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了近乎从头到尾的全面
 重构，这段演进仍离不开原项目及社区贡献者的探索与积累。
 
-## Experimental Readify adapter
+## 实验性 Readify 适配
 
-See [player-readify](player-readify/README.md) for the API 102 adapter and companion Bridge requirement. It is not included in the release matrix.
+`:player-readify`（`io.github.andrealtb.coloroslyrics.provider.readify`）是面向 Readify
+3.1.0 的 API 102 实验性 TTS 适配，需要配套 Bridge 的 `sentence-window-v1` 支持。它不属于
+12 项正式 v5 发布矩阵，也不会被写入正式 Provider bundle。
+
+GitHub Actions 会将它单独构建、签名并上传为 `readify-debug-apk` 或
+`readify-release-apk` artifact。协议、宿主范围与当前设备验证限制见
+[player-readify/README.md](player-readify/README.md)。

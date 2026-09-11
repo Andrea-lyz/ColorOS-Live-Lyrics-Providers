@@ -74,6 +74,7 @@ JDK 21 and an Android SDK are required:
 ```powershell
 .\gradlew.bat assembleV5MatrixDebug
 .\gradlew.bat assembleV5MatrixRelease
+.\gradlew.bat :player-readify:testDebugUnitTest :player-readify:lintDebug :player-readify:assembleDebug
 ```
 
 Single-module example:
@@ -96,6 +97,16 @@ Release signing uses `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`,
 
 Licensed under Apache-2.0. Retained third-party provenance and contributor attribution remain in
 source headers, `NOTICE` and the migration reports.
+
+## Experimental Readify adapter
+
+`:player-readify` (`io.github.andrealtb.coloroslyrics.provider.readify`) is an experimental API
+102 TTS adapter for Readify 3.1.0. It requires the companion Bridge `sentence-window-v1` support.
+It is outside the formal 12-app v5 release matrix and is not included in the formal Provider bundle.
+
+GitHub Actions builds, signs, and uploads it separately as a `readify-debug-apk` or
+`readify-release-apk` artifact. See [player-readify/README.md](player-readify/README.md) for the
+protocol, host scope, and current device-validation limits.
 
 ## Acknowledgements
 
