@@ -1,4 +1,5 @@
 [versions]
+libxposedModern = "102.0.0"
 agp = "9.1.1"
 coreKtx = "1.18.0"
 dexkit = "2.2.0"
@@ -21,6 +22,7 @@ composeBom = "2024.09.00"
 activityCompose = "1.9.2"
 
 [libraries]
+libxposed-modern-api = { module = "io.github.libxposed:api", version.ref = "libxposedModern" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 dexkit = { module = "org.luckypray:dexkit", version.ref = "dexkit" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }

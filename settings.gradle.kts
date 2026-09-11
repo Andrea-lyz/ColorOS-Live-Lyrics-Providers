@@ -64,5 +64,8 @@ include(":share:lrckit")
 include(":share:yrckit")
 include(":kuwo-music")
 
-// P1 read-only Universal App. Not part of the v5 player matrix.
+// Universal Player is part of the v5 release matrix.
 include(":universal-provider")
+
+// Experimental API 102 Readify adapter; not part of the release matrix yet.
+include(":player-readify")

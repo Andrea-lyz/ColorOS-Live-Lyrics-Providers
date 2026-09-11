@@ -34,7 +34,6 @@ Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`�
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | 汽水音乐 | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
 | 通用播放器 | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system`（在设置 App 中选择目标包） | ColorOS 16 / Android 16 |
-| 通用播放器 | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system`（在 App 内选择目标播放器） | ColorOS 16 / Android 16 |
 
 “适配基线版本”是静态逆向、实现和设备收口所使用的宿主样本，不表示 Provider 仅支持
 该版本；宿主升级后如混淆结构或内部歌词链路发生变化，仍需重新验证。
@@ -56,11 +55,6 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 同一播放器不要同时使用专属 Provider 与通用 Provider。使用通用 Provider 时关闭播放器的蓝牙歌词、
 车载歌词或其他会把当前歌词行覆写到媒体标题的功能；否则首曲匹配、缓存和切歌识别可能不可靠。反馈
 问题时提供脱敏日志、目标包名和复现步骤，不要上传完整歌词、cookie、token 或私人媒体路径。
-
-通用播放器 Provider 是 `system_server` 的 MediaSession 适配层：在其设置 App 中明确选择
-需要接管的播放器，未选择的应用不会被注入。使用时请关闭播放器的蓝牙歌词、车载歌词或
-类似功能；当前版本不支持它们与通用 Provider 同时启用，详见
-[`UNIVERSAL-PROVIDER-KNOWN-ISSUES.zh-CN.md`](docs/4.1/UNIVERSAL-PROVIDER-KNOWN-ISSUES.zh-CN.md)。
 
 ## 架构
 
@@ -95,6 +89,7 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 ```powershell
 .\gradlew.bat assembleV5MatrixDebug
 .\gradlew.bat assembleV5MatrixRelease
+.\gradlew.bat :player-readify:testDebugUnitTest :player-readify:lintDebug :player-readify:assembleDebug
 ```
 
 单模块示例：
@@ -127,3 +122,13 @@ v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了�
 感谢 [Lyrico](https://github.com/Replica0110/Lyrico) 与
 [Lyrico-Plugins](https://github.com/Replica0110/Lyrico-Plugins) 在本地音乐元数据、歌词管理和
 插件化歌词源方面提供的开源工作与启发。
+
+## 实验性 Readify 适配
+
+`:player-readify`（`io.github.andrealtb.coloroslyrics.provider.readify`）是面向 Readify
+3.1.0 的 API 102 实验性 TTS 适配，需要配套 Bridge 的 `sentence-window-v1` 支持。它不属于
+13 项正式 v5 发布矩阵，也不会被写入正式 Provider bundle。
+
+GitHub Actions 会将它单独构建、签名并上传为 `readify-debug-apk` 或
+`readify-release-apk` artifact。协议、宿主范围与当前设备验证限制见
+[player-readify/README.md](player-readify/README.md)。

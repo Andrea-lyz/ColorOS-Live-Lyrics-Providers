@@ -35,7 +35,6 @@ Developer entry points:
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | QiShui | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
 | Universal Player | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system` (select target packages in its app) | ColorOS 16 / Android 16 |
-| Universal Player | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system` (choose target players in its app) | ColorOS 16 / Android 16 |
 
 The adaptation baseline is the host sample used for static reverse engineering, implementation,
 and device closure. It does not mean that the Provider supports only that version; host updates
@@ -63,11 +62,6 @@ car-lyrics, or similar features that overwrite the media title with the current 
 first-track matching, caching, and track-change recognition can be unreliable. Issue reports need
 sanitized logs, the selected package, and reproduction steps; never include complete lyrics, cookies,
 tokens, or personal media paths.
-
-The Universal Player Provider is a `system_server` MediaSession adapter. Select only the players
-you want it to handle in its settings app; unselected apps are not injected. Disable Bluetooth,
-car-lyrics, or similar player features while using it: they are not currently compatible with the
-Universal Provider. See the [known issues](docs/4.1/UNIVERSAL-PROVIDER-KNOWN-ISSUES.zh-CN.md).
 
 ## Architecture
 
@@ -103,6 +97,7 @@ JDK 21 and an Android SDK are required:
 ```powershell
 .\gradlew.bat assembleV5MatrixDebug
 .\gradlew.bat assembleV5MatrixRelease
+.\gradlew.bat :player-readify:testDebugUnitTest :player-readify:lintDebug :player-readify:assembleDebug
 ```
 
 Single-module example:
@@ -125,6 +120,16 @@ Release signing uses `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`,
 
 Licensed under Apache-2.0. Retained third-party provenance and contributor attribution remain in
 source headers, `NOTICE` and the migration reports.
+
+## Experimental Readify adapter
+
+`:player-readify` (`io.github.andrealtb.coloroslyrics.provider.readify`) is an experimental API
+102 TTS adapter for Readify 3.1.0. It requires the companion Bridge `sentence-window-v1` support.
+It is outside the formal 13-app v5 release matrix and is not included in the formal Provider bundle.
+
+GitHub Actions builds, signs, and uploads it separately as a `readify-debug-apk` or
+`readify-release-apk` artifact. See [player-readify/README.md](player-readify/README.md) for the
+protocol, host scope, and current device-validation limits.
 
 ## Acknowledgements
 

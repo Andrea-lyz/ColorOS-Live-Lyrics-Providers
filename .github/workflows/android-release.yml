@@ -50,6 +50,9 @@ jobs:
       - name: Run v5 Provider tests
         run: ./gradlew testV5Matrix --rerun-tasks
 
+      - name: Run experimental Readify Provider tests
+        run: ./gradlew :player-readify:testDebugUnitTest :player-readify:lintDebug --rerun-tasks
+
       - name: Build v5 Provider APKs
         run: |
           if [ "$BUILD_TYPE" = "release" ]; then
@@ -88,6 +91,30 @@ jobs:
           echo "Bundled files:"
           ls -lh bundled-apks/
 
+      - name: Build experimental Readify Provider APK
+        run: |
+          if [ "$BUILD_TYPE" = "release" ]; then
+            ./gradlew :player-readify:assembleRelease --build-cache
+          else
+            ./gradlew :player-readify:assembleDebug --build-cache
+          fi
+        env:
+          RELEASE_STORE_FILE: ../release.jks
+          RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Collect experimental Readify APK
+        run: |
+          mkdir -p readify-apk
+          find player-readify/build/outputs/apk/"${BUILD_TYPE}" -maxdepth 1 -name "*.apk" -exec cp {} readify-apk/ \;
+          APK_COUNT=$(find readify-apk -maxdepth 1 -name "*.apk" | wc -l)
+          if [ "$APK_COUNT" -ne 1 ]; then
+            echo "Expected one Readify APK, found $APK_COUNT" >&2
+            exit 1
+          fi
+          ls -lh readify-apk/
+
       - name: Upload APKs to Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -104,9 +131,18 @@ jobs:
           if-no-files-found: error
           archive: false
 
+      - name: Upload experimental Readify APK to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: readify-${{ env.BUILD_TYPE }}-apk
+          path: readify-apk/*.apk
+          if-no-files-found: error
+          archive: false
+
       - name: Cleanup
         if: always()
         run: |
           rm -f release.jks || true
           rm -rf collected-apks || true
           rm -rf bundled-apks || true
+          rm -rf readify-apk || true
