@@ -2,15 +2,18 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+// Formal API 102 Provider convention: dependencies, R8 rules, and resource verification.
+apply(from = rootProject.file("gradle/provider-app-convention.gradle.kts"))
+
 android {
     namespace = "io.github.andrealtb.coloroslyrics.provider.readify"
     compileSdk = rootProject.extra["compileSdkVersion"] as Int
     defaultConfig {
         applicationId = "io.github.andrealtb.coloroslyrics.provider.readify"
-        minSdk = 28
+        minSdk = 27
         targetSdk = rootProject.extra["targetSdkVersion"] as Int
         versionCode = 1
-        versionName = "1.0.0-dev"
+        versionName = "1.0.0"
     }
     signingConfigs {
         create("release") {
@@ -35,7 +38,6 @@ android {
 }
 
 dependencies {
-    compileOnly(libs.libxposed.modern.api)
     testImplementation(libs.junit)
     testImplementation(libs.libxposed.modern.api)
 }

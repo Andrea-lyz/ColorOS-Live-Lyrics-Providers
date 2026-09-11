@@ -5,9 +5,9 @@
 `io.github.andrealtb.lockscreenlyrics` Bridge 后可获得通用逐字渲染、AOD、翻译按钮、
 样式与兼容增强。
 
-当前 v5 发布矩阵包含 13 个可安装 Provider：12 个播放器专属模块与 1 个通用播放器
-Provider。所有模块均使用 libxposed API 102 入口、静态作用域与保护性异常策略；通用
-Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`。
+当前 v5 发布矩阵包含 14 个可安装 Provider：12 个播放器专属模块、通用播放器 Provider 与
+Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态作用域与保护性异常策略；
+通用 Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`。
 
 [English](README-English.md)
 
@@ -34,6 +34,7 @@ Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`�
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | 汽水音乐 | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
 | 通用播放器 | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system`（在设置 App 中选择目标包） | ColorOS 16 / Android 16 |
+| Readify AI | `:player-readify` | `io.github.andrealtb.coloroslyrics.provider.readify` | `com.readin.app` | `3.1.0` |
 
 “适配基线版本”是静态逆向、实现和设备收口所使用的宿主样本，不表示 Provider 仅支持
 该版本；宿主升级后如混淆结构或内部歌词链路发生变化，仍需重新验证。
@@ -123,12 +124,11 @@ v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了�
 [Lyrico-Plugins](https://github.com/Replica0110/Lyrico-Plugins) 在本地音乐元数据、歌词管理和
 插件化歌词源方面提供的开源工作与启发。
 
-## 实验性 Readify 适配
+## Readify TTS Provider
 
 `:player-readify`（`io.github.andrealtb.coloroslyrics.provider.readify`）是面向 Readify
-3.1.0 的 API 102 实验性 TTS 适配，需要配套 Bridge 的 `sentence-window-v1` 支持。它不属于
-13 项正式 v5 发布矩阵，也不会被写入正式 Provider bundle。
+3.1.0 的 API 102 TTS 适配，需要配套 Bridge 的 `sentence-window-v1` 支持。它已纳入
+14 项正式 v5 发布矩阵与 Provider bundle。
 
-GitHub Actions 会将它单独构建、签名并上传为 `readify-debug-apk` 或
-`readify-release-apk` artifact。协议、宿主范围与当前设备验证限制见
+协议、宿主范围与当前设备验证限制见
 [player-readify/README.md](player-readify/README.md)。

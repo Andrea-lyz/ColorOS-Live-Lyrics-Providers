@@ -56,9 +56,9 @@ $versionCatalog = Get-Content -LiteralPath $versionCatalogPath -Raw
 $providers = @($contract.providers)
 
 Assert-Contract ($contract.schema -eq 3) 'unsupported schema'
-Assert-Contract ($contract.suiteVersion -eq '4.2.0') 'unexpected suiteVersion'
-Assert-Contract ($contract.sourceTag -eq 'providers-v1.2.0') 'unexpected sourceTag'
-Assert-Contract ($providers.Count -eq 13) 'matrix must contain exactly 13 Providers'
+Assert-Contract ($contract.suiteVersion -eq '4.2.1') 'unexpected suiteVersion'
+Assert-Contract ($contract.sourceTag -eq 'main') 'unexpected sourceTag'
+Assert-Contract ($providers.Count -eq 14) 'matrix must contain exactly 14 Providers'
 Assert-Contract ($contract.minSdk -eq 27) 'matrix minSdk must be 27'
 Assert-Contract ($contract.compileSdk -eq 37) 'matrix compileSdk must be 37'
 Assert-Contract ($contract.targetSdk -eq 37) 'matrix targetSdk must be 37'
@@ -166,9 +166,14 @@ foreach ($provider in $providers) {
     )
     Assert-Contract ($entryClasses.Count -eq 1) "$module java_init.list must contain exactly one entry"
     Assert-Contract ($entryClasses[0] -eq [string]$provider.entryClass) "$module java_init.list differs from entryClass"
-    $entryRelativePath = ([string]$provider.entryClass).Replace('.', [System.IO.Path]::DirectorySeparatorChar) + '.kt'
-    $entrySourcePath = Join-Path $moduleDir (Join-Path 'src\main\kotlin' $entryRelativePath)
-    Assert-Contract (Test-Path -LiteralPath $entrySourcePath -PathType Leaf) "$module entry source is missing: $entrySourcePath"
+    $entryRelativeBase = ([string]$provider.entryClass).Replace('.', [System.IO.Path]::DirectorySeparatorChar)
+    $kotlinEntrySource = Join-Path $moduleDir (Join-Path 'src\main\kotlin' ($entryRelativeBase + '.kt'))
+    $javaEntrySource = Join-Path $moduleDir (Join-Path 'src\main\java' ($entryRelativeBase + '.java'))
+    $entrySourceCandidates = @(
+        $kotlinEntrySource,
+        $javaEntrySource
+    )
+    Assert-Contract (@($entrySourceCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq 1) "$module entry source is missing or ambiguous"
 
     $actualScopes = @(
         Get-Content -LiteralPath $scopeListPath |

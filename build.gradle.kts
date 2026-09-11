@@ -29,7 +29,8 @@ val v5ProviderModules = listOf(
     ":player-apple",
     ":player-spotify",
     ":player-qishui",
-    ":universal-provider"
+    ":universal-provider",
+    ":player-readify"
 )
 
 val releaseSigningEnvironment = listOf(

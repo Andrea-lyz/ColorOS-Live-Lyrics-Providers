@@ -5,10 +5,10 @@ module publishes standard `MediaMetadata["lyricInfo"]` that ColorOS SystemUI can
 Installing the optional `io.github.andrealtb.lockscreenlyrics` Bridge adds generic word rendering,
 AOD, translation controls, appearance settings, and compatibility enhancements.
 
-The v5 release matrix contains 13 installable Provider applications: 12 player-specific modules
-and one Universal Player Provider. Every module uses a libxposed API 102 entry, static scope, and
-protective exception handling; the Universal Provider settings app runs separately while its module
-logic is limited to `system_server`.
+The v5 release matrix contains 14 installable Provider applications: 12 player-specific modules,
+Universal Player Provider, and Readify TTS Provider. Every module uses a libxposed API 102 entry,
+static scope, and protective exception handling; the Universal Provider settings app runs separately
+while its module logic is limited to `system_server`.
 
 [中文](README.md)
 
@@ -35,6 +35,7 @@ Developer entry points:
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | QiShui | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
 | Universal Player | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system` (select target packages in its app) | ColorOS 16 / Android 16 |
+| Readify AI | `:player-readify` | `io.github.andrealtb.coloroslyrics.provider.readify` | `com.readin.app` | `3.1.0` |
 
 The adaptation baseline is the host sample used for static reverse engineering, implementation,
 and device closure. It does not mean that the Provider supports only that version; host updates
@@ -121,15 +122,14 @@ Release signing uses `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`,
 Licensed under Apache-2.0. Retained third-party provenance and contributor attribution remain in
 source headers, `NOTICE` and the migration reports.
 
-## Experimental Readify adapter
+## Readify TTS Provider
 
-`:player-readify` (`io.github.andrealtb.coloroslyrics.provider.readify`) is an experimental API
-102 TTS adapter for Readify 3.1.0. It requires the companion Bridge `sentence-window-v1` support.
-It is outside the formal 13-app v5 release matrix and is not included in the formal Provider bundle.
+`:player-readify` (`io.github.andrealtb.coloroslyrics.provider.readify`) is an API 102 TTS adapter
+for Readify 3.1.0. It requires the companion Bridge `sentence-window-v1` support and is included in
+the formal 14-app v5 release matrix and Provider bundle.
 
-GitHub Actions builds, signs, and uploads it separately as a `readify-debug-apk` or
-`readify-release-apk` artifact. See [player-readify/README.md](player-readify/README.md) for the
-protocol, host scope, and current device-validation limits.
+See [player-readify/README.md](player-readify/README.md) for the protocol, host scope, and current
+device-validation limits.
 
 ## Acknowledgements
 

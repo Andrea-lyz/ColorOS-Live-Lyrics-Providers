@@ -1,4 +1,4 @@
-# Readify Provider (experimental)
+# Readify Provider
 
 Version-pinned adapter for Readify AI 3.1.0 (`com.readin.app`). Requires LSPosed
 modern API 102 and the companion Bridge sentence-window-v1 change.
@@ -19,9 +19,9 @@ sentence-window-v1 extension supplies currentLine and ordered row slots; it does
 not claim word timestamps or estimate speech duration. Content is bounded to
 1600 code points per row and five rows, with no titles/body text in diagnostics.
 
-This initial port keeps the device-tested Java/libxposed adapter self-contained,
-rather than converting hooks to YukiHookAPI during review. It does not yet join
-the official release matrix or change signing/builds for existing modules.
+The adapter stays self-contained in Java/libxposed and is included in the formal
+v5 release matrix. It uses the same API 102 resource verification and signed-release
+requirements as the other Provider modules.
 
 ## Validation and limitations
 
@@ -40,8 +40,7 @@ Build with JDK 21 and the repository SDK/toolchain:
 ./gradlew :player-readify:testDebugUnitTest :player-readify:lintDebug :player-readify:assembleDebug
 ```
 
-Public release integration and an official-package device test remain follow-up
-work after review of the companion Bridge protocol.
+An official-package device test remains pending after the companion Bridge protocol review.
 
 Companion Bridge proposal: https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/pull/43
 
