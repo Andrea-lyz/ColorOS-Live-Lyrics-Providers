@@ -59,3 +59,6 @@ include(":share:extensions-android")
 include(":share:lrckit")
 include(":share:yrckit")
 include(":kuwo-music")
+
+// Experimental API 102 Readify adapter; not part of the release matrix yet.
+include(":player-readify")
