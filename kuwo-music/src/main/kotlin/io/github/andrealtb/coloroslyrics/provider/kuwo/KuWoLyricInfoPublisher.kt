@@ -1,5 +1,5 @@
 /*
- * Copyright 2026 Proify, Tomakino
+ * Copyright 2026 Proify, Tomakino, Andrea-TB
  * Licensed under the Apache License, Version 2.0
  * http://www.apache.org/licenses/LICENSE-2.0
  */
@@ -7,81 +7,52 @@
 package io.github.andrealtb.coloroslyrics.provider.kuwo
 
 import android.media.MediaMetadata
+import android.os.Bundle
 import io.github.andrealtb.coloroslyrics.provider.core.publisher.MetadataParcelGuard
 import io.github.proify.extensions.bridge.TrackKeyBuilder
 import io.github.proify.lyricon.lyric.model.Song
 import java.util.Locale
 
 /**
- * Publishes the current KuWo lyric into MediaSession metadata under the official
- * "lyricInfo" key. ColorOS SystemUI only populates LyricsRecyclerView after
- * loadLyricInBg sees a timed lyricInfo on the live MediaSession.
+ * Publishes the current KuWo lyric into the host MediaSession metadata under the official
+ * "lyricInfo" key. ColorOS SystemUI only populates LyricsRecyclerView after loadLyricInBg sees a
+ * timed lyricInfo on the live MediaSession.
  *
- * KuWo rewrites equivalent MediaSession metadata every few seconds. The Provider
- * overlays lyricInfo on those natural writes without issuing a second metadata
- * transaction. The overlay is deliberately pure: every other field, including
- * all artwork lanes, passes through exactly as KuWo published it. Rewriting or
- * substituting artwork here diverges from native metadata behavior and turned
- * the lockscreen cover into a solid color once SystemUI recomputed artwork for
- * the lyricInfo-carrying update.
+ * The overlay is append-only. ColorOS derives the lockscreen cover from the bitmap lanes of exactly
+ * the metadata the host published
+ * (com.oplus.systemui.media.controls.pipeline.OplusMediaDataManagerExImpl tries loadBitmapFromUri,
+ * then METADATA_KEY_ART, then METADATA_KEY_ALBUM_ART, and KuWo natively publishes ALBUM_ART), so
+ * this Provider never rebuilds the metadata and never rewrites an artwork lane. It writes the single
+ * "lyricInfo" key into the bundle the host already carries, which keeps every other field, bitmap
+ * object and unknown key byte-identical to what KuWo published. Rebuilding through
+ * MediaMetadata.Builder would hand SystemUI a different metadata object and is how the lockscreen
+ * cover previously degraded to a solid color.
  */
 object KuWoLyricInfoPublisher {
     private const val METADATA_KEY_LYRIC_INFO = "lyricInfo"
     private val WHITESPACE_REGEX = Regex("\\s+")
 
     private val lock = Any()
-    private val pendingHostWrite = ThreadLocal<PreparedHostWrite>()
+    private val pendingHostWrite = ThreadLocal<Boolean>()
 
     private var latestSong: Song? = null
     private var latestGeneration = 0L
 
+    @Volatile
+    private var appendUnsupportedLogged = false
+
     fun prepareHostMetadata(metadata: MediaMetadata): HostMetadataDecision {
-        val prepared = synchronized(lock) {
-            val song = latestSong
-            when {
-                song == null -> PreparedHostWrite(metadata)
-                !matchesCurrentTrack(metadata, song) -> copyWithoutStaleLyricInfo(metadata)
-                else -> prepareCurrentTrackWrite(metadata, song)
-            }
-        }
-        pendingHostWrite.set(prepared)
-        return HostMetadataDecision(prepared.outputMetadata)
-    }
-
-    private fun prepareCurrentTrackWrite(
-        metadata: MediaMetadata,
-        song: Song
-    ): PreparedHostWrite {
-        val lyricInfo = KuWoOfficialLyricInfoEncoder
-            .encode(song, latestGeneration)
-            ?.value
-        return if (lyricInfo == null) {
-            PreparedHostWrite(metadata)
-        } else {
-            PreparedHostWrite(
-                outputMetadata = copyWithLyricInfo(metadata, lyricInfo)
-            )
-        }
-    }
-
-    private fun copyWithoutStaleLyricInfo(metadata: MediaMetadata): PreparedHostWrite {
-        val staleLength = metadata.getString(METADATA_KEY_LYRIC_INFO)?.length ?: 0
-        val outputMetadata = MediaMetadata.Builder(metadata)
-            .putString(METADATA_KEY_LYRIC_INFO, "")
-            .build()
-        diagnose(
-            event = "LYRIC_INFO_STALE_CLEARED",
-            message = "chars=$staleLength" +
-                " artworkBitmap=${outputMetadata.hasKuWoArtworkBitmap()}" +
-                " artwork=${outputMetadata.hasKuWoArtwork()}"
-        )
-        return PreparedHostWrite(outputMetadata)
+        val appended = synchronized(lock) { overlayLyricInfo(metadata) }
+        // Every host write that passed through the overlay counts as an applied host metadata, so the
+        // caller keeps its identity/generation bookkeeping exactly as before.
+        pendingHostWrite.set(true)
+        return HostMetadataDecision(metadata = metadata, lyricInfoAppended = appended)
     }
 
     fun onHostMetadataApplied(): Boolean {
-        val prepared = pendingHostWrite.get()
+        val applied = pendingHostWrite.get()
         pendingHostWrite.remove()
-        return prepared != null
+        return applied != null
     }
 
     fun onTrackChanged(generation: Long) {
@@ -99,8 +70,83 @@ object KuWoLyricInfoPublisher {
         }
         diagnose(
             event = "LYRIC_READY",
-            message = "gen=$generation lines=${song.lyrics?.size ?: 0} waitingForHostMetadata=true"
+            message = "gen=$generation lines=" + (song.lyrics?.size ?: 0) + " waitingForHostMetadata=true"
         )
+    }
+
+    private fun overlayLyricInfo(metadata: MediaMetadata): Boolean {
+        val bundle = KuWoMetadataBundle.bundleOf(metadata)
+        if (bundle == null) {
+            if (!appendUnsupportedLogged) {
+                appendUnsupportedLogged = true
+                diagnose(
+                    event = "LYRIC_INFO_APPEND_UNSUPPORTED",
+                    message = "reason=bundle-unresolved overlay=skipped"
+                )
+            }
+            return false
+        }
+        val song = latestSong
+        val trackMatches = song != null && matchesCurrentTrack(metadata, song)
+        val newValue = if (trackMatches) {
+            KuWoOfficialLyricInfoEncoder.encode(song, latestGeneration)?.value
+        } else {
+            null
+        }
+        val currentValue = runCatching { bundle.getString(METADATA_KEY_LYRIC_INFO) }.getOrNull()
+        return when (KuWoLyricOverlayPolicy.decide(
+            songAvailable = song != null,
+            trackMatches = trackMatches,
+            currentValue = currentValue,
+            newValue = newValue
+        )) {
+            KuWoLyricOverlayAction.APPEND ->
+                appendLyricInfo(metadata, bundle, currentValue, newValue.orEmpty())
+
+            KuWoLyricOverlayAction.CLEAR -> clearStaleLyricInfo(metadata, bundle)
+
+            KuWoLyricOverlayAction.NOOP -> false
+        }
+    }
+
+    private fun appendLyricInfo(
+        metadata: MediaMetadata,
+        bundle: Bundle,
+        previousValue: String?,
+        lyricInfo: String
+    ): Boolean {
+        bundle.putString(METADATA_KEY_LYRIC_INFO, lyricInfo)
+        val guardResult = MetadataParcelGuard.assess(metadata, lyricInfo)
+        if (guardResult != MetadataParcelGuard.Result.SAFE) {
+            restoreLyricInfo(bundle, previousValue)
+            diagnose(
+                event = "LYRIC_INFO_OVERSIZE_SKIPPED",
+                message = "reason=$guardResult chars=" + lyricInfo.length
+            )
+            return false
+        }
+        KuWoArtworkDiagnostics.log("APPENDED", metadata)
+        diagnose(event = "LYRIC_INFO_APPENDED", message = "chars=" + lyricInfo.length)
+        return true
+    }
+
+    private fun clearStaleLyricInfo(metadata: MediaMetadata, bundle: Bundle): Boolean {
+        val staleLength = runCatching { bundle.getString(METADATA_KEY_LYRIC_INFO)?.length ?: 0 }
+            .getOrDefault(0)
+        bundle.putString(METADATA_KEY_LYRIC_INFO, "")
+        KuWoArtworkDiagnostics.log("STALE_CLEARED", metadata)
+        diagnose(event = "LYRIC_INFO_STALE_CLEARED", message = "chars=$staleLength")
+        return true
+    }
+
+    private fun restoreLyricInfo(bundle: Bundle, previousValue: String?) {
+        runCatching {
+            if (previousValue == null) {
+                bundle.remove(METADATA_KEY_LYRIC_INFO)
+            } else {
+                bundle.putString(METADATA_KEY_LYRIC_INFO, previousValue)
+            }
+        }
     }
 
     internal fun tracksMatch(
@@ -120,20 +166,6 @@ object KuWoLyricInfoPublisher {
         val songKey = TrackKeyBuilder.build(songName, songArtist)
         if (metadataKey.isBlank() || songKey.isBlank()) return false
         return normalizeTrackComponent(metadataKey) == normalizeTrackComponent(songKey)
-    }
-
-    private fun copyWithLyricInfo(source: MediaMetadata, lyricInfo: String): MediaMetadata {
-        val candidate = MediaMetadata.Builder(source)
-            .putString(METADATA_KEY_LYRIC_INFO, lyricInfo)
-            .build()
-        val result = MetadataParcelGuard.acceptOrOriginal(source, candidate, lyricInfo)
-        diagnose(
-            event = if (result === source) "LYRIC_INFO_OVERSIZE_SKIPPED" else "LYRIC_INFO_COPIED",
-            message = "chars=${lyricInfo.length}" +
-                " artworkBitmap=${result.hasKuWoArtworkBitmap()}" +
-                " artwork=${result.hasKuWoArtwork()}"
-        )
-        return result
     }
 
     private fun matchesCurrentTrack(metadata: MediaMetadata, song: Song): Boolean {
@@ -163,10 +195,7 @@ object KuWoLyricInfoPublisher {
     }
 
     data class HostMetadataDecision(
-        val metadata: MediaMetadata
-    )
-
-    private data class PreparedHostWrite(
-        val outputMetadata: MediaMetadata
+        val metadata: MediaMetadata,
+        val lyricInfoAppended: Boolean
     )
 }

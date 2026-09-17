@@ -90,15 +90,6 @@ class KuWo(private val hookContext: ProviderHookContext) {
             Thread(runnable, "KuWoLyricRetry").apply { isDaemon = true }
         }
 
-    private val artworkFetchExecutor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "KuWoArtworkFetch").apply { isDaemon = true }
-    }
-
-    private val artworkFetchLock = Any()
-
-    @Volatile
-    private var pendingArtworkFetchKey = ""
-
     @Volatile
     private var lastFetchInvoke: KuWoLyricFetchRetryPolicy.FetchInvoke? = null
 
@@ -587,77 +578,6 @@ class KuWo(private val hookContext: ProviderHookContext) {
                 )
             }
         }, 80L)
-        scheduleArtworkCompletion(generation, metadata)
-    }
-
-    private fun scheduleArtworkCompletion(generation: Long, sourceMetadata: MediaMetadata) {
-        if (sourceMetadata.hasKuWoArtworkBitmap()) return
-        val fetchIdentity = currentTrackIdentity ?: return
-        val uri = KUWO_ARTWORK_URI_KEYS.firstNotNullOfOrNull { key ->
-            sourceMetadata.getString(key)?.takeIf { it.isNotBlank() }
-        } ?: return
-        val fetchKey = "$generation|${uri.hashCode()}"
-        synchronized(artworkFetchLock) {
-            if (pendingArtworkFetchKey == fetchKey) return
-            pendingArtworkFetchKey = fetchKey
-        }
-        artworkFetchExecutor.execute {
-            val fetched = runCatching { KuWoArtworkFetcher.fetch(sourceMetadata) }
-            synchronized(artworkFetchLock) {
-                if (pendingArtworkFetchKey == fetchKey) pendingArtworkFetchKey = ""
-            }
-            val bitmap = fetched.getOrNull()
-            if (bitmap == null) {
-                KuWoDiagnostics.debug(
-                    area = "artwork",
-                    event = "ARTWORK_COMPLETION_SKIPPED",
-                    process = processName,
-                    reason = fetched.exceptionOrNull()?.javaClass?.simpleName ?: "unavailable"
-                )
-                return@execute
-            }
-            if (generation != currentTrackGeneration
-                || fetchIdentity != currentTrackIdentity
-                || latestHostMetadata?.hasKuWoArtworkBitmap() == true) {
-                bitmap.recycle()
-                return@execute
-            }
-            val completedMetadata = KuWoArtworkFetcher.withArtworkBitmap(sourceMetadata, bitmap)
-            val targetHandler = mainHandler ?: run {
-                bitmap.recycle()
-                return@execute
-            }
-            targetHandler.post {
-                if (generation != currentTrackGeneration
-                    || fetchIdentity != currentTrackIdentity
-                    || latestHostMetadata?.hasKuWoArtworkBitmap() == true) {
-                    bitmap.recycle()
-                    return@post
-                }
-                val target = latestSession ?: run {
-                    bitmap.recycle()
-                    return@post
-                }
-                latestHostMetadata = completedMetadata
-                runCatching { target.setMetadata(completedMetadata) }
-                    .onSuccess {
-                        KuWoDiagnostics.debug(
-                            area = "artwork",
-                            event = "ARTWORK_COMPLETION_PUBLISHED",
-                            process = processName,
-                            message = "gen=$generation size=${bitmap.width}x${bitmap.height}"
-                        )
-                    }
-                    .onFailure { throwable ->
-                        KuWoDiagnostics.error(
-                            area = "artwork",
-                            event = "ARTWORK_COMPLETION_FAILED",
-                            process = processName,
-                            throwable = throwable
-                        )
-                    }
-            }
-        }
     }
 
     private fun logLyricTimingSample(song: Song) {
