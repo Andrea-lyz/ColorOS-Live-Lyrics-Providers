@@ -56,7 +56,7 @@ $versionCatalog = Get-Content -LiteralPath $versionCatalogPath -Raw
 $providers = @($contract.providers)
 
 Assert-Contract ($contract.schema -eq 3) 'unsupported schema'
-Assert-Contract ($contract.suiteVersion -eq '4.3.1') 'unexpected suiteVersion'
+Assert-Contract ($contract.suiteVersion -eq '4.3.2') 'unexpected suiteVersion'
 Assert-Contract ($contract.sourceTag -eq 'main') 'unexpected sourceTag'
 Assert-Contract ($providers.Count -eq 14) 'matrix must contain exactly 14 Providers'
 Assert-Contract ($contract.minSdk -eq 27) 'matrix minSdk must be 27'
