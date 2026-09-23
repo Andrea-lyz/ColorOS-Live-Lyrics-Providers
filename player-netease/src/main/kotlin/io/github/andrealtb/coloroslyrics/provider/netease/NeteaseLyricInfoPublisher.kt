@@ -278,7 +278,9 @@ object NeteaseLyricInfoPublisher {
         val existing = metadata.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO)
         if (!NeteaseLyricInfoPayloadEncoder.isModulePayload(existing)) return metadata
         val hostTrack = TrackIdentity(
-            id = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+            id = NeteaseMediaIdPolicy.normalize(
+                metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
+            ),
             title = firstNonBlank(
                 metadata.getString(MediaMetadata.METADATA_KEY_TITLE),
                 metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
@@ -355,7 +357,9 @@ object NeteaseLyricInfoPublisher {
         }
         val hostTrack = TrackIdentity(
             id = firstNonBlank(
-                metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+                NeteaseMediaIdPolicy.normalize(
+                    metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
+                ),
                 songId
             ),
             title = firstNonBlank(
