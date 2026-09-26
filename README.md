@@ -44,7 +44,7 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 
 ## 通用播放器 Provider
 
-通用播放器 Provider（`Provider-Universal 1.0.0 (1)`）面向没有专属适配、但会创建标准 Android
+通用播放器 Provider（`Provider-Universal 1.1.0 (2)`）面向没有专属适配、但会创建标准 Android
 `MediaSession` 的播放器。它以静态 scope 仅运行在 `system_server`，从设置 App 同步用户明确选择的
 目标包；没有被选择的音乐、视频和其他媒体 App 不会被观察、联网取词或写入 `lyricInfo`。
 
