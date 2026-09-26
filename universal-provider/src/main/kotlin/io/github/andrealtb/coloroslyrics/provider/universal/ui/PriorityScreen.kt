@@ -178,6 +178,10 @@ fun PriorityScreen(onBack: () -> Unit) {
                         putExtra(UniversalSnapshotStore.EXTRA_TRANSLATION_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_TRANSLATION, true))
                         putExtra(UniversalSnapshotStore.EXTRA_RAW_LYRIC_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_RAW_LYRIC, true))
                         putExtra(UniversalSnapshotStore.EXTRA_DEBUG_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_DEBUG, false))
+                        putExtra(
+                            UniversalSnapshotStore.EXTRA_CLOCK_LINE_FALLBACK_ENABLED,
+                            prefs.getBoolean(UniversalSettingsConstants.KEY_CLOCK_LINE_FALLBACK, true)
+                        )
                     })
                 }
                 Toast.makeText(context, context.getString(R.string.toast_priority_saved), Toast.LENGTH_SHORT).show()

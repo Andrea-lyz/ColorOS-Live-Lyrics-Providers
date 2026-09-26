@@ -24,6 +24,10 @@ class SnapshotReceiver : BroadcastReceiver() {
                         )
                     }
                 }
+                if (action == UniversalSnapshotStore.ACTION_SNAPSHOT_UPDATE && text != null) {
+                    // The home screen is paused while stopped; record here so rows reach their final status.
+                    runCatching { UniversalLyricHistory.record(appContext, UniversalSnapshotUi.parse(text)) }
+                }
             } finally {
                 pending.finish()
             }

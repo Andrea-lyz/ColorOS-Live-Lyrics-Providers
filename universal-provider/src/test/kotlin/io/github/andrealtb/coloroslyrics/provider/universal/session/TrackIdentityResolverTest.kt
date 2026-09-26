@@ -10,6 +10,7 @@ import org.junit.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TrackIdentityResolverTest {
@@ -112,6 +113,86 @@ class TrackIdentityResolverTest {
         assertEquals("other", other.descriptor.sessionInstanceId)
     }
 
+    @Test
+    fun tornPayloadBeforeNextTrackCreatesOneGeneration() {
+        resolver.observe(player("Song A", "Artist A", "Album A", 200_000L, at = 1_000L))
+        // The previous track's delayed callback: its captured title with the new track's fields.
+        val torn = resolver.observe(player("Song A", "Artist B", "Album B", 260_000L, at = 60_000L))
+        assertEquals(1L, torn.descriptor.trackGeneration)
+        assertEquals("Artist A", torn.descriptor.artist)
+        assertEquals(TrackIdentityResolver.GATE_PARTIAL_PENDING, torn.identityGate)
+        assertEquals(60_000L + TrackIdentityResolver.IDENTITY_SETTLE_MS, torn.identitySettleAtElapsedMs)
+
+        val next = resolver.observe(player("Song B", "Artist B", "Album B", 260_000L, at = 60_400L))
+        assertEquals(2L, next.descriptor.trackGeneration)
+        assertEquals("Song B", next.descriptor.title)
+        assertEquals(TrackIdentityResolver.GATE_STANDARD, next.identityGate)
+        assertNull(next.identitySettleAtElapsedMs)
+    }
+
+    @Test
+    fun staleTitleAfterNextTrackKeepsCurrentTrack() {
+        resolver.observe(player("Song A", "Artist", "Album", 200_000L, at = 1_000L))
+        val next = resolver.observe(player("Song B", "Artist", "Album", 260_000L, at = 60_000L))
+        assertEquals(2L, next.descriptor.trackGeneration)
+
+        val torn = resolver.observe(player("Song A", "Artist", "Album", 260_000L, at = 61_500L))
+        assertEquals(2L, torn.descriptor.trackGeneration)
+        assertEquals("Song B", torn.descriptor.title)
+        assertEquals(TrackIdentityResolver.GATE_STALE_TITLE, torn.identityGate)
+
+        // Playback-state updates keep re-reading the stored torn metadata after the window.
+        val reread = resolver.observe(player("Song A", "Artist", "Album", 260_000L, at = 90_000L))
+        assertEquals(2L, reread.descriptor.trackGeneration)
+        assertEquals("Song B", reread.descriptor.title)
+    }
+
+    @Test
+    fun returningToPreviousTitleIsNewTrackOutsideTheStaleWindow() {
+        resolver.observe(player("Song A", "Artist", "Album", 200_000L, at = 1_000L))
+        resolver.observe(player("Song B", "Artist", "Album", 200_500L, at = 60_000L))
+
+        val back = resolver.observe(
+            player("Song A", "Artist", "Album", 200_000L, at = 60_000L + TrackIdentityResolver.STALE_TITLE_WINDOW_MS + 1L)
+        )
+        assertEquals(3L, back.descriptor.trackGeneration)
+        assertEquals("Song A", back.descriptor.title)
+    }
+
+    @Test
+    fun returningToPreviousTrackWithItsOwnDurationIsNewTrack() {
+        resolver.observe(player("Song A", "Artist", "Album", 200_000L, at = 1_000L))
+        resolver.observe(player("Song B", "Artist", "Album", 260_000L, at = 60_000L))
+
+        val back = resolver.observe(player("Song A", "Artist", "Album", 200_000L, at = 61_000L))
+        assertEquals(3L, back.descriptor.trackGeneration)
+        assertEquals("Song A", back.descriptor.title)
+    }
+
+    @Test
+    fun unresolvedPartialChangeSettlesIntoNewTrack() {
+        resolver.observe(player("Intro", "Artist A", "Album A", 90_000L, at = 1_000L))
+        val held = resolver.observe(player("Intro", "Artist B", "Album B", 120_000L, at = 30_000L))
+        assertEquals(1L, held.descriptor.trackGeneration)
+        val settleAt = held.identitySettleAtElapsedMs!!
+
+        val early = resolver.observe(held.observation.copy(observedAtElapsedMs = settleAt - 1L))
+        assertEquals(1L, early.descriptor.trackGeneration)
+        val settled = resolver.observe(held.observation.copy(observedAtElapsedMs = settleAt))
+        assertEquals(2L, settled.descriptor.trackGeneration)
+        assertEquals("Artist B", settled.descriptor.artist)
+        assertEquals(TrackIdentityResolver.GATE_PARTIAL_SETTLED, settled.identityGate)
+    }
+
+    @Test
+    fun durationArrivingAfterInitialMetadataKeepsGeneration() {
+        resolver.observe(player("Song A", "Artist", "Album", null, at = 1_000L))
+        val withDuration = resolver.observe(player("Song A", "Artist", "Album", 200_000L, at = 1_300L))
+        assertEquals(1L, withDuration.descriptor.trackGeneration)
+        assertEquals(200_000L, withDuration.descriptor.durationMs)
+        assertEquals(TrackIdentityResolver.GATE_STANDARD, withDuration.identityGate)
+    }
+
     private fun saltLine(title: String): SessionObservation = observation(
         title = title,
         artist = "Taylor Swift - Babe (Taylor's Version) (From The Vault)",
@@ -119,6 +200,18 @@ class TrackIdentityResolverTest {
         album = "Red (Taylor's Version) [24_96]",
         durationMs = 224240L
     )
+
+    /** A player without media ID, queue ID or media URI, identified only by its text fields. */
+    private fun player(title: String, artist: String, album: String, durationMs: Long?, at: Long): SessionObservation =
+        observation(
+            sessionInstanceId = "player",
+            ownerPackage = "com.example.player",
+            title = title,
+            artist = artist,
+            album = album,
+            durationMs = durationMs,
+            at = at
+        )
 
     private fun observation(
         sessionInstanceId: String = "salt",
@@ -128,7 +221,8 @@ class TrackIdentityResolverTest {
         albumArtist: String? = null,
         album: String? = null,
         durationMs: Long? = null,
-        playing: Boolean = true
+        playing: Boolean = true,
+        at: Long = 1_000L
     ): SessionObservation = SessionObservation(
         userId = 0,
         ownerPackage = ownerPackage,
@@ -142,6 +236,6 @@ class TrackIdentityResolverTest {
         ),
         playbackState = if (playing) PlaybackStates.PLAYING else PlaybackStates.PAUSED,
         playing = playing,
-        observedAtElapsedMs = 1_000L
+        observedAtElapsedMs = at
     )
 }

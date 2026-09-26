@@ -69,6 +69,9 @@
     <string name="inject_translation_desc">Match translations by system language; on by default</string>
     <string name="prefer_word_timing">Prefer word-level timing</string>
     <string name="prefer_word_timing_desc">Fall back to line lyrics when no word-timed source exists</string>
+    <string name="clock_line_fallback">Line lyrics for coarse clocks</string>
+    <string name="clock_line_fallback_desc">Use line timing when a player reports progress too coarsely for smooth word fill</string>
+    <string name="lyric_clock_fallback">Coarse player clock · line lyrics</string>
     <string name="allow_raw_lyric">Allow Bridge to read rawLyric</string>
     <string name="allow_raw_lyric_desc">When off, only normal lyricInfo is sent</string>
     <string name="section_local_data">Local data</string>

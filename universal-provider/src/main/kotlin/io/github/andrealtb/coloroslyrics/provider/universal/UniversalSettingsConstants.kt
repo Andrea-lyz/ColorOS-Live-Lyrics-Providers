@@ -6,5 +6,6 @@ object UniversalSettingsConstants {
     const val KEY_TRANSLATION = "translation_enabled"
     const val KEY_RAW_LYRIC = "raw_lyric_enabled"
     const val KEY_DEBUG = "debug_enabled"
+    const val KEY_CLOCK_LINE_FALLBACK = "clock_line_fallback_enabled"
     const val KEY_LANGUAGE = "ui_language"
 }
