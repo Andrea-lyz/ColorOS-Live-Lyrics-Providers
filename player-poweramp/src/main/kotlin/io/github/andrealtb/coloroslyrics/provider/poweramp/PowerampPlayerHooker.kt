@@ -270,14 +270,12 @@ class PowerampPlayerHooker(private val hookContext: ProviderHookContext) {
                     )
                     val candidate = PowerampTrackIdentity.fromMetadata(incoming) ?: return@before
                     generationController.observeTrack(candidate)
-                    var outgoing = incoming
-                    sessions.onHostMetadata(session, candidate, outgoing)
-                    attachPendingToHostMetadata(session, outgoing, candidate)?.let {
-                        outgoing = it
-                    }
+                    // lyricInfo is appended into the host's own object; args[0] is never replaced.
+                    sessions.onHostMetadata(session, candidate, incoming)
+                    attachPendingToHostMetadata(session, incoming, candidate)
 
                     val snapshot = synchronized(publicationLock) { replaySnapshot }
-                    val incomingLyricInfo = outgoing.getString("lyricInfo")
+                    val incomingLyricInfo = incoming.getString("lyricInfo")
                     val alreadyOwned = PowerampReplayPolicy.isModuleOwned(
                         incomingLyricInfo,
                         hostPackage
@@ -289,21 +287,20 @@ class PowerampPlayerHooker(private val hookContext: ProviderHookContext) {
                             generationPolicy.currentTrack,
                             generationPolicy.generation,
                             snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
-                            PowerampMetadataArtwork.isReadyForLyricInfo(outgoing),
+                            PowerampMetadataArtwork.isReadyForLyricInfo(incoming),
                             incomingLyricInfo
                         )
                     ) {
-                        PowerampNativePublisher.buildReplayMetadata(
-                            outgoing,
+                        PowerampNativePublisher.appendReplayLyricInfo(
+                            incoming,
                             snapshot!!,
                             generationPolicy,
                             hostPackage
-                        ).second?.let { outgoing = it }
+                        )
                     }
-                    if (outgoing !== incoming) args[0] = outgoing
                     PowerampArtworkDiagnostics.log(
                         "HOST_OUT",
-                        outgoing,
+                        incoming,
                         session,
                         generationPolicy.generation
                     )
@@ -546,33 +543,34 @@ class PowerampPlayerHooker(private val hookContext: ProviderHookContext) {
         }
     }
 
+    /** Appends a pending publication into [incoming] itself; returns true when attached. */
     private fun attachPendingToHostMetadata(
         session: MediaSession,
         incoming: MediaMetadata,
         resolvedTrack: TrackIdentity
-    ): MediaMetadata? {
-        val pending = pendingStore.peek() ?: return null
-        if (!PowerampMetadataArtwork.isReadyForLyricInfo(incoming)) return null
+    ): Boolean {
+        val pending = pendingStore.peek() ?: return false
+        if (!PowerampMetadataArtwork.isReadyForLyricInfo(incoming)) return false
         val generation = generationPolicy.generation
         val currentTrack = generationPolicy.currentTrack ?: resolvedTrack.takeUnless { it.isBlank }
-        if (currentTrack == null) return null
+        if (currentTrack == null) return false
         if (!PowerampLyricDecoder.matchesTrackIdentity(pending.capturedTrack, currentTrack)) {
-            return null
+            return false
         }
-        if (!generationController.acceptsPublication(currentTrack, generation)) return null
+        if (!generationController.acceptsPublication(currentTrack, generation)) return false
         val selected = sessions.selectUnique(currentTrack)
-        if (selected !== session && selected != null) return null
+        if (selected !== session && selected != null) return false
 
         val bound = pending.boundTo(currentTrack)
         val snapshot = PowerampReplaySnapshot(WeakReference(session), currentTrack, generation, bound)
-        val (result, patched) = PowerampNativePublisher.buildReplayMetadata(
+        val result = PowerampNativePublisher.appendReplayLyricInfo(
             metadata = incoming,
             snapshot = snapshot,
             generationPolicy = generationPolicy,
             hostPackage = hostPackage
         )
-        if (!result.isPublished || patched == null) return null
-        if (!pendingStore.takeIfSame(pending)) return null
+        if (!result.isPublished) return false
+        if (!pendingStore.takeIfSame(pending)) return false
 
         synchronized(publicationLock) {
             replaySnapshot = snapshot
@@ -587,7 +585,7 @@ class PowerampPlayerHooker(private val hookContext: ProviderHookContext) {
         )
         logPublicationResult("PENDING_DRAINED", generation)
         logPublicationResult(result.name, generation)
-        return patched
+        return true
     }
 
     private fun drainPendingPublication() {

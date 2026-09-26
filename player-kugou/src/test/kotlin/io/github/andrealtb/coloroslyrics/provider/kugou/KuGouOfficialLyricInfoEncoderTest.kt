@@ -57,8 +57,13 @@ class KuGouOfficialLyricInfoEncoderTest {
         assertTrue(encoded.rawLyric.contains("<00:12.340>"))
         assertTrue(encoded.translationLyric.contains("First line translation"))
         assertTrue(encoded.plainLyric.contains("第一行歌词"))
-        assertTrue(encoded.plainLyric.contains("歌曲名 - 歌手名"))
+        // lyric and rawLyric carry the same rows, so SystemUI has no slot Bridge cannot draw.
+        assertFalse(encoded.plainLyric.contains("歌曲名 - 歌手名"))
         assertFalse(encoded.rawLyric.contains("歌曲名 - 歌手名"))
+        assertEquals(
+            encoded.plainLyric,
+            KuGouOfficialLyricInfoEncoder.extractJsonString(encoded.value, "lyric")
+        )
     }
 
     @Test

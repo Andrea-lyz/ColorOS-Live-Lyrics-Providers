@@ -200,16 +200,21 @@ constructed payload 在全部门禁通过后调用
 
 ## 8. Metadata 与封面安全
 
-进入 `MediaSession#setMetadata` 的宿主 metadata 是权威数据。按类型复制全部宿主字段，
-包括未知键、rating、duration、ID、封面 URI 与 bitmap。
+进入 `MediaSession#setMetadata` 的宿主 metadata 是权威数据。Provider 不重建 metadata：
+ColorOS 的封面只取自宿主发布的 bitmap 通道，而 `MediaMetadata.Builder(existing)` 与空 typed
+Builder 逐键复制都会把 bitmap 交给 framework 复制语义，在受影响 ColorOS 上曾把 512x512
+封面压成 1x1 纯色（见 `docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`）。
 
-受影响 ColorOS 上避免 `MediaMetadata.Builder(existing)`，改用空 typed Builder。封面规则：
-
-- 保留合理宿主 bitmap；
-- 只有 HARDWARE 或过大 bitmap 需要 Binder 安全时才重绘为 software `ARGB_8888`；
-- 宿主尚未解码 bitmap 时保留 URI-only 首帧；
+- `lyricInfo` 只经 `provider-core` 的 `NativeLyricInfoPublisher.publishToHostMetadata` 或
+  `HostMetadataOverlay.putLyricInfo` 原地写入宿主 metadata 对象；hook 里不替换 `args[0]`；
+- 写入后按 parcel 守卫复核，超限即恢复原值并跳过；bundle 反射失败时 fail-open，不回退到重建；
+- 封面、URI、rating、ID、duration 与未知键一律不碰，也不重绘 bitmap；
+- 宿主尚未解码 bitmap 时按各播放器的就绪策略决定是否等待；
 - pending `lyricInfo` 叠加到 incoming metadata，不用旧快照回放覆盖；
+- 异步补发重发宿主自己的对象或 `controller.metadata` 副本，均为原地追加；
 - 不联网补封面、不伪造封面、不恢复其他歌曲封面。
+
+Spotify、汽水、Cone、Salt 仍走旧复制路径，迁移前不要以它们为模板。
 
 忽略 cast/辅助会话。payload 不能移动到当前曲身份不同的 MediaSession。
 

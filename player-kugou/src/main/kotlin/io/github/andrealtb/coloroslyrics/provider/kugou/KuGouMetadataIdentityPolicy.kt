@@ -13,6 +13,8 @@ object KuGouMetadataIdentityPolicy {
         val realArtist: String
     )
 
+    private const val ARTIST_LIST_SEPARATORS = "、,，/／&＆"
+
     private val CAR_LYRIC_DISPLAY_PREFIXES = listOf(
         "演唱", "歌手", "作词", "作曲", "编曲", "词：", "词:", "曲：", "曲:",
         "正在播放", "lyrics by", "composed by", "produced by", "performed by"
@@ -51,7 +53,9 @@ object KuGouMetadataIdentityPolicy {
      * artist slot mixes "Artist-Title".
      *
      * A long real title such as "I Knew It, I Knew You" is not a display line.
-     * Western "First Last" artist names must not be split on the last space.
+     * Western "First Last" artist names must not be split on the last space, and a
+     * hyphenated name inside an artist list ("知更鸟、HOYO-MiX、Chevy") is not an
+     * "Artist-Title" separator.
      */
     fun carLyricDerivedIdentity(
         title: String?,
@@ -111,7 +115,8 @@ object KuGouMetadataIdentityPolicy {
         var bestLength = 0
         for (separator in listOf("-", "～", "—", "–", "·")) {
             val index = artist.lastIndexOf(separator)
-            if (index > 0) {
+            // A title part that still lists performers means the separator sits inside a name.
+            if (index > 0 && !continuesArtistList(artist.substring(index + separator.length))) {
                 val end = index + separator.length
                 if (end > bestIndex + bestLength) {
                     bestIndex = index
@@ -133,6 +138,9 @@ object KuGouMetadataIdentityPolicy {
         }
         return null
     }
+
+    private fun continuesArtistList(tail: String): Boolean =
+        tail.any { it in ARTIST_LIST_SEPARATORS }
 
     private fun containsNonAscii(vararg values: String): Boolean =
         values.any { value -> value.any { it.code > 0x7F } }

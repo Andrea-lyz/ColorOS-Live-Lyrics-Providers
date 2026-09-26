@@ -19,7 +19,7 @@
 - 切歌身份以 adamId 为准。队列预取的下一首 `PlaybackItem` 不得换代。
   `loadLyrics` 必须等到匹配的 `PlaybackItem`；禁止只靠第一帧
   `setMetadata` 开请求。
-- 空 typed Builder 拷贝 metadata；HARDWARE / 超 240px bitmap Canvas 重绘。
+- `lyricInfo` 原地追加进宿主 metadata，不复制、不重绘封面（4.1 起，见 `docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`）。
   pending `lyricInfo` 附着到同一次 host `setMetadata`。忽略 Cast session。
 - 不注入 `ACTION_TOGGLE_TRANSLATION`。翻译按钮走 Bridge 5 槽收藏覆盖
   （AM 评分式爱心保留宿主图标）。

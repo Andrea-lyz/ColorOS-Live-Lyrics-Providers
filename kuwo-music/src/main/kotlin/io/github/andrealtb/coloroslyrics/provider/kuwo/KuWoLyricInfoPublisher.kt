@@ -7,8 +7,7 @@
 package io.github.andrealtb.coloroslyrics.provider.kuwo
 
 import android.media.MediaMetadata
-import android.os.Bundle
-import io.github.andrealtb.coloroslyrics.provider.core.publisher.MetadataParcelGuard
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.HostMetadataOverlay
 import io.github.proify.extensions.bridge.TrackKeyBuilder
 import io.github.proify.lyricon.lyric.model.Song
 import java.util.Locale
@@ -75,17 +74,6 @@ object KuWoLyricInfoPublisher {
     }
 
     private fun overlayLyricInfo(metadata: MediaMetadata): Boolean {
-        val bundle = KuWoMetadataBundle.bundleOf(metadata)
-        if (bundle == null) {
-            if (!appendUnsupportedLogged) {
-                appendUnsupportedLogged = true
-                diagnose(
-                    event = "LYRIC_INFO_APPEND_UNSUPPORTED",
-                    message = "reason=bundle-unresolved overlay=skipped"
-                )
-            }
-            return false
-        }
         val song = latestSong
         val trackMatches = song != null && matchesCurrentTrack(metadata, song)
         val newValue = if (trackMatches) {
@@ -93,60 +81,68 @@ object KuWoLyricInfoPublisher {
         } else {
             null
         }
-        val currentValue = runCatching { bundle.getString(METADATA_KEY_LYRIC_INFO) }.getOrNull()
+        val currentValue = runCatching { metadata.getString(METADATA_KEY_LYRIC_INFO) }.getOrNull()
         return when (KuWoLyricOverlayPolicy.decide(
             songAvailable = song != null,
             trackMatches = trackMatches,
             currentValue = currentValue,
             newValue = newValue
         )) {
-            KuWoLyricOverlayAction.APPEND ->
-                appendLyricInfo(metadata, bundle, currentValue, newValue.orEmpty())
+            KuWoLyricOverlayAction.APPEND -> appendLyricInfo(metadata, newValue.orEmpty())
 
-            KuWoLyricOverlayAction.CLEAR -> clearStaleLyricInfo(metadata, bundle)
+            KuWoLyricOverlayAction.CLEAR -> clearStaleLyricInfo(metadata, currentValue)
 
             KuWoLyricOverlayAction.NOOP -> false
         }
     }
 
-    private fun appendLyricInfo(
-        metadata: MediaMetadata,
-        bundle: Bundle,
-        previousValue: String?,
-        lyricInfo: String
-    ): Boolean {
-        bundle.putString(METADATA_KEY_LYRIC_INFO, lyricInfo)
-        val guardResult = MetadataParcelGuard.assess(metadata, lyricInfo)
-        if (guardResult != MetadataParcelGuard.Result.SAFE) {
-            restoreLyricInfo(bundle, previousValue)
-            diagnose(
-                event = "LYRIC_INFO_OVERSIZE_SKIPPED",
-                message = "reason=$guardResult chars=" + lyricInfo.length
-            )
-            return false
-        }
-        KuWoArtworkDiagnostics.log("APPENDED", metadata)
-        diagnose(event = "LYRIC_INFO_APPENDED", message = "chars=" + lyricInfo.length)
-        return true
-    }
-
-    private fun clearStaleLyricInfo(metadata: MediaMetadata, bundle: Bundle): Boolean {
-        val staleLength = runCatching { bundle.getString(METADATA_KEY_LYRIC_INFO)?.length ?: 0 }
-            .getOrDefault(0)
-        bundle.putString(METADATA_KEY_LYRIC_INFO, "")
-        KuWoArtworkDiagnostics.log("STALE_CLEARED", metadata)
-        diagnose(event = "LYRIC_INFO_STALE_CLEARED", message = "chars=$staleLength")
-        return true
-    }
-
-    private fun restoreLyricInfo(bundle: Bundle, previousValue: String?) {
-        runCatching {
-            if (previousValue == null) {
-                bundle.remove(METADATA_KEY_LYRIC_INFO)
-            } else {
-                bundle.putString(METADATA_KEY_LYRIC_INFO, previousValue)
+    private fun appendLyricInfo(metadata: MediaMetadata, lyricInfo: String): Boolean {
+        val result = HostMetadataOverlay.putLyricInfo(metadata, lyricInfo).result
+        when (result) {
+            HostMetadataOverlay.Result.WRITTEN -> {
+                KuWoArtworkDiagnostics.log("APPENDED", metadata)
+                diagnose(event = "LYRIC_INFO_APPENDED", message = "chars=" + lyricInfo.length)
             }
+
+            HostMetadataOverlay.Result.UNCHANGED -> Unit
+            HostMetadataOverlay.Result.UNSUPPORTED -> logAppendUnsupported()
+            HostMetadataOverlay.Result.FIELD_TOO_LARGE,
+            HostMetadataOverlay.Result.PARCEL_TOO_LARGE,
+            HostMetadataOverlay.Result.MEASUREMENT_FAILED -> diagnose(
+                event = "LYRIC_INFO_OVERSIZE_SKIPPED",
+                message = "reason=$result chars=" + lyricInfo.length
+            )
         }
+        return result == HostMetadataOverlay.Result.WRITTEN
+    }
+
+    private fun clearStaleLyricInfo(metadata: MediaMetadata, staleValue: String?): Boolean {
+        return when (HostMetadataOverlay.clearLyricInfo(metadata)) {
+            HostMetadataOverlay.Result.WRITTEN -> {
+                KuWoArtworkDiagnostics.log("STALE_CLEARED", metadata)
+                diagnose(
+                    event = "LYRIC_INFO_STALE_CLEARED",
+                    message = "chars=" + (staleValue?.length ?: 0)
+                )
+                true
+            }
+
+            HostMetadataOverlay.Result.UNSUPPORTED -> {
+                logAppendUnsupported()
+                false
+            }
+
+            else -> false
+        }
+    }
+
+    private fun logAppendUnsupported() {
+        if (appendUnsupportedLogged) return
+        appendUnsupportedLogged = true
+        diagnose(
+            event = "LYRIC_INFO_APPEND_UNSUPPORTED",
+            message = "reason=bundle-unresolved overlay=skipped"
+        )
     }
 
     internal fun tracksMatch(

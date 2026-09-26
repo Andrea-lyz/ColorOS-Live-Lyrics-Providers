@@ -96,6 +96,78 @@ class NativeLyricInfoPublisherTest {
         assertFalse(stale.committed)
     }
 
+    @Test
+    fun inPlacePublicationWritesOnlyAfterTheGatesPass() {
+        val policy = TrackGenerationPolicy()
+        val generation = policy.onTrackObserved(track)
+        val written = mutableListOf<String>()
+
+        val result = publishInPlace(policy, generation) { lyricInfo ->
+            written += lyricInfo
+            HostMetadataOverlay.Outcome(HostMetadataOverlay.Result.WRITTEN, 2048)
+        }
+
+        assertEquals(NativeLyricInfoPublisher.Result.PUBLISHED, result)
+        assertEquals(1, written.size)
+        assertTrue(written.single().contains("\"lyric\""))
+    }
+
+    @Test
+    fun inPlacePublicationRejectsStaleGenerationWithoutWriting() {
+        val policy = TrackGenerationPolicy()
+        val generation = policy.onTrackObserved(track)
+        policy.onTrackObserved(track.copy(id = "track-2"))
+        var writes = 0
+
+        val result = publishInPlace(policy, generation) {
+            writes++
+            HostMetadataOverlay.Outcome(HostMetadataOverlay.Result.WRITTEN)
+        }
+
+        assertEquals(NativeLyricInfoPublisher.Result.STALE_GENERATION, result)
+        assertEquals(0, writes)
+    }
+
+    @Test
+    fun inPlaceOutcomesMapToPublicationResults() {
+        val expected = mapOf(
+            HostMetadataOverlay.Result.UNCHANGED to NativeLyricInfoPublisher.Result.PUBLISHED,
+            HostMetadataOverlay.Result.UNSUPPORTED to NativeLyricInfoPublisher.Result.APPEND_UNSUPPORTED,
+            HostMetadataOverlay.Result.FIELD_TOO_LARGE to NativeLyricInfoPublisher.Result.PAYLOAD_TOO_LARGE,
+            HostMetadataOverlay.Result.PARCEL_TOO_LARGE to NativeLyricInfoPublisher.Result.PAYLOAD_TOO_LARGE,
+            HostMetadataOverlay.Result.MEASUREMENT_FAILED to
+                NativeLyricInfoPublisher.Result.PARCEL_MEASUREMENT_FAILED
+        )
+        expected.forEach { (overlay, publication) ->
+            val policy = TrackGenerationPolicy()
+            val generation = policy.onTrackObserved(track)
+            assertEquals(
+                publication,
+                publishInPlace(policy, generation) { HostMetadataOverlay.Outcome(overlay) }
+            )
+        }
+        val policy = TrackGenerationPolicy()
+        val generation = policy.onTrackObserved(track)
+        assertEquals(
+            NativeLyricInfoPublisher.Result.COMMIT_FAILED,
+            publishInPlace(policy, generation) { error("bundle write threw") }
+        )
+    }
+
+    private fun publishInPlace(
+        policy: TrackGenerationPolicy,
+        generation: Long,
+        write: (String) -> HostMetadataOverlay.Outcome
+    ): NativeLyricInfoPublisher.Result = NativeLyricInfoPublisher.publishInPlace(
+        track = track,
+        lines = lines,
+        trackGeneration = generation,
+        generationPolicy = policy,
+        playerPackage = "com.test.player",
+        hostPackage = "com.test.player",
+        write = write
+    )
+
     private fun publish(fixture: Fixture): NativeLyricInfoPublisher.Result {
         val policy = TrackGenerationPolicy()
         val generation = policy.onTrackObserved(track)

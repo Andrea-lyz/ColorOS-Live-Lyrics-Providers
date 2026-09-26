@@ -60,9 +60,9 @@ TrackPlayer 的 titles-only 更新，不带封面 bitmap。这与 Salt 的
 （`player.isShowNotificationImage` → `updateNowPlayingMetadata({ artwork })` →
 TrackPlayer Glide 写入 `ALBUM_ART`）。蓝牙 `updateNowPlayingTitles` 只改标题，
 不带封面。Provider **不**做封面快照/URI 写回/HTTP。URI-only 是 Glide 完成前的
-原生第一帧。仅当 incoming 已有 bitmap 且为 HARDWARE 或边长大于 240px 时，用
-Canvas 画到 software `ARGB_8888`。随后用空 Builder 按类型复制 metadata（禁止
-`MediaMetadata.Builder(existing)`），再写 TITLE/ARTIST 和 `lyricInfo`。`setLyric`
+原生第一帧。4.1 起 TITLE/ARTIST 身份还原与 `lyricInfo` 都原地写进 LX 自己的 metadata
+对象，不复制 metadata、不重绘 Glide bitmap（见 `docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`；
+此前的 binder-safe 重绘只是为绕开复制时 512x512 → 1x1 的塌缩）。`setLyric`
 补写 session 时以 `MediaSession.controller.metadata` 为底，禁止用过期 URI-only
 快照盖掉 Glide 结果。通知栏封面开关关闭时，纯色是 LX 原生产物。
 
@@ -130,7 +130,7 @@ Track identity / generation（无蓝牙投影误换曲）
         ↓
 LYRIC_INFO_PUBLISHED / LX_FINAL_PUBLISHED
         ↓
-LX_ARTWORK_BINDER_SAFE reason=canvas-software（incoming 已有 Glide bitmap 时）
+ARTWORK_PROBE HOST_OUT album=WxH（与 HOST_IN 同一 bitmap，不是 1x1 / solid）
         ↓
 SystemUI NATIVE_LYRIC_RECEIVED artwork bitmap=WxH（parcel ≫ 12KB，不是 bitmap=null）
         ↓

@@ -279,17 +279,15 @@ class MetrolistPlayerHooker(private val hookContext: ProviderHookContext) {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
                     val platformTrack = MetrolistMediaSessionRegistry.trackFrom(incoming)
-                    var outgoing = incoming
-                    sessions.onHostMetadata(session, platformTrack, outgoing)
+                    // lyricInfo is appended into the host's own object; args[0] is never replaced.
+                    sessions.onHostMetadata(session, platformTrack, incoming)
                     hookedMusicService?.let { onMusicServiceEvents(it, drainPending = false) }
                     val hostTrack = generationPolicy.currentTrack
                     val overlayTrack = hostTrack ?: platformTrack ?: return@before
-                    attachPendingToHostMetadata(session, outgoing, overlayTrack)?.let {
-                        outgoing = it
-                    }
+                    attachPendingToHostMetadata(session, incoming, overlayTrack)
 
                     val snapshot = synchronized(publicationLock) { replaySnapshot }
-                    val incomingLyricInfo = outgoing.getString("lyricInfo")
+                    val incomingLyricInfo = incoming.getString("lyricInfo")
                     val alreadyOwned = MetrolistReplayPolicy.isModuleOwned(
                         incomingLyricInfo,
                         hostPackage
@@ -301,18 +299,17 @@ class MetrolistPlayerHooker(private val hookContext: ProviderHookContext) {
                             hostTrack,
                             generationPolicy.generation,
                             snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
-                            MetrolistMetadataArtwork.isReadyForLyricInfo(outgoing),
+                            MetrolistMetadataArtwork.isReadyForLyricInfo(incoming),
                             incomingLyricInfo
                         )
                     ) {
-                        MetrolistNativePublisher.buildReplayMetadata(
-                            outgoing,
+                        MetrolistNativePublisher.appendReplayLyricInfo(
+                            incoming,
                             snapshot!!,
                             generationPolicy,
                             hostPackage
-                        ).second?.let { outgoing = it }
+                        )
                     }
-                    if (outgoing !== incoming) args[0] = outgoing
                 }
             }
 
@@ -425,33 +422,34 @@ class MetrolistPlayerHooker(private val hookContext: ProviderHookContext) {
         }
     }
 
+    /** Appends a pending publication into [incoming] itself; returns true when attached. */
     private fun attachPendingToHostMetadata(
         session: MediaSession,
         incoming: MediaMetadata,
         resolvedTrack: TrackIdentity
-    ): MediaMetadata? {
-        val pending = pendingStore.peek() ?: return null
-        if (!MetrolistMetadataArtwork.isReadyForLyricInfo(incoming)) return null
+    ): Boolean {
+        val pending = pendingStore.peek() ?: return false
+        if (!MetrolistMetadataArtwork.isReadyForLyricInfo(incoming)) return false
         val generation = generationPolicy.generation
         val currentTrack = generationPolicy.currentTrack ?: resolvedTrack.takeUnless { it.isBlank }
-        if (currentTrack == null) return null
+        if (currentTrack == null) return false
         if (!MetrolistLyricDecoder.matchesTrackIdentity(pending.capturedTrack, currentTrack)) {
-            return null
+            return false
         }
-        if (!generationController.acceptsPublication(currentTrack, generation)) return null
+        if (!generationController.acceptsPublication(currentTrack, generation)) return false
         val selected = sessions.selectUnique(currentTrack)
-        if (selected !== session && selected != null) return null
+        if (selected !== session && selected != null) return false
 
         val bound = pending.boundTo(currentTrack)
         val snapshot = MetrolistReplaySnapshot(WeakReference(session), currentTrack, generation, bound)
-        val (result, patched) = MetrolistNativePublisher.buildReplayMetadata(
+        val result = MetrolistNativePublisher.appendReplayLyricInfo(
             metadata = incoming,
             snapshot = snapshot,
             generationPolicy = generationPolicy,
             hostPackage = hostPackage
         )
-        if (!result.isPublished || patched == null) return null
-        if (!pendingStore.takeIfSame(pending)) return null
+        if (!result.isPublished) return false
+        if (!pendingStore.takeIfSame(pending)) return false
 
         synchronized(publicationLock) {
             replaySnapshot = snapshot
@@ -466,7 +464,7 @@ class MetrolistPlayerHooker(private val hookContext: ProviderHookContext) {
         )
         logPublicationResult("PENDING_DRAINED", generation)
         logPublicationResult(result.name, generation)
-        return patched
+        return true
     }
 
     private fun drainPendingPublication() {

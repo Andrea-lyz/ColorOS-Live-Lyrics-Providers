@@ -9,7 +9,7 @@ package io.github.andrealtb.coloroslyrics.provider.core.publisher
 import android.media.MediaMetadata
 import android.os.Parcel
 
-/** Binder-size fail-open guard shared by official-append metadata publishers. */
+/** Binder-size fail-open guard shared by lyricInfo metadata publishers. */
 object MetadataParcelGuard {
     enum class Result {
         SAFE,
@@ -17,20 +17,6 @@ object MetadataParcelGuard {
         PARCEL_TOO_LARGE,
         MEASUREMENT_FAILED
     }
-
-    fun assess(metadata: MediaMetadata, lyricInfo: String): Result {
-        if (lyricInfo.length > NativeLyricInfoPublisher.MAX_LYRIC_FIELD_CHARS) {
-            return Result.FIELD_TOO_LARGE
-        }
-        val parcelBytes = measureParcelBytes(metadata) ?: return Result.MEASUREMENT_FAILED
-        return assessSizes(lyricInfo.length, parcelBytes)
-    }
-
-    fun acceptOrOriginal(
-        original: MediaMetadata,
-        candidate: MediaMetadata,
-        lyricInfo: String
-    ): MediaMetadata = if (assess(candidate, lyricInfo) == Result.SAFE) candidate else original
 
     internal fun assessSizes(fieldChars: Int, parcelBytes: Int?): Result {
         if (fieldChars > NativeLyricInfoPublisher.MAX_LYRIC_FIELD_CHARS) {
@@ -43,7 +29,7 @@ object MetadataParcelGuard {
         return Result.SAFE
     }
 
-    private fun measureParcelBytes(metadata: MediaMetadata): Int? {
+    internal fun measureParcelBytes(metadata: MediaMetadata): Int? {
         var parcel: Parcel? = null
         return try {
             parcel = Parcel.obtain()

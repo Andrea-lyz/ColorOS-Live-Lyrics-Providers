@@ -123,13 +123,13 @@ class NeteasePlayerHooker(
                     if (NeteaseLyricInfoPublisher.isSelfPublishing()) return@before
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val metadata = args.getOrNull(0) as? MediaMetadata ?: return@before
-                    val prepared = NeteaseLyricInfoPublisher.prepareHostMetadata(
+                    // lyricInfo is appended into NetEase's own object; args[0] is never replaced.
+                    NeteaseLyricInfoPublisher.prepareHostMetadata(
                         session,
                         metadata,
                         hostPackage
                     )
-                    args[0] = prepared
-                    observeMetadata(prepared, profile)
+                    observeMetadata(metadata, profile)
                 }
             }
         }.onFailure {

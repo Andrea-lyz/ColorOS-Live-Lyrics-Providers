@@ -18,8 +18,8 @@
   `UNSYNCEDLYRICS` / `USLT`。无时间戳文本不写 `lyricInfo`。
 - 本切片不恢复词幕在线搜索、`PowerampSaltLyricBridge` 或 v4 广播。
 - 主 MediaSession tag 为 `"Poweramp"`；`"CastMediaSession"` 隔离。
-- `lyricInfo` 经空 Builder 全量拷贝后由 `NativeLyricInfoPublisher` 写入。禁止
-  `MediaMetadata.Builder(existing)`。切歌第一帧是 `android.resource` 占位 URI +
+- `lyricInfo` 由 `NativeLyricInfoPublisher.publishToHostMetadata` 原地追加进宿主 metadata，
+  不复制、不重绘封面（4.1 起，见 `docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`）。切歌第一帧是 `android.resource` 占位 URI +
   空 bitmap，必须等到第二帧真实 `ALBUM_ART` 再叠加。
 - 锁屏翻译按钮走公开 `ACTION_TOGGLE_TRANSLATION`
   （`PlaybackStateTranslationToggle.prependPublicAction`）。改写 host
@@ -66,7 +66,7 @@ Poweramp 切歌立刻 `ALBUM_ART=null` 并写入 `android.resource://.../drawabl
 - URI-only（含 `android.resource` / `content://` 占位）不得叠加 `lyricInfo`。
 - 无任何封面 URI 时允许发布（原生无封面）。
 - pending 歌词在第二帧 bitmap 到达时附着到同一次 host `setMetadata`。
-- 已有 bitmap 且为 HARDWARE 或边长 >240px 时 Canvas 画到 software ARGB_8888。
+- 宿主 bitmap 原样保留，不做 software 重绘（4.1 起）。
 - 不 HTTP 拉封面、不 LRU 快照、不发明封面。
 
 ## Bridge 登记

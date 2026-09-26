@@ -55,6 +55,23 @@ class KuGouMetadataIdentityPolicyTest {
     }
 
     @Test
+    fun hyphenatedNameInsideArtistListIsNotAnArtistTitleSplit() {
+        assertNull(
+            KuGouMetadataIdentityPolicy.carLyricDerivedIdentity(
+                "希望有羽毛和翅膀",
+                "知更鸟、HOYO-MiX、Chevy"
+            )
+        )
+        val carLyric = KuGouMetadataIdentityPolicy.carLyricDerivedIdentity(
+            "我想要看见你笑着一直向前奔跑",
+            "知更鸟、HOYO-MiX、Chevy-希望有羽毛和翅膀"
+        )
+        assertNotNull(carLyric)
+        assertEquals("希望有羽毛和翅膀", carLyric!!.realTitle)
+        assertEquals("知更鸟、HOYO-MiX、Chevy", carLyric.realArtist)
+    }
+
+    @Test
     fun keepsStableMetadataUntouched() {
         assertNull(KuGouMetadataIdentityPolicy.carLyricDerivedIdentity("Good Times", "Lukas Graham"))
         assertNull(

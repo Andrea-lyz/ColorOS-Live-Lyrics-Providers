@@ -7,12 +7,7 @@
 package io.github.andrealtb.coloroslyrics.provider.apple
 
 import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Rect
 import android.media.MediaMetadata
-import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
-import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
 
 internal val APPLE_ARTWORK_BITMAP_KEYS = arrayOf(
     MediaMetadata.METADATA_KEY_ART,
@@ -27,27 +22,13 @@ internal val APPLE_ARTWORK_URI_KEYS = arrayOf(
 )
 
 /**
- * Empty-Builder metadata copy for ColorOS. Never use MediaMetadata.Builder(existing).
+ * Read-only artwork readiness checks on host metadata.
+ *
+ * lyricInfo is appended into the host metadata itself through HostMetadataOverlay, so this
+ * Provider never copies, redraws or replaces an artwork lane; the cover SystemUI shows is exactly
+ * the one Apple Music published.
  */
 internal object AppleMetadataArtwork {
-    private val longKeys = setOf(
-        MediaMetadata.METADATA_KEY_DURATION,
-        MediaMetadata.METADATA_KEY_YEAR,
-        MediaMetadata.METADATA_KEY_TRACK_NUMBER,
-        MediaMetadata.METADATA_KEY_NUM_TRACKS,
-        MediaMetadata.METADATA_KEY_DISC_NUMBER,
-        MediaMetadata.METADATA_KEY_BT_FOLDER_TYPE,
-        "android.media.metadata.ADVERTISEMENT",
-        "android.media.metadata.DOWNLOAD_STATUS"
-    )
-    private val ratingKeys = setOf(
-        MediaMetadata.METADATA_KEY_RATING,
-        MediaMetadata.METADATA_KEY_USER_RATING
-    )
-
-    @Volatile
-    private var binderSafeLogged = false
-
     fun hasPlausibleBitmap(metadata: MediaMetadata?): Boolean {
         if (metadata == null) return false
         return APPLE_ARTWORK_BITMAP_KEYS.any { key ->
@@ -66,102 +47,5 @@ internal object AppleMetadataArtwork {
     fun isPlausibleBitmap(bitmap: Bitmap?): Boolean {
         if (bitmap == null || bitmap.isRecycled) return false
         return AppleArtworkPolicy.isPlausibleBitmapSize(bitmap.width, bitmap.height)
-    }
-
-    fun toBinderSafe(bitmap: Bitmap): Bitmap? {
-        if (!isPlausibleBitmap(bitmap)) return null
-        if (!AppleArtworkPolicy.shouldCopyForBinder(bitmap.config?.name, bitmap.width, bitmap.height)) {
-            return bitmap
-        }
-        val sample = AppleArtworkPolicy.sampleSize(bitmap.width, bitmap.height)
-        val width = (bitmap.width / sample).coerceAtLeast(1)
-        val height = (bitmap.height / sample).coerceAtLeast(1)
-        return runCatching {
-            val software = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(software)
-            val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-            canvas.drawBitmap(
-                bitmap,
-                Rect(0, 0, bitmap.width, bitmap.height),
-                Rect(0, 0, width, height),
-                paint
-            )
-            software
-        }.getOrNull()?.takeIf { isPlausibleBitmap(it) }
-    }
-
-    fun ensureBinderSafe(metadata: MediaMetadata): MediaMetadata {
-        var converted: Bitmap? = null
-        APPLE_ARTWORK_BITMAP_KEYS.forEach { key ->
-            val bitmap = metadata.getBitmap(key) ?: return@forEach
-            if (!AppleArtworkPolicy.shouldCopyForBinder(
-                    bitmap.config?.name,
-                    bitmap.width,
-                    bitmap.height
-                )
-            ) {
-                return@forEach
-            }
-            converted = toBinderSafe(bitmap) ?: converted
-        }
-        val safe = converted ?: return metadata
-        if (!binderSafeLogged) {
-            binderSafeLogged = true
-            StructuredDiagnostics.logInfo(
-                DiagnosticEvent(
-                    component = ApplePlayerConstants.COMPONENT,
-                    area = "artwork",
-                    event = "APPLE_ARTWORK_BINDER_SAFE",
-                    reason = "canvas-software"
-                )
-            )
-        }
-        return newPreservingBuilder(metadata, includeArtwork = false)
-            .putBitmap(MediaMetadata.METADATA_KEY_ART, safe)
-            .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, safe)
-            .apply {
-                if (metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON) != null) {
-                    putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, safe)
-                }
-            }
-            .build()
-    }
-
-    fun prepareForLyricInfo(incoming: MediaMetadata): MediaMetadata = ensureBinderSafe(incoming)
-
-    fun newPreservingBuilder(
-        metadata: MediaMetadata,
-        includeArtwork: Boolean = true
-    ): MediaMetadata.Builder {
-        val builder = MediaMetadata.Builder()
-        metadata.keySet().forEach { key ->
-            if (!includeArtwork && key in APPLE_ARTWORK_BITMAP_KEYS) return@forEach
-            runCatching {
-                when {
-                    key in APPLE_ARTWORK_BITMAP_KEYS -> {
-                        val bitmap = metadata.getBitmap(key)
-                        if (bitmap != null && !bitmap.isRecycled) {
-                            builder.putBitmap(key, bitmap)
-                        }
-                    }
-                    key in longKeys -> builder.putLong(key, metadata.getLong(key))
-                    key in ratingKeys -> metadata.getRating(key)?.let {
-                        builder.putRating(key, it)
-                    }
-                    else -> {
-                        val text = runCatching { metadata.getText(key) }.getOrNull()
-                        val bitmap = runCatching { metadata.getBitmap(key) }.getOrNull()
-                        val rating = runCatching { metadata.getRating(key) }.getOrNull()
-                        when {
-                            text != null -> builder.putText(key, text)
-                            bitmap != null && !bitmap.isRecycled -> builder.putBitmap(key, bitmap)
-                            rating != null -> builder.putRating(key, rating)
-                            else -> builder.putLong(key, metadata.getLong(key))
-                        }
-                    }
-                }
-            }
-        }
-        return builder
     }
 }

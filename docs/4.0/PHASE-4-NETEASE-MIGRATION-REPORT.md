@@ -63,8 +63,8 @@
   `yrcTranslateLyric`（YRC 头则走 `YrcParser`，否则 LRC）再回退 `lrcTranslateLyric`。
   对齐与 QQ 相同：行起点 + 首词双锚点、邻居间距/2、上限 1500 ms、消费 `//`。
 - 身份：`musicInfo.getFilterMusicId() == lyricInfo.getMusicId()`，否则不追加。
-- 空 typed `MediaMetadata.Builder()` 全量拷贝（禁止 `Builder(existing)`）。
-  HARDWARE 或边长 >240px 的 bitmap 用 Canvas 重绘为 software ARGB_8888。
+- `lyricInfo` 原地追加进宿主 metadata，不复制、不重绘封面（4.1 起，见 `docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`）。
+  继承自上一曲的模块 payload 原地清为 `""`；官方字段取自网易云自己写在该对象上的值。
   不 HTTP 拉封面、不 snapshot、不发明封面。
 - 调试开关复用 `provider-core`：`ProviderId.NETEASE`、prefs
   `netease_provider_debug_prefs`、`MODE_WORLD_READABLE` 写入 + Yuki
@@ -85,7 +85,7 @@
         └─ 修改版 9.0.40 :play：MEDIA_ID → eAPI fetch
                ↓ musicId + generation 复核 → YrcParser / LrcParser + 双锚点翻译合并
 平台 MediaSession replay / 后续宿主 setMetadata overlay
-        ↓ 空 Builder 拷贝；官方追加或完整构造 lyricInfo
+        ↓ 原地写入官方追加或完整构造的 lyricInfo（不复制 metadata）
         ↓ 标题不符的旧模块 payload（append / constructed）先清除
         ↓ 同曲 onTrackChanged 保留 publication
 NATIVE_LYRICINFO_PATCHED / LYRIC_INFO_PATCHED
