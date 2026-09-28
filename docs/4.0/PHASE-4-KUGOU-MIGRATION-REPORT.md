@@ -19,12 +19,16 @@
 - 官方 `lyricInfo` 经 `KuGouOfficialLyricInfoEncoder` 就地修补
   （`source=kugou-internal`）。不要改成 `NativeLyricInfoPublisher` / Bridge
   envelope，也不要发送 v4 广播或挂载词幕。
-- 保留官方 `id` / `songId` / `lyricType` / `lyric` / `noLyric`；补
-  `rawLyric`、`translationLyric`、`songName`、`artist`、`sessionGeneration`。
-  Type 0 罗马音不得进入 `translationLyric`。
+- 保留官方 `id` / `songId` / `lyricType`；补 `rawLyric`、`translationLyric`、
+  `songName`、`artist`、`sessionGeneration`。Type 0 罗马音不得进入 `translationLyric`。
+- `lyric` 与 `rawLyric` 由同一组清洗后的行生成（2026-09-26 起）：SystemUI 按 `lyric`
+  排版、Bridge 画 `rawLyric`，沿用官方 LRC 时其开头「歌名 - 歌手」行会成为 Bridge
+  无法绘制的空白占位行（`slot-mismatch`）。
+- Lite 车载歌词身份恢复不在歌手列表内的连字符名字（如 `HOYO-MiX`）处拆分
+  「歌手-歌名」；否则 8 字以上中文真实标题会被拆成错误标题并连带误判歌词文件为 foreign。
 - 不注入公开 `ACTION_TOGGLE_TRANSLATION`；翻译按钮仍走 5 槽收藏覆盖。
-- 空 typed `MediaMetadata.Builder()` 全量拷贝（禁止 `Builder(existing)`）。
-  HARDWARE 或边长 >240px 的 bitmap 用 Canvas 重绘为 software ARGB_8888。
+- `lyricInfo` 原地追加进宿主 metadata，不复制、不重绘封面（4.1 起，见 `docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`）。
+  官方字段取自酷狗自己写在该对象上的 `lyricInfo`。
   不 HTTP 拉封面、不 snapshot、不发明封面。只叠加主 session tag
   `KGMediaSession`。
 - 调试开关复用 `provider-core`：`ProviderId.KUGOU`、prefs
@@ -45,10 +49,13 @@ TRACK_OBSERVED (MediaSession#setMetadata，身份已消毒)
 LyricManager#(String, boolean) afterHook
         ↓ LyricData getters / Lite z,o,p,v,w,t,u / 字段 f,d,e,i,j,k,l
         ↓ 否则读 KRC/LRC 文件（parser-krc，仅 type=1 翻译）
-        ↓ foreign-file / leading-metadata 拒绝
+        ↓ 对当前曲 foreign（file / leading-metadata）则留在待定队列，不再丢弃
+        ↓ 绑定：identity / generation 命中，或文件名 / 首行正向命中当前曲（跨代，
+          覆盖切歌前几毫秒开始的加载与预取），或逐行文本 / 时间与酷狗官方 lyricInfo
+          一致（official-content，覆盖文件名与标题不符的歌；2026-09-26，待设备验证）
         ↓ LyricsCache
 NATIVE_METADATA_INTERCEPTED (KGMediaSession setMetadata)
-        ↓ 空 Builder 拷贝 + 修补 lyricInfo
+        ↓ 原地修补 lyricInfo（不复制 metadata）
         ↓ 歌词晚到时每代最多 replay 一次
 NATIVE_LYRICINFO_PATCHED
 ```

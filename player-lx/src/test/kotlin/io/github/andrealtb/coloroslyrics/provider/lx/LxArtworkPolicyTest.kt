@@ -7,23 +7,10 @@
 package io.github.andrealtb.coloroslyrics.provider.lx
 
 import org.junit.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class LxArtworkPolicyTest {
-
-    @Test
-    fun hardwareOrOversizedGlideBitmapsMustBeCopiedForBinder() {
-        assertTrue(LxArtworkPolicy.shouldCopyForBinder("HARDWARE", 512, 512))
-        assertTrue(LxArtworkPolicy.shouldCopyForBinder("ARGB_8888", 512, 512))
-        assertFalse(LxArtworkPolicy.shouldCopyForBinder("ARGB_8888", 240, 240))
-        assertFalse(LxArtworkPolicy.shouldCopyForBinder("HARDWARE", 1, 1))
-        assertEquals(4, LxArtworkPolicy.sampleSize(512, 512))
-        assertEquals(1, LxArtworkPolicy.sampleSize(240, 240))
-        assertTrue(LxArtworkPolicy.isPlausibleBitmapSize(300, 300))
-        assertFalse(LxArtworkPolicy.isPlausibleBitmapSize(1, 1))
-    }
 
     @Test
     fun remoteUriOnlyMetadataWaitsForHostBitmap() {

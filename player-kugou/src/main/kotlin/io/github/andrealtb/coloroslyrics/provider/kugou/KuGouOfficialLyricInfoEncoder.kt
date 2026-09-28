@@ -11,17 +11,18 @@ import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import java.util.Locale
 
 /**
- * Patches KuGou's own lyricInfo JSON. Official `id` / `songId` / `lyricType` /
- * `lyric` / `noLyric` stay in place; `rawLyric` and `translationLyric` are added.
- * Romaji must never enter `translationLyric`. This is not a Bridge envelope.
+ * Patches KuGou's own lyricInfo JSON. Official `id` / `songId` / `lyricType` stay in
+ * place; `lyric`, `rawLyric` and `translationLyric` are built from the same sanitized
+ * lines. SystemUI lays out its rows from `lyric` while Bridge draws `rawLyric`, so a row
+ * that only KuGou's own `lyric` carries (its leading "title - artist" line, promo lines)
+ * would stay an empty, space-taking slot. Romaji must never enter `translationLyric`.
+ * This is not a Bridge envelope.
  */
 object KuGouOfficialLyricInfoEncoder {
     const val SOURCE = KuGouPlayerConstants.SOURCE_INTERNAL
     private val WHITESPACE_REGEX = Regex("\\s+")
     private val TIMED_LRC_REGEX =
         Regex("""[\[<][0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?[\]>]""")
-    private val LRC_LINE_TIME_REGEX =
-        Regex("""^\[([0-9]{1,3}):([0-9]{2})(?:[.:]([0-9]{1,3}))?]""")
     private val JSON_STRING_FIELD =
         Regex(""""([^"\\]+)":\s*"((?:\\.|[^"\\])*)"""")
 
@@ -47,11 +48,6 @@ object KuGouOfficialLyricInfoEncoder {
         val rawLyric = toEnhancedLrc(track, sanitized)
         val translationLyric = toTranslationLrc(sanitized)
         val existing = existingLyricInfo?.trim().orEmpty()
-        val officialLyric = extractJsonString(existing, "lyric")
-            ?.takeIf { it.isNotBlank() }
-            ?.let { stripPromoLinesFromLrc(it) }
-            ?.takeIf { isNonDecreasingTimedLrc(it) }
-            ?: plainLyric
         val songId = firstNonBlank(
             extractJsonString(existing, "songId"),
             track.id
@@ -65,7 +61,7 @@ object KuGouOfficialLyricInfoEncoder {
             "songName" to jsonQuote(track.title.orEmpty()),
             "artist" to jsonQuote(track.artist.orEmpty()),
             "lyricType" to lyricType,
-            "lyric" to jsonQuote(officialLyric),
+            "lyric" to jsonQuote(plainLyric),
             "noLyric" to "false",
             "provider" to jsonQuote(hostPackage),
             "source" to jsonQuote(SOURCE),
@@ -83,7 +79,7 @@ object KuGouOfficialLyricInfoEncoder {
                 prefix = "{",
                 postfix = "}"
             ) { "\"${it.key}\":${it.value}" },
-            plainLyric = officialLyric,
+            plainLyric = plainLyric,
             rawLyric = rawLyric,
             translationLyric = translationLyric
         )
@@ -106,17 +102,6 @@ object KuGouOfficialLyricInfoEncoder {
         } else {
             withoutPromo
         }
-    }
-
-    private fun stripPromoLinesFromLrc(lyric: String): String {
-        val kept = lyric.lineSequence()
-            .filter { line ->
-                val text = line.substringAfter(']', line)
-                !KuGouConceptLyricSanitizePolicy.shouldExcludeTimedPromoLine(text) &&
-                    !KuGouConceptLyricSanitizePolicy.shouldExcludeTimedPromoLine(line)
-            }
-            .joinToString("\n")
-        return if (lyric.endsWith("\n")) kept + "\n" else kept
     }
 
     private fun toEnhancedLrc(track: TrackIdentity, lines: List<RichLyricLine>): String {
@@ -198,28 +183,6 @@ object KuGouOfficialLyricInfoEncoder {
         text.replace('\r', ' ').replace('\n', ' ').replace(WHITESPACE_REGEX, " ").trim()
 
     private fun containsTimedLrc(value: String): Boolean = TIMED_LRC_REGEX.containsMatchIn(value)
-
-    private fun isNonDecreasingTimedLrc(value: String): Boolean {
-        var previousTime = -1L
-        var timedLines = 0
-        value.lineSequence().forEach { line ->
-            val match = LRC_LINE_TIME_REGEX.find(line.trim()) ?: return@forEach
-            val minutes = match.groupValues[1].toLongOrNull() ?: return false
-            val seconds = match.groupValues[2].toLongOrNull() ?: return false
-            val fraction = match.groupValues[3]
-            val millis = when (fraction.length) {
-                0 -> 0L
-                1 -> fraction.toLongOrNull()?.times(100L) ?: return false
-                2 -> fraction.toLongOrNull()?.times(10L) ?: return false
-                else -> fraction.take(3).toLongOrNull() ?: return false
-            }
-            val currentTime = minutes * 60_000L + seconds * 1_000L + millis
-            if (previousTime > currentTime) return false
-            previousTime = currentTime
-            timedLines++
-        }
-        return timedLines > 0
-    }
 
     private fun formatLrcTime(ms: Long): String {
         val min = ms / 60000

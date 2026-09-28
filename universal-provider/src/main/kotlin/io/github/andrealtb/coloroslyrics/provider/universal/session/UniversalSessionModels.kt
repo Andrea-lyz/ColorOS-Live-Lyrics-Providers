@@ -56,7 +56,11 @@ data class ResolvedSession(
     val observation: SessionObservation,
     val descriptor: TrackDescriptor,
     val demuxSource: String,
-    val identityComplete: Boolean
+    val identityComplete: Boolean,
+    /** [TrackIdentityResolver] decision for the latest payload; `standard` unless a torn payload was gated. */
+    val identityGate: String = TrackIdentityResolver.GATE_STANDARD,
+    /** When a held partial identity change may be accepted without another metadata callback. */
+    val identitySettleAtElapsedMs: Long? = null
 )
 
 object PlaybackStates {

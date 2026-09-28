@@ -10,11 +10,14 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.HostMetadataOverlay
 import java.lang.ref.WeakReference
 
 /**
- * Overlays lyricInfo onto NetEase's platform MediaSession writes. Artwork
- * copies through an empty typed Builder. At most one replay per generation.
+ * Overlays lyricInfo onto NetEase's platform MediaSession writes. The payload is
+ * appended into NetEase's metadata object itself (HostMetadataOverlay), so artwork
+ * and every other host field reach SystemUI exactly as NetEase published them.
+ * At most one replay per generation, re-sending that same host object.
  */
 object NeteaseLyricInfoPublisher {
     private val lock = Any()
@@ -72,31 +75,29 @@ object NeteaseLyricInfoPublisher {
         session: MediaSession?,
         metadata: MediaMetadata,
         hostPackage: String
-    ): MediaMetadata {
-        val prepared = synchronized(lock) {
-            val currentMetadata = clearStaleModulePayload(metadata)
+    ) {
+        synchronized(lock) {
+            val hostLyricInfo = hostBaseLyricInfo(metadata)
             if (session != null) {
                 lastSession = WeakReference(session)
             }
-            lastHostMetadata = currentMetadata
+            lastHostMetadata = metadata
             val publication = latestPublication
             when {
-                publication == null -> {
-                    logOverlaySkipped(currentMetadata, reason = "no-publication", generation = null)
-                    currentMetadata
-                }
-                !matchesCurrentTrack(currentMetadata, publication.track) -> {
+                publication == null ->
+                    logOverlaySkipped(hostLyricInfo, reason = "no-publication", generation = null)
+
+                !matchesCurrentTrack(metadata, publication.track, hostLyricInfo) ->
                     logOverlaySkipped(
-                        currentMetadata,
+                        hostLyricInfo,
                         reason = "identity-mismatch",
                         generation = publication.generation,
                         extra = "pubId=${publication.track.id.orEmpty().take(32)} " +
                             "pubTitle=${publication.track.title.orEmpty().take(48)}"
                     )
-                    currentMetadata
-                }
+
                 else -> runCatching {
-                    overlay(currentMetadata, publication, hostPackage)
+                    overlay(metadata, publication, hostPackage, hostLyricInfo)
                 }.onFailure { error ->
                     NeteaseDiagnostics.error(
                         area = "publisher",
@@ -104,10 +105,9 @@ object NeteaseLyricInfoPublisher {
                         message = error.message,
                         throwable = error
                     )
-                }.getOrNull() ?: currentMetadata
+                }
             }
         }
-        return prepared
     }
 
     fun replayIfNeeded(hostPackage: String): Boolean {
@@ -137,7 +137,8 @@ object NeteaseLyricInfoPublisher {
                 )
                 return false
             }
-            if (!matchesCurrentTrack(metadata, publication.track)) {
+            val hostLyricInfo = hostBaseLyricInfo(metadata)
+            if (!matchesCurrentTrack(metadata, publication.track, hostLyricInfo)) {
                 NeteaseDiagnostics.info(
                     area = "publisher",
                     event = "REPLAY_SKIPPED",
@@ -147,8 +148,8 @@ object NeteaseLyricInfoPublisher {
                 )
                 return false
             }
-            val patched = runCatching {
-                overlay(metadata, publication, hostPackage)
+            val result = runCatching {
+                overlay(metadata, publication, hostPackage, hostLyricInfo)
             }.onFailure { error ->
                 NeteaseDiagnostics.error(
                     area = "publisher",
@@ -157,19 +158,17 @@ object NeteaseLyricInfoPublisher {
                     throwable = error
                 )
             }.getOrNull()
-            if (patched == null) {
+            if (result == null || !result.isApplied) {
                 NeteaseDiagnostics.info(
                     area = "publisher",
                     event = "REPLAY_SKIPPED",
                     generation = publication.generation,
                     session = publication.track.id,
-                    reason = "overlay-null"
+                    reason = if (result == null) "overlay-null" else "append-" + result.name
                 )
                 return false
             }
-            if (patched.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO) ==
-                metadata.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO)
-            ) {
+            if (result == HostMetadataOverlay.Result.UNCHANGED) {
                 replayedGeneration = publication.generation
                 NeteaseDiagnostics.info(
                     area = "publisher",
@@ -181,7 +180,7 @@ object NeteaseLyricInfoPublisher {
                 return false
             }
             replayedGeneration = publication.generation
-            ReplayRequest(session, patched, publication.generation)
+            ReplayRequest(session, metadata, publication.generation)
         }
         return runCatching {
             selfPublishing = true
@@ -216,12 +215,18 @@ object NeteaseLyricInfoPublisher {
         }
     }
 
+    /**
+     * Appends the encoded payload into [metadata] itself. [hostLyricInfo] is the lyricInfo
+     * NetEase put on this object after stale clearing, never a payload this hook wrote into it.
+     * Returns null when nothing could be encoded.
+     */
     internal fun overlay(
         metadata: MediaMetadata,
         publication: NeteasePublication,
-        hostPackage: String
-    ): MediaMetadata? {
-        val existing = metadata.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO)
+        hostPackage: String,
+        hostLyricInfo: String?
+    ): HostMetadataOverlay.Result? {
+        val existing = hostLyricInfo
         val encoded = runCatching {
             NeteaseLyricInfoPayloadEncoder.encode(
                 track = publication.track,
@@ -256,10 +261,21 @@ object NeteaseLyricInfoPublisher {
         if (fingerprint == lastPublishedFingerprint &&
             metadata.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO) == encoded.value
         ) {
-            return metadata
+            return HostMetadataOverlay.Result.UNCHANGED
+        }
+        val result = HostMetadataOverlay.putLyricInfo(metadata, encoded.value).result
+        if (!result.isApplied) {
+            NeteaseDiagnostics.info(
+                area = "publisher",
+                event = "OVERLAY_SKIPPED",
+                generation = publication.generation,
+                session = publication.track.id,
+                reason = "append-" + result.name,
+                payloadChars = encoded.value.length
+            )
+            return result
         }
         lastPublishedFingerprint = fingerprint
-        val patched = NeteaseMetadataCopy.copyWithLyricInfo(metadata, encoded.value)
         NeteaseDiagnostics.info(
             area = "publisher",
             event = "LYRIC_INFO_PATCHED",
@@ -271,12 +287,28 @@ object NeteaseLyricInfoPublisher {
                 "translationChars=${encoded.translationLyric.length} " +
                 "officialLyricRepair=${encoded.repairedOfficialLyric}"
         )
-        return patched
+        return result
     }
 
-    private fun clearStaleModulePayload(metadata: MediaMetadata): MediaMetadata {
-        val existing = metadata.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO)
-        if (!NeteaseLyricInfoPayloadEncoder.isModulePayload(existing)) return metadata
+    /**
+     * lyricInfo NetEase itself put on [metadata]. NetEase rebuilds metadata from the live
+     * controller copy and can inherit a module payload from the previous track; such a stale
+     * payload is cleared in place and reads as "". A payload this hook appended into the same
+     * object is ignored in favour of the value underneath it.
+     */
+    private fun hostBaseLyricInfo(metadata: MediaMetadata): String? {
+        val current = metadata.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO)
+        if (isStaleModulePayload(metadata, current)) {
+            logStaleCleared(current)
+            HostMetadataOverlay.clearLyricInfo(metadata)
+            return ""
+        }
+        val host = HostMetadataOverlay.hostLyricInfo(metadata)
+        return if (isStaleModulePayload(metadata, host)) "" else host
+    }
+
+    private fun isStaleModulePayload(metadata: MediaMetadata, existing: String?): Boolean {
+        if (!NeteaseLyricInfoPayloadEncoder.isModulePayload(existing)) return false
         val hostTrack = TrackIdentity(
             id = NeteaseMediaIdPolicy.normalize(
                 metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
@@ -291,10 +323,11 @@ object NeteaseLyricInfoPublisher {
                 metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE)
             )
         )
-        if (hostTrack.title.isNullOrBlank()) return metadata
-        if (NeteaseLyricInfoPayloadEncoder.isModulePayloadForTrack(existing, hostTrack)) {
-            return metadata
-        }
+        if (hostTrack.title.isNullOrBlank()) return false
+        return !NeteaseLyricInfoPayloadEncoder.isModulePayloadForTrack(existing, hostTrack)
+    }
+
+    private fun logStaleCleared(existing: String?) {
         NeteaseDiagnostics.info(
             area = "publisher",
             event = "STALE_LYRICINFO_CLEARED",
@@ -302,19 +335,17 @@ object NeteaseLyricInfoPublisher {
                 existing.orEmpty(),
                 "songId"
             ),
-            reason = "metadata-track-mismatch",
-            message = "hostIdentityPresent=${!hostTrack.isBlank}"
+            reason = "metadata-track-mismatch"
         )
-        return NeteaseMetadataCopy.copyWithLyricInfo(metadata, "")
     }
 
     private fun logOverlaySkipped(
-        metadata: MediaMetadata,
+        hostLyricInfo: String?,
         reason: String,
         generation: Long?,
         extra: String? = null
     ) {
-        val existing = metadata.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO).orEmpty()
+        val existing = hostLyricInfo.orEmpty()
         if (existing.isBlank() && reason == "no-publication") {
             val count = blankOverlayLogs.incrementAndGet()
             if (count > NeteasePlayerConstants.BLANK_OVERLAY_LOG_LIMIT) {
@@ -345,9 +376,9 @@ object NeteaseLyricInfoPublisher {
 
     internal fun matchesCurrentTrack(
         metadata: MediaMetadata,
-        track: TrackIdentity
+        track: TrackIdentity,
+        lyricInfo: String?
     ): Boolean {
-        val lyricInfo = metadata.getString(NeteasePlayerConstants.METADATA_KEY_LYRIC_INFO)
         val songId = NeteaseLyricInfoPayloadEncoder.extractJsonString(
             lyricInfo.orEmpty(),
             "songId"

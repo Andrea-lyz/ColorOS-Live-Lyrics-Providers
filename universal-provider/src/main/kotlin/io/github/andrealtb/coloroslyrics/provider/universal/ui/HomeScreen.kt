@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.github.andrealtb.coloroslyrics.provider.universal.UniversalAppIo
+import io.github.andrealtb.coloroslyrics.provider.universal.UniversalLyricHistory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,21 +66,16 @@ fun HomeScreen(
         else -> stringResource(R.string.lyric_status_fetching)
     }
 
-    var historyList by remember { mutableStateOf<List<HistoryEntry>>(emptyList()) }
+    var historyList by remember { mutableStateOf<List<UniversalLyricHistory.Entry>>(emptyList()) }
     val coverImage = remember(artworkBitmap) { artworkBitmap?.asImageBitmap() }
 
-    LaunchedEffect(currentTitle, currentArtist, lyricSource, lyricStatus) {
+    // system_server's rows also change when a skipped track's fetch finishes.
+    val serverHistory = UniversalLyricHistory.snapshotKeys.joinToString("\n") { snapshotMap[it].orEmpty() }
+    LaunchedEffect(currentTitle, currentArtist, lyricSource, lyricStatus, serverHistory) {
         historyList = withContext(UniversalAppIo.dispatcher) {
-            if (currentTitle.isNotBlank()) {
-                recordHistory(
-                    context,
-                    currentTitle,
-                    currentArtist,
-                    snapshotMap["lyricSource"].orEmpty().substringAfterLast('/'),
-                    snapshotMap["lyricStatus"].orEmpty().ifBlank { "fetching" }
-                )
-            }
-            loadHistory(context)
+            // Idempotent with SnapshotReceiver; recording here keeps the list in step with this snapshot.
+            UniversalLyricHistory.record(context, snapshotMap)
+            UniversalLyricHistory.load(context)
         }
     }
 
@@ -198,6 +194,16 @@ fun HomeScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (snapshotMap["lyricClockFallback"] == "true") {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(R.string.lyric_clock_fallback),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -314,6 +320,7 @@ fun HomeScreen(
                         val icon = when (entry?.status) {
                             "failed", "获取失败", "Fetch failed" -> Icons.Filled.Cancel
                             "noLyric", "纯音乐 / 已确认无词" -> Icons.Filled.MusicOff
+                            "pending", "fetching", "正在获取", "Fetching" -> Icons.Filled.Sync
                             else -> Icons.Filled.CheckCircle
                         }
                         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -403,53 +410,6 @@ fun HomeScreen(
     }
 }
 
-private data class HistoryEntry(
-    val title: String,
-    val artist: String,
-    val source: String,
-    val status: String
-) {
-    fun searchQuery(): String {
-        return listOf(title, artist).filter { it.isNotBlank() && it != "—" }.joinToString(" ")
-    }
-}
-
-private fun loadHistory(context: Context): List<HistoryEntry> {
-    val prefs = context.getSharedPreferences("universal_ui_history", Context.MODE_PRIVATE)
-    val raw = prefs.getString("ordered", "").orEmpty()
-    return raw.lines().filter { it.isNotBlank() }.map { line ->
-        val parts = line.split('\t')
-        if (parts.size >= 4) {
-            HistoryEntry(
-                title = parts[0],
-                artist = parts[1],
-                source = parts[2],
-                status = parts[3]
-            )
-        } else {
-            HistoryEntry(
-                title = parts.getOrElse(0) { "" },
-                artist = "",
-                source = parts.getOrElse(1) { "—" },
-                status = parts.getOrElse(2) { "" }
-            )
-        }
-    }
-}
-
-private fun recordHistory(context: Context, title: String, artist: String, source: String, status: String) {
-    val formattedSource = formatSourceName(context, source)
-    val prefs = context.getSharedPreferences("universal_ui_history", Context.MODE_PRIVATE)
-    val safeArtist = artist.ifBlank { "" }
-    val entry = "$title\t$safeArtist\t$formattedSource\t$status"
-    val previous = prefs.getString("ordered", "").orEmpty()
-    val rows = previous.lines().filter { it.isNotBlank() }.toMutableList()
-    rows.removeAll { it.substringBefore('\t') == title }
-    rows.add(0, entry)
-    val ordered = rows.take(5).joinToString("\n")
-    if (ordered != previous) prefs.edit().putString("ordered", ordered).apply()
-}
-
 private fun lookupArtist(context: Context, title: String): String {
     val prefix = title.trim().lowercase() + "|"
     val prefs = context.getSharedPreferences("universal_manual_bindings", Context.MODE_PRIVATE)
@@ -465,17 +425,18 @@ private fun historyStatusLabel(status: String): String {
         "success", "已获取", "Fetched" -> stringResource(R.string.lyric_status_success)
         "noLyric", "纯音乐 / 已确认无词", "Instrumental / confirmed no lyrics" -> stringResource(R.string.lyric_status_none)
         "failed", "获取失败", "Fetch failed" -> stringResource(R.string.lyric_status_failed)
-        "fetching", "正在获取", "Fetching" -> stringResource(R.string.lyric_status_fetching)
+        "pending", "fetching", "正在获取", "Fetching" -> stringResource(R.string.lyric_status_fetching)
         else -> status.ifBlank { stringResource(R.string.lyric_status_fetching) }
     }
 }
 
+// Older history rows stored the label localized at record time; map those back as well.
 private fun formatSourceName(context: Context, raw: String): String {
     val clean = raw.trim().lowercase()
     return when {
-        clean.contains("manual") -> context.getString(R.string.source_manual)
+        clean.contains("manual") || clean.contains("手动") -> context.getString(R.string.source_manual)
         clean.contains("qq") -> context.getString(R.string.source_qq)
-        clean.contains("netease") -> context.getString(R.string.source_netease)
+        clean.contains("netease") || clean.contains("网易") -> context.getString(R.string.source_netease)
         clean.contains("apple") -> context.getString(R.string.source_apple)
         clean == "none" || clean == "—" -> "—"
         else -> raw.ifBlank { "—" }

@@ -17,7 +17,8 @@
   时长是秒，`-1` 未知）。禁止用平台 `MediaSession#setMetadata` 第一帧开搜。
 - 独立 `MetrolistLyricsFetcher` 按宿主 DataStore 顺序请求 BetterLyrics /
   LrcLib / KuGou。不要反射宿主 `LyricsHelper.getLyrics`。
-- `lyricInfo` 经空 Builder 全量拷贝后由 `NativeLyricInfoPublisher` 写入。
+- `lyricInfo` 由 `NativeLyricInfoPublisher.publishToHostMetadata` 原地追加进宿主 metadata，
+  不复制、不重绘封面（4.1 起，见 `docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`）。
   Coil 封面 URI-only 不得叠加；bitmap 到达时附着到同一次 host `setMetadata`。
   不要从 `setMetadata` before-hook 按 registry 快照 drain pending。
 - 不支持翻译，不注入 `ACTION_TOGGLE_TRANSLATION`。

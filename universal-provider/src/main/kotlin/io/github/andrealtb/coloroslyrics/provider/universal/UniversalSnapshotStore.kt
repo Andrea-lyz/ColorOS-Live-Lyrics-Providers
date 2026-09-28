@@ -18,6 +18,7 @@ internal object UniversalSnapshotStore {
     const val EXTRA_TRANSLATION_ENABLED = "extra_translation_enabled"
     const val EXTRA_RAW_LYRIC_ENABLED = "extra_raw_lyric_enabled"
     const val EXTRA_DEBUG_ENABLED = "extra_debug_enabled"
+    const val EXTRA_CLOCK_LINE_FALLBACK_ENABLED = "extra_clock_line_fallback_enabled"
     const val EXTRA_BOUND_PACKAGES = "extra_bound_packages"
     const val EXTRA_OWNER_PACKAGE = "extra_owner_package"
     const val EXTRA_GENERATION = "extra_generation"

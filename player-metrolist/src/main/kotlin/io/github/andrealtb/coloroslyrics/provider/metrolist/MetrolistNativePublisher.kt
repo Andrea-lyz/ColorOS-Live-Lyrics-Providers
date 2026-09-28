@@ -50,11 +50,8 @@ object MetrolistNativePublisher {
             return NativeLyricInfoPublisher.Result.STALE_GENERATION
         }
 
-        val prepared = MetrolistMetadataArtwork.prepareForLyricInfo(live)
-        val builder = MetrolistMetadataArtwork.newPreservingBuilder(prepared)
-        val result = NativeLyricInfoPublisher.publishToPlatformMetadata(
-            builder = builder,
-            originalMetadata = prepared,
+        val result = NativeLyricInfoPublisher.publishToHostMetadata(
+            metadata = live,
             track = track,
             lines = publication.lines,
             trackGeneration = trackGeneration,
@@ -63,7 +60,8 @@ object MetrolistNativePublisher {
             hostPackage = hostPackage
         )
         if (result.isPublished) {
-            val patched = builder.build()
+            // lyricInfo now lives in the live metadata itself; re-send that same object.
+            val patched = live
             val committed = runCatching {
                 registry.withModuleWrite { session.setMetadata(patched) }
             }.isSuccess
@@ -95,20 +93,18 @@ object MetrolistNativePublisher {
         return result
     }
 
-    internal fun buildReplayMetadata(
+    /** Appends the replay snapshot into the host's own [metadata]; the object is never copied. */
+    internal fun appendReplayLyricInfo(
         metadata: MediaMetadata,
         snapshot: MetrolistReplaySnapshot,
         generationPolicy: TrackGenerationPolicy,
         hostPackage: String
-    ): Pair<NativeLyricInfoPublisher.Result, MediaMetadata?> {
+    ): NativeLyricInfoPublisher.Result {
         if (!MetrolistMetadataArtwork.isReadyForLyricInfo(metadata)) {
-            return NativeLyricInfoPublisher.Result.INVALID_INPUT to null
+            return NativeLyricInfoPublisher.Result.INVALID_INPUT
         }
-        val prepared = MetrolistMetadataArtwork.prepareForLyricInfo(metadata)
-        val builder = MetrolistMetadataArtwork.newPreservingBuilder(prepared)
-        val result = NativeLyricInfoPublisher.publishToPlatformMetadata(
-            builder = builder,
-            originalMetadata = prepared,
+        return NativeLyricInfoPublisher.publishToHostMetadata(
+            metadata = metadata,
             track = snapshot.track,
             lines = snapshot.publication.lines,
             trackGeneration = snapshot.generation,
@@ -116,8 +112,6 @@ object MetrolistNativePublisher {
             playerPackage = hostPackage,
             hostPackage = hostPackage
         )
-        val patched = if (result.isPublished) builder.build() else null
-        return result to patched
     }
 
     internal fun classifyCommit(

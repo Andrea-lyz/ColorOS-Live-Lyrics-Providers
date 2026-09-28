@@ -4,28 +4,21 @@
  * http://www.apache.org/licenses/LICENSE-2.0
  */
 
-package io.github.andrealtb.coloroslyrics.provider.kuwo
+package io.github.andrealtb.coloroslyrics.provider.core.publisher
 
 import android.media.MediaMetadata
 import android.os.Bundle
-import io.github.andrealtb.coloroslyrics.provider.reflection.CandidateResolver
 import java.lang.reflect.Field
 import java.lang.reflect.Modifier
 
 /**
  * Reflective access to the value bundle a host [MediaMetadata] already carries.
  *
- * The lyricInfo overlay must not rebuild the metadata object. ColorOS derives the lockscreen cover
- * from the bitmap lanes of exactly the metadata the host published
- * (com.oplus.systemui.media.controls.pipeline.OplusMediaDataManagerExImpl tries loadBitmapFromUri,
- * then METADATA_KEY_ART, then METADATA_KEY_ALBUM_ART, and KuWo publishes ALBUM_ART), so writing one
- * key into the host bundle is the only change this Provider is allowed to make.
- *
  * The field is private (AOSP name "mBundle"). It is resolved once, preferring that name and falling
- * back to a unique non-static Bundle field, then cached. When it cannot be resolved the overlay
- * fails open and logs LYRIC_INFO_APPEND_UNSUPPORTED instead of rebuilding metadata.
+ * back to the only non-static Bundle field in the class hierarchy, then cached. Anything ambiguous
+ * resolves to null so callers fail open instead of writing into the wrong object.
  */
-internal object KuWoMetadataBundle {
+object HostMetadataBundle {
     private const val BUNDLE_FIELD_NAME = "mBundle"
 
     @Volatile
@@ -58,13 +51,9 @@ internal object KuWoMetadataBundle {
         val candidates = classHierarchy(MediaMetadata::class.java)
             .flatMap { it.declaredFields.asList() }
             .filter { !Modifier.isStatic(it.modifiers) && it.type == Bundle::class.java }
-        if (candidates.isEmpty()) return null
         val field = candidates.firstOrNull { it.name == BUNDLE_FIELD_NAME }
-            ?: CandidateResolver.resolveUniqueField(
-                candidates = candidates,
-                targetName = "MediaMetadata bundle field",
-                searchCriteria = "single non-static android.os.Bundle field"
-            )
+            ?: candidates.singleOrNull()
+            ?: return null
         field.isAccessible = true
         return field
     }

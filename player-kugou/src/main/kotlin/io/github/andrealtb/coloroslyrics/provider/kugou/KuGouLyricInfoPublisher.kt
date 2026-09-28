@@ -10,12 +10,15 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.HostMetadataOverlay
 import java.lang.ref.WeakReference
 
 /**
- * Overlays patched lyricInfo onto KuGou's own MediaSession writes. Artwork and
- * other host fields pass through an empty typed Builder. A second write is issued
- * at most once per generation when lyrics arrive after the host metadata.
+ * Overlays patched lyricInfo onto KuGou's own MediaSession writes. The payload is
+ * appended into KuGou's metadata object itself (HostMetadataOverlay), so artwork and
+ * every other host field reach SystemUI exactly as KuGou published them. A second
+ * write re-sends that same host object at most once per generation when lyrics
+ * arrive after the host metadata.
  */
 object KuGouLyricInfoPublisher {
     private val lock = Any()
@@ -64,32 +67,26 @@ object KuGouLyricInfoPublisher {
         session: MediaSession?,
         metadata: MediaMetadata,
         hostPackage: String
-    ): MediaMetadata {
-        val prepared = synchronized(lock) {
+    ) {
+        synchronized(lock) {
             if (session != null) {
                 lastSession = WeakReference(session)
             }
             lastHostMetadata = metadata
             val publication = latestPublication
-            when {
-                publication == null -> metadata
-                !matchesCurrentTrack(metadata, publication.track, hostPackage) -> metadata
-                else -> {
-                    val patched = overlay(metadata, publication, hostPackage) ?: metadata
-                    if (patched !== metadata) {
-                        KuGouDiagnostics.debug(
-                            area = "publisher",
-                            event = "NATIVE_METADATA_INTERCEPTED",
-                            generation = publication.generation,
-                            message = "source=${publication.source}"
-                        )
-                    }
-                    patched
-                }
+            if (publication != null &&
+                matchesCurrentTrack(metadata, publication.track, hostPackage) &&
+                overlay(metadata, publication, hostPackage) == HostMetadataOverlay.Result.WRITTEN
+            ) {
+                KuGouDiagnostics.debug(
+                    area = "publisher",
+                    event = "NATIVE_METADATA_INTERCEPTED",
+                    generation = publication.generation,
+                    message = "source=${publication.source}"
+                )
             }
         }
-        pendingHostWrite.set(prepared)
-        return prepared
+        pendingHostWrite.set(metadata)
     }
 
     fun onHostMetadataApplied() {
@@ -104,9 +101,10 @@ object KuGouLyricInfoPublisher {
             val session = lastSession?.get() ?: return false
             val metadata = lastHostMetadata ?: return false
             if (!matchesCurrentTrack(metadata, publication.track, hostPackage)) return false
-            val patched = overlay(metadata, publication, hostPackage) ?: return false
+            val result = overlay(metadata, publication, hostPackage) ?: return false
+            if (!result.isApplied) return false
             replayedGeneration = publication.generation
-            ReplayRequest(session, patched, publication.generation)
+            ReplayRequest(session, metadata, publication.generation)
         }
         return runCatching {
             selfPublishing = true
@@ -129,12 +127,17 @@ object KuGouLyricInfoPublisher {
         }
     }
 
+    /**
+     * Appends the encoded payload into [metadata] itself. The official fields are read from
+     * the lyricInfo KuGou put on this object, never from a payload the module wrote into it.
+     * Returns null when nothing could be encoded.
+     */
     internal fun overlay(
         metadata: MediaMetadata,
         publication: KuGouPublication,
         hostPackage: String
-    ): MediaMetadata? {
-        val existing = metadata.getString(KuGouPlayerConstants.METADATA_KEY_LYRIC_INFO)
+    ): HostMetadataOverlay.Result? {
+        val existing = HostMetadataOverlay.hostLyricInfo(metadata)
         val encoded = KuGouOfficialLyricInfoEncoder.encode(
             track = publication.track,
             lines = publication.lines,
@@ -147,10 +150,20 @@ object KuGouLyricInfoPublisher {
         if (fingerprint == lastPublishedFingerprint &&
             metadata.getString(KuGouPlayerConstants.METADATA_KEY_LYRIC_INFO) == encoded.value
         ) {
-            return metadata
+            return HostMetadataOverlay.Result.UNCHANGED
+        }
+        val result = HostMetadataOverlay.putLyricInfo(metadata, encoded.value).result
+        if (!result.isApplied) {
+            KuGouDiagnostics.debug(
+                area = "publisher",
+                event = "LYRIC_INFO_APPEND_SKIPPED",
+                generation = publication.generation,
+                payloadChars = encoded.value.length,
+                reason = result.name
+            )
+            return result
         }
         lastPublishedFingerprint = fingerprint
-        val patched = KuGouMetadataCopy.copyWithLyricInfo(metadata, encoded.value)
         KuGouDiagnostics.debug(
             area = "publisher",
             event = "LYRIC_INFO_PATCHED",
@@ -159,7 +172,7 @@ object KuGouLyricInfoPublisher {
             message = "source=${publication.source} raw=${encoded.rawLyric.isNotBlank()} " +
                 "translation=${encoded.translationLyric.isNotBlank()}"
         )
-        return patched
+        return result
     }
 
     internal fun matchesCurrentTrack(
@@ -167,7 +180,7 @@ object KuGouLyricInfoPublisher {
         track: TrackIdentity,
         hostPackage: String
     ): Boolean {
-        val lyricInfo = metadata.getString(KuGouPlayerConstants.METADATA_KEY_LYRIC_INFO)
+        val lyricInfo = HostMetadataOverlay.hostLyricInfo(metadata)
         return matchesPublication(
             hostPackage = hostPackage,
             title = firstNonBlank(

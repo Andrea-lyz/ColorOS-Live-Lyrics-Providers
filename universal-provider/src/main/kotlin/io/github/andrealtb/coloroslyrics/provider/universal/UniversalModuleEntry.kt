@@ -14,12 +14,14 @@ import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDia
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.universal.session.ActiveSessionSelector
 import io.github.andrealtb.coloroslyrics.provider.universal.session.BluetoothLyricDemux
+import io.github.andrealtb.coloroslyrics.provider.universal.session.PlaybackClockQuality
 import io.github.andrealtb.coloroslyrics.provider.universal.session.PlaybackStates
 import io.github.andrealtb.coloroslyrics.provider.universal.session.RawSessionMetadata
 import io.github.andrealtb.coloroslyrics.provider.universal.session.ResolvedSession
 import io.github.andrealtb.coloroslyrics.provider.universal.session.SessionObservation
 import io.github.andrealtb.coloroslyrics.provider.universal.session.SessionRepository
 import io.github.andrealtb.coloroslyrics.provider.universal.session.TrackIdentityResolver
+import io.github.andrealtb.coloroslyrics.provider.universal.session.UniversalMonitorSnapshot
 import io.github.andrealtb.coloroslyrics.provider.universal.cache.UniversalLyricCache
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
@@ -53,6 +55,14 @@ class UniversalModuleEntry : XposedModule() {
     private var lastBroadcastSnapshotText: String? = null
     @Volatile
     private var lastBroadcastArtworkRevision = 0L
+    private val snapshotLock = Any()
+    /**
+     * Recent bound-player tracks with their latest lyric status, sent with every snapshot. Kept
+     * here because the app misses broadcasts while it is frozen or not running. Written under
+     * [snapshotLock].
+     */
+    @Volatile
+    private var recentHistory = ""
     private val configExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
         Thread({
             android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND)
@@ -102,6 +112,11 @@ class UniversalModuleEntry : XposedModule() {
     private var rawLyricEnabled: Boolean = loadRawLyricEnabled()
     @Volatile
     private var debugEnabled: Boolean = loadDebugEnabled()
+    @Volatile
+    private var clockLineFallbackEnabled: Boolean = loadClockLineFallbackEnabled()
+    /** Read-only PlaybackState grain per player; coarse clocks publish line-timed rawLyric. */
+    private val clockQuality = PlaybackClockQuality()
+    private val scheduledIdentitySettle = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val fetchBackoffUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private data class ArtworkSnapshot(
         val source: java.lang.ref.WeakReference<android.graphics.Bitmap>,
@@ -300,45 +315,112 @@ class UniversalModuleEntry : XposedModule() {
         repository.setNotificationAccessGranted(true)
         repository.onListenerConnected()
         repository.upsert(observation, boundPackages)
-        val snapshot = repository.snapshot()
-        val formatted = format(snapshot.selected, snapshot.sessions.size, snapshot.selectionRevision)
-        latestSnapshotText = formatted
-
-        if (context != null) {
-            sendSnapshotBroadcast(context, formatted)
-        }
+        val snapshot = publishSnapshot(context)
 
         val recordSession = repository.get(observation.sessionInstanceId)
         if (recordSession != null) {
             UniversalDiagnostics.metadataObserved(recordSession, "after-setPlaybackState")
-            val currentGen = recordSession.descriptor.trackGeneration
-            realLyricsByPackage.keys.filter { it.startsWith("$ownerPackage|") && it != "$ownerPackage|$currentGen" }.forEach {
-                realLyricsByPackage.remove(it)
-            }
-            overlayMetadata(record, recordSession, metadataField, lockField, pushMetadataUpdateMethod)
-
-            val title = recordSession.descriptor.title
-            val artist = recordSession.descriptor.artist
-            val album = recordSession.descriptor.album
-            val durationMs = recordSession.descriptor.durationMs
-            val cacheKey = "$ownerPackage|$currentGen"
-            if (realLyricsByPackage[cacheKey].isNullOrBlank() && !title.isNullOrBlank()) {
-                triggerBackgroundFetch(ownerPackage, title, artist.orEmpty(), album, durationMs, currentGen)
-            }
+            noteIdentityGate(recordSession)
+            syncSessionLyrics(record, recordSession)
+            if (playback != null) observeClockQuality(record, recordSession, playback)
         }
+        logSelection(snapshot)
+    }
 
-        val selected = snapshot.selected
-        if (selected != null) {
-            if (lastSelectedInstanceId != selected.descriptor.sessionInstanceId) {
-                UniversalDiagnostics.sessionSelected(selected, snapshot.selectionRevision)
-                lastSelectedInstanceId = selected.descriptor.sessionInstanceId
-                lastGeneration = selected.descriptor.trackGeneration
-            } else if (lastGeneration != selected.descriptor.trackGeneration) {
-                UniversalDiagnostics.trackChanged(selected)
-                lastGeneration = selected.descriptor.trackGeneration
-            }
+    /** Drops other generations' payloads, re-attaches the current one, and fetches when missing. */
+    private fun syncSessionLyrics(record: Any, session: ResolvedSession) {
+        val ownerPackage = session.descriptor.ownerPackage
+        val currentGen = session.descriptor.trackGeneration
+        realLyricsByPackage.keys.filter { it.startsWith("$ownerPackage|") && it != "$ownerPackage|$currentGen" }.forEach {
+            realLyricsByPackage.remove(it)
+        }
+        overlayMetadata(record, session, cachedMetadataField, cachedLockField, cachedPushMetadataUpdateMethod)
+
+        val title = session.descriptor.title
+        if (realLyricsByPackage["$ownerPackage|$currentGen"].isNullOrBlank() && !title.isNullOrBlank()) {
+            triggerBackgroundFetch(
+                ownerPackage,
+                title,
+                session.descriptor.artist.orEmpty(),
+                session.descriptor.album,
+                session.descriptor.durationMs,
+                currentGen
+            )
         }
     }
+
+    private fun logSelection(snapshot: UniversalMonitorSnapshot) {
+        val selected = snapshot.selected ?: return
+        if (lastSelectedInstanceId != selected.descriptor.sessionInstanceId) {
+            UniversalDiagnostics.sessionSelected(selected, snapshot.selectionRevision)
+            lastSelectedInstanceId = selected.descriptor.sessionInstanceId
+            lastGeneration = selected.descriptor.trackGeneration
+        } else if (lastGeneration != selected.descriptor.trackGeneration) {
+            UniversalDiagnostics.trackChanged(selected)
+            lastGeneration = selected.descriptor.trackGeneration
+        }
+    }
+
+    /**
+     * A held partial identity change (see [TrackIdentityResolver]) must still land when the player
+     * sends no further callback, so re-observe the stored payload once its settle window ends.
+     */
+    private fun noteIdentityGate(session: ResolvedSession) {
+        if (session.identityGate != TrackIdentityResolver.GATE_STANDARD) {
+            UniversalDiagnostics.identityGate(session)
+        }
+        val settleAt = session.identitySettleAtElapsedMs ?: return
+        val sessionId = session.descriptor.sessionInstanceId
+        if (scheduledIdentitySettle.put(sessionId, settleAt) == settleAt) return
+        val delayMs = (settleAt - SystemClock.elapsedRealtime()).coerceAtLeast(0L) + 50L
+        metadataReplayExecutor.schedule(
+            { settleIdentity(session.descriptor.ownerPackage, sessionId, settleAt) },
+            delayMs,
+            java.util.concurrent.TimeUnit.MILLISECONDS
+        )
+    }
+
+    private fun settleIdentity(ownerPackage: String, sessionId: String, settleAt: Long) {
+        runCatching {
+            scheduledIdentitySettle.remove(sessionId, settleAt)
+            val latest = repository.get(sessionId) ?: return
+            // A newer payload already resolved or restarted the hold.
+            if (latest.identitySettleAtElapsedMs != settleAt) return
+            repository.upsert(latest.observation.copy(observedAtElapsedMs = SystemClock.elapsedRealtime()), boundPackages)
+            val settled = repository.get(sessionId) ?: return
+            noteIdentityGate(settled)
+            activeRecords[ownerPackage]?.let { syncSessionLyrics(it, settled) }
+            logSelection(publishSnapshot(null))
+        }.onFailure { error -> UniversalDiagnostics.identitySettleFailed(ownerPackage, error) }
+    }
+
+    private fun observeClockQuality(record: Any, session: ResolvedSession, playback: PlaybackState) {
+        val ownerPackage = session.descriptor.ownerPackage
+        val before = clockQuality.verdict(ownerPackage)
+        val after = clockQuality.observe(
+            ownerPackage = ownerPackage,
+            sessionId = session.descriptor.sessionInstanceId,
+            generation = session.descriptor.trackGeneration,
+            state = playback.state,
+            positionMs = playback.position,
+            updateTimeMs = playback.lastPositionUpdateTime,
+            speed = playback.playbackSpeed
+        )
+        if (after == before) return
+        UniversalDiagnostics.clockQualityChanged(ownerPackage, before.name, clockQuality.stats(ownerPackage))
+        // Downgrade the current track at once; a steadier clock returns to word timing from the
+        // next track, so a verdict change cannot flip one track back and forth.
+        if (after == PlaybackClockQuality.Verdict.COARSE && clockLineFallbackEnabled && wordTimingEnabled) {
+            realLyricsByPackage.replaceAll { key, value ->
+                if (key.substringBefore('|') == ownerPackage) publishedPayload(value, ownerPackage) else value
+            }
+            overlayMetadata(record, session, cachedMetadataField, cachedLockField, cachedPushMetadataUpdateMethod, force = true)
+        }
+        publishSnapshot(null)
+    }
+
+    private fun clockLineFallbackActive(ownerPackage: String): Boolean =
+        clockLineFallbackEnabled && clockQuality.verdict(ownerPackage) == PlaybackClockQuality.Verdict.COARSE
 
     private fun enrichMetadataBeforeSet(
         record: Any,
@@ -377,18 +459,17 @@ class UniversalModuleEntry : XposedModule() {
         repository.setNotificationAccessGranted(true)
         repository.onListenerConnected()
         repository.upsert(observation, boundPackages)
-        val snapshot = repository.snapshot()
-        val formatted = format(snapshot.selected, snapshot.sessions.size, snapshot.selectionRevision)
-        latestSnapshotText = formatted
 
         val context = (contextField?.get(record) as? Context) ?: currentSystemContext()
-        if (context != null) {
-            ensureRequestReceiver(context)
-            sendSnapshotBroadcast(context, formatted)
-        }
+        context?.let(::ensureRequestReceiver)
 
-        val recordSession = repository.get(observation.sessionInstanceId) ?: return null
+        val recordSession = repository.get(observation.sessionInstanceId)
+        if (recordSession == null) {
+            publishSnapshot(context)
+            return null
+        }
         UniversalDiagnostics.metadataObserved(recordSession, "before-setMetadata")
+        noteIdentityGate(recordSession)
         val currentGen = recordSession.descriptor.trackGeneration
 
         realLyricsByPackage.keys.filter { it.startsWith("$ownerPackage|") && it != "$ownerPackage|$currentGen" }.forEach {
@@ -426,18 +507,20 @@ class UniversalModuleEntry : XposedModule() {
             val manualKey = bindingKey(title, artist.orEmpty())
             val manual = loadManualBinding(manualKey)
             if (!manual.isNullOrBlank()) {
-                realJson = updateGeneration(manual, currentGen)
+                realJson = updateGeneration(manual, currentGen, ownerPackage)
                 realLyricsByPackage[cacheKey] = realJson
             } else {
                 val cached = loadCachedLyric(title, artist.orEmpty())
                 if (!cached.isNullOrBlank()) {
-                    realJson = updateGeneration(cached, currentGen)
+                    realJson = updateGeneration(cached, currentGen, ownerPackage)
                     realLyricsByPackage[cacheKey] = realJson
                 } else {
                     triggerBackgroundFetch(ownerPackage, title, artist.orEmpty(), album, durationMs, currentGen)
                 }
             }
         }
+        // Publish after the lookup so a cache hit is not reported as pending.
+        publishSnapshot(context)
 
         if (!realJson.isNullOrBlank()) {
             UniversalDiagnostics.lyricInfoAttached(ownerPackage, currentGen, "metadata-rewrite")
@@ -531,9 +614,7 @@ class UniversalModuleEntry : XposedModule() {
                     override fun onReceive(c: Context?, intent: Intent?) {
                         when (intent?.action) {
                             UniversalSnapshotStore.ACTION_REQUEST_SNAPSHOT -> {
-                                val current = latestSnapshotText ?: format(null, 0, 0)
-                                latestSnapshotText = upsertCachedSongs(current)
-                                sendSnapshotBroadcast(context, latestSnapshotText ?: current, force = true)
+                                publishSnapshot(context, force = true)
                             }
                             UniversalSnapshotStore.ACTION_UPDATE_PLAYER_BINDINGS -> {
                                 val list = intent.getStringArrayListExtra(UniversalSnapshotStore.EXTRA_BOUND_PACKAGES)
@@ -542,9 +623,7 @@ class UniversalModuleEntry : XposedModule() {
                                     persistBoundPackages(boundPackages)
                                     repository.updateBoundFilter(boundPackages, SystemClock.elapsedRealtime())
                                     UniversalBridgeBindingNotifier.notify(context, boundPackages)
-                                    val snap = repository.snapshot()
-                                    latestSnapshotText = format(snap.selected, snap.sessions.size, snap.selectionRevision)
-                                    sendSnapshotBroadcast(context, latestSnapshotText ?: "")
+                                    publishSnapshot(context)
                                     StructuredDiagnostics.logInfo(
                                         DiagnosticEvent(
                                             component = UniversalDiagnostics.COMPONENT,
@@ -580,12 +659,13 @@ class UniversalModuleEntry : XposedModule() {
                                     )
                                 }
                                 val cacheKey = if (gen > 0) "$pkg|$gen" else pkg
-                                realLyricsByPackage[cacheKey] = lyricInfo
+                                realLyricsByPackage[cacheKey] = publishedPayload(lyricInfo, pkg)
                                 val activeRecord = activeRecords[pkg]
                                 val activeSession = repository.snapshot().sessions.find { it.descriptor.ownerPackage == pkg }
                                 if (activeRecord != null && activeSession != null && (gen <= 0 || activeSession.descriptor.trackGeneration == gen)) {
                                     overlayMetadata(activeRecord, activeSession, cachedMetadataField, cachedLockField, cachedPushMetadataUpdateMethod, force = true)
                                 }
+                                publishSnapshot(context)
                             }
                             UniversalSnapshotStore.ACTION_UPDATE_SOURCE_CONFIG -> {
                                 val encoded = intent.getStringExtra(UniversalSnapshotStore.EXTRA_SOURCE_PRIORITY) ?: return
@@ -596,22 +676,27 @@ class UniversalModuleEntry : XposedModule() {
                                 val translation = intent.getBooleanExtra(UniversalSnapshotStore.EXTRA_TRANSLATION_ENABLED, translationEnabled)
                                 val rawLyric = intent.getBooleanExtra(UniversalSnapshotStore.EXTRA_RAW_LYRIC_ENABLED, rawLyricEnabled)
                                 val debug = intent.getBooleanExtra(UniversalSnapshotStore.EXTRA_DEBUG_ENABLED, debugEnabled)
+                                val clockFallback = intent.getBooleanExtra(
+                                    UniversalSnapshotStore.EXTRA_CLOCK_LINE_FALLBACK_ENABLED,
+                                    clockLineFallbackEnabled
+                                )
                                 val priorityChanged = priority != sourcePriority
                                 val wordTimingChanged = wordTiming != wordTimingEnabled
                                 val translationChanged = translation != translationEnabled
                                 val rawLyricChanged = rawLyric != rawLyricEnabled
                                 val debugChanged = debug != debugEnabled
+                                val clockFallbackChanged = clockFallback != clockLineFallbackEnabled
                                 sourcePriority = priority
                                 wordTimingEnabled = wordTiming
                                 translationEnabled = translation
                                 rawLyricEnabled = rawLyric
                                 debugEnabled = debug
-                                // Only a processing transition may rewrite the in-memory payloads.
-                                if ((wordTimingChanged && !wordTiming) || (rawLyricChanged && !rawLyric)) {
-                                    realLyricsByPackage.replaceAll { _, value -> stripRawLyric(value) }
-                                }
-                                if (translationChanged && !translation) {
-                                    realLyricsByPackage.replaceAll { _, value -> stripTranslation(value) }
+                                clockLineFallbackEnabled = clockFallback
+                                // Only a processing downgrade may rewrite the in-memory payloads;
+                                // upgrades apply from the full cached payload when the next track loads.
+                                if ((wordTimingChanged && !wordTiming) || (rawLyricChanged && !rawLyric) ||
+                                    (translationChanged && !translation) || (clockFallbackChanged && clockFallback)) {
+                                    realLyricsByPackage.replaceAll { key, value -> publishedPayload(value, key.substringBefore('|')) }
                                 }
                                 if (debugChanged) {
                                     StructuredDiagnostics.configure(debugEnabled = debug)
@@ -622,8 +707,11 @@ class UniversalModuleEntry : XposedModule() {
                                     if (translationChanged) persistTranslationEnabled(translation)
                                     if (rawLyricChanged) persistRawLyricEnabled(rawLyric)
                                     if (debugChanged) persistDebugEnabled(debug)
+                                    if (clockFallbackChanged) persistClockLineFallbackEnabled(clockFallback)
                                 }
                                 UniversalDiagnostics.sourceConfigUpdated(sourcePriority.map { it.name })
+                                // The home screen shows whether the current player is on the clock fallback.
+                                publishSnapshot(context)
                             }
                             UniversalSnapshotStore.ACTION_CLEAR_CACHE -> {
                                 val cleared = UniversalLyricCache.clear()
@@ -666,6 +754,34 @@ class UniversalModuleEntry : XposedModule() {
             sent.exceptionOrNull()?.javaClass?.simpleName
         )
     }
+
+    /**
+     * Formats the live session and lyric state, so a finished fetch reaches the UI without waiting
+     * for the player's next callback. Serialized: a slower thread cannot broadcast an older status.
+     */
+    private fun publishSnapshot(context: Context?, force: Boolean = false): UniversalMonitorSnapshot =
+        synchronized(snapshotLock) {
+            val snapshot = repository.snapshot()
+            val descriptor = snapshot.selected?.descriptor
+            val lyricPayload = descriptor?.let { lyricPayloadFor(it.ownerPackage, it.trackGeneration) }
+            if (descriptor != null && boundPackages.contains(descriptor.ownerPackage)) {
+                UniversalLyricHistory.row(
+                    descriptor.title,
+                    descriptor.artist,
+                    lyricSourceOf(lyricPayload),
+                    lyricStatusOf(lyricPayload)
+                )?.let { recentHistory = UniversalLyricHistory.moveToTop(recentHistory, it) }
+            }
+            val formatted = format(
+                snapshot.selected,
+                snapshot.sessions.size,
+                snapshot.selectionRevision,
+                lyricPayload
+            )
+            latestSnapshotText = formatted
+            (context ?: currentSystemContext())?.let { sendSnapshotBroadcast(it, formatted, force = force) }
+            snapshot
+        }
 
     private fun sendSnapshotBroadcast(context: Context, text: String, cacheCleared: Int? = null, force: Boolean = false) {
         runCatching {
@@ -794,12 +910,28 @@ class UniversalModuleEntry : XposedModule() {
         }.getOrNull()
     }
 
-    private fun format(selected: ResolvedSession?, sessionCount: Int, selectionRevision: Long): String {
+    private fun lyricPayloadFor(ownerPackage: String, generation: Long): JSONObject? =
+        (realLyricsByPackage["$ownerPackage|$generation"] ?: realLyricsByPackage[ownerPackage])
+            ?.let { runCatching { JSONObject(it) }.getOrNull() }
+
+    private fun lyricSourceOf(payload: JSONObject?): String =
+        payload?.optString("source").orEmpty().ifBlank { "none" }
+
+    private fun lyricStatusOf(payload: JSONObject?): String = when {
+        payload == null -> "pending"
+        payload.optBoolean("noLyric") -> "noLyric"
+        payload.optString("lyric").isNotBlank() -> "success"
+        else -> "failed"
+    }
+
+    private fun format(
+        selected: ResolvedSession?,
+        sessionCount: Int,
+        selectionRevision: Long,
+        lyricPayload: JSONObject? = selected?.descriptor?.let { lyricPayloadFor(it.ownerPackage, it.trackGeneration) }
+    ): String {
         val descriptor = selected?.descriptor
         val isBound = boundPackages.contains(descriptor?.ownerPackage)
-        val lyricPayload = descriptor?.let {
-            realLyricsByPackage["${it.ownerPackage}|${it.trackGeneration}"] ?: realLyricsByPackage[it.ownerPackage]
-        }?.let { runCatching { JSONObject(it) }.getOrNull() }
         return buildString {
             append("source=system_server\n")
             append("writeBack=true network=false\n")
@@ -817,16 +949,13 @@ class UniversalModuleEntry : XposedModule() {
             append("rawTitle=").append(descriptor?.rawTitle ?: "(missing)").append('\n')
             append("demux=").append(selected?.demuxSource ?: "none").append('\n')
             append("playbackState=").append(descriptor?.playbackState ?: -1).append('\n')
-            append("lyricSource=").append(lyricPayload?.optString("source").orEmpty().ifBlank { "none" }).append('\n')
-            append("lyricStatus=").append(
-                when {
-                    lyricPayload == null -> "pending"
-                    lyricPayload.optBoolean("noLyric") -> "noLyric"
-                    lyricPayload.optString("lyric").isNotBlank() -> "success"
-                    else -> "failed"
-                }
+            append("lyricSource=").append(lyricSourceOf(lyricPayload)).append('\n')
+            append("lyricStatus=").append(lyricStatusOf(lyricPayload)).append('\n')
+            append("lyricClockFallback=").append(
+                descriptor != null && wordTimingEnabled && rawLyricEnabled && clockLineFallbackActive(descriptor.ownerPackage)
             ).append('\n')
             append("cachedSongs=").append(UniversalLyricCache.getCacheCount()).append('\n')
+            append(UniversalLyricHistory.snapshotLines(recentHistory))
         }
     }
 
@@ -862,8 +991,8 @@ class UniversalModuleEntry : XposedModule() {
                     if (negative) {
                         return@execute
                     }
-                    val updated = updateGeneration(manual, generation)
-                    applyFetchedLyric(ownerPackage, generation, updated)
+                    val updated = updateGeneration(manual, generation, ownerPackage)
+                    applyFetchedLyric(ownerPackage, generation, updated, title, artist)
                     fetchBackoffUntil.remove(fetchKey)
                     UniversalDiagnostics.fetchFinished(ownerPackage, generation, "manual-cache", updated.length)
                     return@execute
@@ -878,8 +1007,8 @@ class UniversalModuleEntry : XposedModule() {
                     if (negative) {
                         return@execute
                     }
-                    val updated = updateGeneration(cached, generation)
-                    applyFetchedLyric(ownerPackage, generation, updated)
+                    val updated = updateGeneration(cached, generation, ownerPackage)
+                    applyFetchedLyric(ownerPackage, generation, updated, title, artist)
                     fetchBackoffUntil.remove(fetchKey)
                     UniversalDiagnostics.fetchFinished(ownerPackage, generation, "auto-cache", updated.length)
                     return@execute
@@ -912,7 +1041,7 @@ class UniversalModuleEntry : XposedModule() {
                     transientFailure = report.transientFailure && !usable
                 )
                 if (outcome == NoLyricPolicy.Outcome.PUBLISH_LYRICS && result != null) {
-                    val plainLyric = toPlainLrc(result.lyric)
+                    val plainLyric = UniversalLyricPayloadPolicy.stripWordTiming(result.lyric)
                     val alignedTranslation = run {
                         val primary = io.github.andrealtb.coloroslyrics.provider.universal.api.StructuredLyrics.parseLrc(plainLyric)
                         val trans = io.github.andrealtb.coloroslyrics.provider.universal.api.StructuredLyrics.parseLrc(result.translationLyric)
@@ -920,7 +1049,8 @@ class UniversalModuleEntry : XposedModule() {
                             io.github.andrealtb.coloroslyrics.provider.universal.api.StructuredLyrics.merge(primary, trans)
                         ).takeIf { it.isNotBlank() }
                     }
-                    val attachRaw = wordTimingEnabled && rawLyricEnabled && hasAttachableRawLyric(result.rawLyric, plainLyric)
+                    // Cache the complete payload; publishing applies the processing switches, so
+                    // turning a switch back on does not need a cache clear.
                     val json = JSONObject().apply {
                         put("songName", result.title)
                         put("artist", result.artist)
@@ -931,10 +1061,10 @@ class UniversalModuleEntry : XposedModule() {
                         put("id", "")
                         put("noLyric", false)
                         put("lyric", plainLyric)
-                        if (attachRaw) {
+                        if (!result.rawLyric.isNullOrBlank()) {
                             put("rawLyric", result.rawLyric)
                         }
-                        if (translationEnabled && !alignedTranslation.isNullOrBlank()) {
+                        if (!alignedTranslation.isNullOrBlank()) {
                             put("transLyric", alignedTranslation)
                             put("translationLyric", alignedTranslation)
                             put("translationLanguageTag", java.util.Locale.getDefault().toLanguageTag())
@@ -946,7 +1076,7 @@ class UniversalModuleEntry : XposedModule() {
                     }.toString()
 
                     saveCachedLyric(title, artist, json)
-                    applyFetchedLyric(ownerPackage, generation, json)
+                    val published = applyFetchedLyric(ownerPackage, generation, json, title, artist)
                     fetchBackoffUntil.remove(fetchKey)
                     UniversalDiagnostics.fetchFinished(ownerPackage, generation, result.source, json.length)
                     UniversalDiagnostics.lyricInfoComposed(
@@ -954,7 +1084,7 @@ class UniversalModuleEntry : XposedModule() {
                         generation = generation,
                         source = result.source,
                         lyricChars = result.lyric.length,
-                        rawLyricAttached = attachRaw,
+                        rawLyricAttached = published.rawAttached,
                         translationAttached = translationEnabled && !alignedTranslation.isNullOrBlank(),
                         wordTimingEnabled = wordTimingEnabled
                     )
@@ -969,7 +1099,7 @@ class UniversalModuleEntry : XposedModule() {
                         val reason = NoLyricPolicy.autoReason(instrumental)
                         val noLyricJson = NoLyricPolicy.payloadJson(title, artist, reason)
                         saveCachedLyric(title, artist, noLyricJson)
-                        applyFetchedLyric(ownerPackage, generation, noLyricJson)
+                        applyFetchedLyric(ownerPackage, generation, noLyricJson, title, artist)
                     } else {
                         fetchBackoffUntil.remove(fetchKey)
                     }
@@ -997,18 +1127,32 @@ class UniversalModuleEntry : XposedModule() {
         }
     }
 
-    private fun updateGeneration(jsonStr: String, generation: Long): String {
+    private fun updateGeneration(jsonStr: String, generation: Long, ownerPackage: String): String {
         return runCatching {
             val json = JSONObject(jsonStr)
             json.put("sessionGeneration", generation)
             json.put("songId", "universal-$generation")
-            applyWordTimingPolicy(json).toString()
+            applyWordTimingPolicy(json, ownerPackage)
+            json.toString()
         }.getOrDefault(jsonStr)
     }
 
-    private fun applyFetchedLyric(ownerPackage: String, generation: Long, json: String) {
-        realLyricsByPackage["$ownerPackage|$generation"] = applyWordTimingPolicy(JSONObject(json)).toString()
+    private fun applyFetchedLyric(
+        ownerPackage: String,
+        generation: Long,
+        json: String,
+        title: String,
+        artist: String
+    ): UniversalLyricPayloadPolicy.Result {
+        val payload = JSONObject(json)
+        val published = applyWordTimingPolicy(payload, ownerPackage)
+        realLyricsByPackage["$ownerPackage|$generation"] = payload.toString()
         replayMetadataForGeneration(ownerPackage, generation)
+        // The track may already have been skipped, so its row takes the result where it stands.
+        UniversalLyricHistory.row(title, artist, lyricSourceOf(payload), lyricStatusOf(payload))?.let { row ->
+            synchronized(snapshotLock) { recentHistory = UniversalLyricHistory.replaceInPlace(recentHistory, row) }
+        }
+        publishSnapshot(null)
         // The first callback can race SystemUI's notification/card creation.
         // Replay after the normal load window as a fail-open compatibility
         // measure for ColorOS builds that ignore pushMetadataUpdate early.
@@ -1019,6 +1163,7 @@ class UniversalModuleEntry : XposedModule() {
                 java.util.concurrent.TimeUnit.MILLISECONDS
             )
         }
+        return published
     }
 
     private fun replayMetadataForGeneration(ownerPackage: String, generation: Long) {
@@ -1085,54 +1230,40 @@ class UniversalModuleEntry : XposedModule() {
         runCatching { java.io.File("/data/system/universal_translation.enabled").writeText(if (enabled) "1" else "0") }
     }
 
-    private fun toPlainLrc(value: String): String =
-        value.replace(Regex("<\\d{1,3}:\\d{2}(?:[.:]\\d{1,3})?>"), "")
+    private fun loadClockLineFallbackEnabled(): Boolean = runCatching {
+        java.io.File("/data/system/universal_clock_line_fallback.enabled").readText().trim() != "0"
+    }.getOrDefault(true)
+
+    private fun persistClockLineFallbackEnabled(enabled: Boolean) {
+        runCatching { java.io.File("/data/system/universal_clock_line_fallback.enabled").writeText(if (enabled) "1" else "0") }
+    }
 
     private fun bindingKey(title: String, artist: String): String =
         "${title.trim()}|${artist.trim()}".lowercase()
 
-    private fun applyWordTimingPolicy(json: JSONObject): JSONObject {
-        val raw = json.optString("rawLyric")
-        val hadRaw = raw.isNotBlank()
-        val hadWordTiming = hasInlineWordTiming(raw)
-        val plain = json.optString("lyric")
-        val attached = wordTimingEnabled && rawLyricEnabled && hasAttachableRawLyric(raw, plain)
-        if (plain.isNotBlank()) json.put("lyric", toPlainLrc(plain))
-        if (attached) json.put("rawLyric", raw) else json.remove("rawLyric")
-        if (!translationEnabled) {
-            json.remove("transLyric")
-            json.remove("translationLyric")
-            json.remove("translationLanguageTag")
-        }
+    private fun applyWordTimingPolicy(json: JSONObject, ownerPackage: String): UniversalLyricPayloadPolicy.Result {
+        // A coarse player clock turns word fill into twitching; publish line timing for it instead.
+        val clockFallback = wordTimingEnabled && clockLineFallbackActive(ownerPackage)
+        val result = UniversalLyricPayloadPolicy.apply(
+            json,
+            wordTiming = wordTimingEnabled && !clockFallback,
+            rawLyric = rawLyricEnabled,
+            translation = translationEnabled
+        )
         UniversalDiagnostics.rawLyricPolicy(
             generation = json.optLong("sessionGeneration"),
             enabled = wordTimingEnabled,
-            hadRaw = hadRaw,
-            hadWordTiming = hadWordTiming,
-            attached = attached
+            hadRaw = result.hadRaw,
+            hadWordTiming = result.hadWordTiming,
+            attached = result.rawAttached,
+            wordTimed = result.wordTimed,
+            clockFallback = clockFallback
         )
-        return json
+        return result
     }
 
-    private fun hasInlineWordTiming(value: String?): Boolean =
-        !value.isNullOrBlank() && Regex("<\\d{1,3}:\\d{2}(?:[.:]\\d{1,3})?>").containsMatchIn(value)
-
-    private fun hasTimedLrc(value: String?): Boolean =
-        !value.isNullOrBlank() && Regex("\\[\\d{1,3}:\\d{2}(?:[.:]\\d{1,3})?]").containsMatchIn(value)
-
-    private fun hasAttachableRawLyric(raw: String?, plain: String?): Boolean =
-        hasInlineWordTiming(raw) || hasTimedLrc(raw) || hasTimedLrc(plain)
-
-    private fun stripRawLyric(value: String): String = runCatching {
-        JSONObject(value).apply { remove("rawLyric") }.toString()
-    }.getOrDefault(value)
-
-    private fun stripTranslation(value: String): String = runCatching {
-        JSONObject(value).apply {
-            remove("transLyric")
-            remove("translationLyric")
-            remove("translationLanguageTag")
-        }.toString()
+    private fun publishedPayload(value: String, ownerPackage: String): String = runCatching {
+        JSONObject(value).also { applyWordTimingPolicy(it, ownerPackage) }.toString()
     }.getOrDefault(value)
 
     private fun recoverIdentityFromCache(
@@ -1175,20 +1306,13 @@ class UniversalModuleEntry : XposedModule() {
     private fun sameIdentityText(left: String?, right: String?): Boolean =
         left?.trim()?.equals(right?.trim(), ignoreCase = true) == true
 
+    /** Callers publish the snapshot once the payload is applied, which also carries the new count. */
     private fun saveCachedLyric(title: String, artist: String, jsonStr: String) {
         UniversalLyricCache.put(title, artist, jsonStr)
-        publishCacheCount()
     }
 
     private fun loadCachedLyric(title: String, artist: String): String? =
         UniversalLyricCache.get(title, artist)
-
-    private fun publishCacheCount() {
-        val ctx = currentSystemContext() ?: return
-        val snap = latestSnapshotText ?: return
-        latestSnapshotText = upsertCachedSongs(snap)
-        sendSnapshotBroadcast(ctx, latestSnapshotText ?: snap)
-    }
 
     private fun upsertCachedSongs(text: String): String {
         val count = UniversalLyricCache.getCacheCount()

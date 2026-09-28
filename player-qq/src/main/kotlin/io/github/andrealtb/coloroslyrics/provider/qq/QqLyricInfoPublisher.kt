@@ -10,12 +10,15 @@ import android.media.MediaMetadata
 import android.media.session.MediaSession
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.HostMetadataOverlay
 import java.lang.ref.WeakReference
 
 /**
  * Overlays patched lyricInfo onto QQ's own MediaSession writes when lyrics
- * arrive after the official Compat builder path. Artwork copies through an
- * empty typed Builder. At most one replay per generation.
+ * arrive after the official Compat builder path. The payload is appended into
+ * QQ's metadata object itself (HostMetadataOverlay), so artwork and every other
+ * host field reach SystemUI exactly as QQ published them. At most one replay per
+ * generation, re-sending that same host object.
  */
 object QqLyricInfoPublisher {
     private val lock = Any()
@@ -64,21 +67,20 @@ object QqLyricInfoPublisher {
         session: MediaSession?,
         metadata: MediaMetadata,
         hostPackage: String
-    ): MediaMetadata {
-        val prepared = synchronized(lock) {
+    ) {
+        synchronized(lock) {
             if (session != null) {
                 lastSession = WeakReference(session)
             }
             lastHostMetadata = metadata
             val publication = latestPublication
-            when {
-                publication == null -> metadata
-                !matchesCurrentTrack(metadata, publication.track, hostPackage) -> metadata
-                else -> overlay(metadata, publication, hostPackage) ?: metadata
+            if (publication != null &&
+                matchesCurrentTrack(metadata, publication.track, hostPackage)
+            ) {
+                overlay(metadata, publication, hostPackage)
             }
         }
-        pendingHostWrite.set(prepared)
-        return prepared
+        pendingHostWrite.set(metadata)
     }
 
     fun onHostMetadataApplied() {
@@ -93,15 +95,14 @@ object QqLyricInfoPublisher {
             val session = lastSession?.get() ?: return false
             val metadata = lastHostMetadata ?: return false
             if (!matchesCurrentTrack(metadata, publication.track, hostPackage)) return false
-            val patched = overlay(metadata, publication, hostPackage) ?: return false
-            if (patched.getString(QqPlayerConstants.METADATA_KEY_LYRIC_INFO) ==
-                metadata.getString(QqPlayerConstants.METADATA_KEY_LYRIC_INFO)
-            ) {
+            val result = overlay(metadata, publication, hostPackage) ?: return false
+            if (result == HostMetadataOverlay.Result.UNCHANGED) {
                 replayedGeneration = publication.generation
                 return false
             }
+            if (!result.isApplied) return false
             replayedGeneration = publication.generation
-            ReplayRequest(session, patched, publication.generation)
+            ReplayRequest(session, metadata, publication.generation)
         }
         return runCatching {
             selfPublishing = true
@@ -124,12 +125,17 @@ object QqLyricInfoPublisher {
         }
     }
 
+    /**
+     * Appends the encoded payload into [metadata] itself. The official fields are read from
+     * the lyricInfo QQ put on this object, never from a payload this hook wrote into it.
+     * Returns null when nothing could be encoded.
+     */
     internal fun overlay(
         metadata: MediaMetadata,
         publication: QqPublication,
         hostPackage: String
-    ): MediaMetadata? {
-        val existing = metadata.getString(QqPlayerConstants.METADATA_KEY_LYRIC_INFO)
+    ): HostMetadataOverlay.Result? {
+        val existing = HostMetadataOverlay.hostLyricInfo(metadata)
         val encoded = QqOfficialLyricInfoEncoder.encode(
             track = publication.track,
             lines = publication.lines,
@@ -142,10 +148,20 @@ object QqLyricInfoPublisher {
         if (fingerprint == lastPublishedFingerprint &&
             metadata.getString(QqPlayerConstants.METADATA_KEY_LYRIC_INFO) == encoded.value
         ) {
-            return metadata
+            return HostMetadataOverlay.Result.UNCHANGED
+        }
+        val result = HostMetadataOverlay.putLyricInfo(metadata, encoded.value).result
+        if (!result.isApplied) {
+            QqDiagnostics.debug(
+                area = "publisher",
+                event = "LYRIC_INFO_APPEND_SKIPPED",
+                generation = publication.generation,
+                payloadChars = encoded.value.length,
+                reason = result.name
+            )
+            return result
         }
         lastPublishedFingerprint = fingerprint
-        val patched = QqMetadataCopy.copyWithLyricInfo(metadata, encoded.value)
         QqDiagnostics.debug(
             area = "publisher",
             event = "LYRIC_INFO_PATCHED",
@@ -154,7 +170,7 @@ object QqLyricInfoPublisher {
             message = "source=${publication.source} raw=${encoded.rawLyric.isNotBlank()} " +
                 "translation=${encoded.translationLyric.isNotBlank()}"
         )
-        return patched
+        return result
     }
 
     internal fun matchesCurrentTrack(
@@ -162,7 +178,7 @@ object QqLyricInfoPublisher {
         track: TrackIdentity,
         hostPackage: String
     ): Boolean {
-        val lyricInfo = metadata.getString(QqPlayerConstants.METADATA_KEY_LYRIC_INFO)
+        val lyricInfo = HostMetadataOverlay.hostLyricInfo(metadata)
         val songId = QqOfficialLyricInfoEncoder.extractJsonString(lyricInfo.orEmpty(), "songId")
         if (!track.id.isNullOrBlank() && !songId.isNullOrBlank() && track.id == songId) {
             return true

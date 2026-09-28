@@ -7,7 +7,6 @@
 package io.github.andrealtb.coloroslyrics.provider.core.publisher
 
 import android.media.MediaMetadata
-import android.os.Parcel
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
@@ -29,7 +28,10 @@ object NativeLyricInfoPublisher {
         ENCODE_FAILED,
         PAYLOAD_TOO_LARGE,
         PARCEL_MEASUREMENT_FAILED,
-        COMMIT_FAILED;
+        COMMIT_FAILED,
+
+        /** The host metadata bundle is not reachable, so the append-only write was skipped. */
+        APPEND_UNSUPPORTED;
 
         val isPublished: Boolean
             get() = this == PUBLISHED
@@ -61,6 +63,29 @@ object NativeLyricInfoPublisher {
         transaction = AndroidMetadataTransaction
     )
 
+    /**
+     * Append-only publication. Runs the same gates as [publishToPlatformMetadata], then writes the
+     * single lyricInfo key into [metadata] itself through [HostMetadataOverlay] instead of building
+     * a copy, so every artwork lane and unknown key reaches SystemUI exactly as the host published
+     * it. Any rejection leaves [metadata] as the caller passed it.
+     */
+    fun publishToHostMetadata(
+        metadata: MediaMetadata,
+        track: TrackIdentity,
+        lines: List<RichLyricLine>,
+        trackGeneration: Long,
+        generationPolicy: TrackGenerationPolicy,
+        playerPackage: String,
+        hostPackage: String
+    ): Result = publishInPlace(
+        track = track,
+        lines = lines,
+        trackGeneration = trackGeneration,
+        generationPolicy = generationPolicy,
+        playerPackage = playerPackage,
+        hostPackage = hostPackage
+    ) { lyricInfo -> HostMetadataOverlay.putLyricInfo(metadata, lyricInfo) }
+
     internal fun <M, B> publishTransactional(
         builder: B,
         originalMetadata: M?,
@@ -72,18 +97,20 @@ object NativeLyricInfoPublisher {
         hostPackage: String,
         transaction: MetadataTransaction<M, B>
     ): Result {
-        if (originalMetadata == null || track.isBlank || lines.isEmpty()) return Result.INVALID_INPUT
-        if (playerPackage.isBlank() || playerPackage != hostPackage) return Result.HOST_PACKAGE_MISMATCH
-        if (!generationPolicy.isGenerationValid(trackGeneration) ||
-            !TrackIdentityPolicy.isSameTrack(generationPolicy.currentTrack, track)
+        val encoded = when (
+            val gate = encodeIfCurrent(
+                hasMetadata = originalMetadata != null,
+                track = track,
+                lines = lines,
+                trackGeneration = trackGeneration,
+                generationPolicy = generationPolicy,
+                playerPackage = playerPackage,
+                hostPackage = hostPackage
+            )
         ) {
-            return Result.STALE_GENERATION
+            is Gate.Rejected -> return gate.result
+            is Gate.Encoded -> gate.payload
         }
-
-        val encoded = runCatching {
-            ColorOSLyricJsonEncoder.encode(track, lines, trackGeneration, playerPackage)
-        }.getOrNull() ?: return Result.ENCODE_FAILED
-        if (encoded.jsonValue.length > MAX_LYRIC_FIELD_CHARS) return Result.PAYLOAD_TOO_LARGE
 
         val candidate = runCatching {
             transaction.buildCandidate(
@@ -105,6 +132,90 @@ object NativeLyricInfoPublisher {
             )
         }.isSuccess
         if (!committed) return Result.COMMIT_FAILED
+        logPublished(track, trackGeneration, playerPackage, encoded, parcelBytes)
+        return Result.PUBLISHED
+    }
+
+    internal fun publishInPlace(
+        track: TrackIdentity,
+        lines: List<RichLyricLine>,
+        trackGeneration: Long,
+        generationPolicy: TrackGenerationPolicy,
+        playerPackage: String,
+        hostPackage: String,
+        write: (lyricInfo: String) -> HostMetadataOverlay.Outcome
+    ): Result {
+        val encoded = when (
+            val gate = encodeIfCurrent(
+                hasMetadata = true,
+                track = track,
+                lines = lines,
+                trackGeneration = trackGeneration,
+                generationPolicy = generationPolicy,
+                playerPackage = playerPackage,
+                hostPackage = hostPackage
+            )
+        ) {
+            is Gate.Rejected -> return gate.result
+            is Gate.Encoded -> gate.payload
+        }
+        val outcome = runCatching { write(encoded.jsonValue) }.getOrNull()
+            ?: return Result.COMMIT_FAILED
+        return when (outcome.result) {
+            HostMetadataOverlay.Result.WRITTEN -> {
+                logPublished(track, trackGeneration, playerPackage, encoded, outcome.parcelBytes)
+                Result.PUBLISHED
+            }
+
+            HostMetadataOverlay.Result.UNCHANGED -> Result.PUBLISHED
+            HostMetadataOverlay.Result.UNSUPPORTED -> Result.APPEND_UNSUPPORTED
+            HostMetadataOverlay.Result.FIELD_TOO_LARGE,
+            HostMetadataOverlay.Result.PARCEL_TOO_LARGE -> Result.PAYLOAD_TOO_LARGE
+
+            HostMetadataOverlay.Result.MEASUREMENT_FAILED -> Result.PARCEL_MEASUREMENT_FAILED
+        }
+    }
+
+    private sealed interface Gate {
+        data class Rejected(val result: Result) : Gate
+        data class Encoded(val payload: ColorOSLyricJsonEncoder.EncodedPayload) : Gate
+    }
+
+    private fun encodeIfCurrent(
+        hasMetadata: Boolean,
+        track: TrackIdentity,
+        lines: List<RichLyricLine>,
+        trackGeneration: Long,
+        generationPolicy: TrackGenerationPolicy,
+        playerPackage: String,
+        hostPackage: String
+    ): Gate {
+        if (!hasMetadata || track.isBlank || lines.isEmpty()) return Gate.Rejected(Result.INVALID_INPUT)
+        if (playerPackage.isBlank() || playerPackage != hostPackage) {
+            return Gate.Rejected(Result.HOST_PACKAGE_MISMATCH)
+        }
+        if (!generationPolicy.isGenerationValid(trackGeneration) ||
+            !TrackIdentityPolicy.isSameTrack(generationPolicy.currentTrack, track)
+        ) {
+            return Gate.Rejected(Result.STALE_GENERATION)
+        }
+
+        val encoded = runCatching {
+            ColorOSLyricJsonEncoder.encode(track, lines, trackGeneration, playerPackage)
+        }.getOrNull() ?: return Gate.Rejected(Result.ENCODE_FAILED)
+        if (encoded.jsonValue.length > MAX_LYRIC_FIELD_CHARS) {
+            return Gate.Rejected(Result.PAYLOAD_TOO_LARGE)
+        }
+        return Gate.Encoded(encoded)
+    }
+
+    private fun logPublished(
+        track: TrackIdentity,
+        trackGeneration: Long,
+        playerPackage: String,
+        encoded: ColorOSLyricJsonEncoder.EncodedPayload,
+        parcelBytes: Int?
+    ) {
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
                 component = "provider/${playerPackage.substringAfterLast('.')}",
@@ -116,7 +227,6 @@ object NativeLyricInfoPublisher {
                 parcelBytes = parcelBytes
             )
         )
-        return Result.PUBLISHED
     }
 
     internal interface MetadataTransaction<M, B> {
@@ -131,18 +241,8 @@ object NativeLyricInfoPublisher {
             return candidateBuilder.putString(key, value).build()
         }
 
-        override fun measureParcelBytes(metadata: MediaMetadata): Int? {
-            var parcel: Parcel? = null
-            return try {
-                parcel = Parcel.obtain()
-                metadata.writeToParcel(parcel, 0)
-                parcel.dataSize()
-            } catch (_: Throwable) {
-                null
-            } finally {
-                parcel?.recycle()
-            }
-        }
+        override fun measureParcelBytes(metadata: MediaMetadata): Int? =
+            MetadataParcelGuard.measureParcelBytes(metadata)
 
         override fun commit(builder: MediaMetadata.Builder, key: String, value: String) {
             builder.putString(key, value)

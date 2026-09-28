@@ -209,17 +209,26 @@ Do not create a Bridge envelope.
 
 ## 8. Metadata and artwork safety
 
-The metadata arriving at `MediaSession#setMetadata` is authoritative. Copy every host field by type,
-including unknown keys, ratings, duration, IDs, artwork URIs, and artwork bitmaps.
+The metadata arriving at `MediaSession#setMetadata` is authoritative, and a Provider never rebuilds
+it. ColorOS takes the cover only from the bitmap lanes the host published, while both
+`MediaMetadata.Builder(existing)` and an empty typed builder copy hand every bitmap to framework copy
+semantics; on affected ColorOS builds that collapsed a 512x512 cover to a 1x1 solid bitmap (see
+`docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`).
 
-On affected ColorOS builds, avoid `MediaMetadata.Builder(existing)`. Use an empty typed builder and
-copy fields explicitly. For bitmap transport:
-
-- keep plausible host bitmaps;
-- redraw HARDWARE or oversized bitmaps to software `ARGB_8888` only when required for Binder;
-- preserve URI-only first frames when the host has not decoded a bitmap yet;
+- write lyricInfo into the host metadata object itself through `provider-core`
+  (`NativeLyricInfoPublisher.publishToHostMetadata` or `HostMetadataOverlay.putLyricInfo`); a hook
+  never replaces `args[0]`;
+- the write is parcel-guarded and rolled back when oversized; if the bundle cannot be reached the
+  overlay fails open instead of falling back to a rebuild;
+- never touch artwork, URIs, ratings, IDs, duration, or unknown keys, and never redraw bitmaps;
+- decide per player whether a URI-only first frame is ready or must wait for the host bitmap;
 - attach pending lyricInfo to the incoming host metadata instead of replaying a stale snapshot;
+- asynchronous republishing re-sends the host's own object or the `controller.metadata` copy, both
+  appended in place;
 - do not fetch, invent, or restore artwork from another track.
+
+Spotify, Qishui, Cone, and Salt still use the older copy path; do not use them as templates until
+they are migrated.
 
 Ignore cast/auxiliary sessions. A payload must never move to a session with a different live track
 identity.

@@ -69,6 +69,9 @@
     <string name="inject_translation_desc">按系统语言匹配翻译；默认开启</string>
     <string name="prefer_word_timing">优先使用逐字时间轴</string>
     <string name="prefer_word_timing_desc">无逐字源时回退到逐行歌词</string>
+    <string name="clock_line_fallback">进度粒度粗时自动逐行</string>
+    <string name="clock_line_fallback_desc">播放器进度更新过粗时改用逐行，避免逐字进度抽搐</string>
+    <string name="lyric_clock_fallback">播放器进度粒度较粗，已自动逐行</string>
     <string name="allow_raw_lyric">允许 Bridge 读取 rawLyric</string>
     <string name="allow_raw_lyric_desc">关闭后仅发送普通 lyricInfo</string>
     <string name="section_local_data">本地数据</string>

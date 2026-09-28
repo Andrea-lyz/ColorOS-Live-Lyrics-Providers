@@ -277,18 +277,16 @@ class ApplePlayerHooker(
                         if (sessions.isCastSession(session)) return@before
                         val incoming = args.getOrNull(0) as? MediaMetadata ?: return@before
                         val platformTrack = AppleTrackIdentity.fromMetadata(incoming)
-                        var outgoing = incoming
-                        sessions.onHostMetadata(session, platformTrack, outgoing)
+                        // lyricInfo is appended into the host's own object; args[0] is never replaced.
+                        sessions.onHostMetadata(session, platformTrack, incoming)
                         platformTrack?.let { observeAuthoritativeTrack(it, "metadata") }
                         requestLyricsIfNeeded("metadata")
                         val hostTrack = generationPolicy.currentTrack
                         val overlayTrack = hostTrack ?: platformTrack ?: return@before
-                        attachPendingToHostMetadata(session, outgoing, overlayTrack)?.let {
-                            outgoing = it
-                        }
+                        attachPendingToHostMetadata(session, incoming, overlayTrack)
 
                         val snapshot = synchronized(publicationLock) { replaySnapshot }
-                        val incomingLyricInfo = outgoing.getString("lyricInfo")
+                        val incomingLyricInfo = incoming.getString("lyricInfo")
                         val alreadyOwned = AppleReplayPolicy.isModuleOwned(
                             incomingLyricInfo,
                             hostPackage
@@ -300,18 +298,17 @@ class ApplePlayerHooker(
                                 hostTrack,
                                 generationPolicy.generation,
                                 snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
-                                AppleMetadataArtwork.isReadyForLyricInfo(outgoing),
+                                AppleMetadataArtwork.isReadyForLyricInfo(incoming),
                                 incomingLyricInfo
                             )
                         ) {
-                            AppleNativePublisher.buildReplayMetadata(
-                                outgoing,
+                            AppleNativePublisher.appendReplayLyricInfo(
+                                incoming,
                                 snapshot!!,
                                 generationPolicy,
                                 hostPackage
-                            ).second?.let { outgoing = it }
+                            )
                         }
-                        if (outgoing !== incoming) args[0] = outgoing
                     }
                 }
                 }
@@ -674,37 +671,38 @@ class ApplePlayerHooker(
         }
     }
 
+    /** Appends a pending publication into [incoming] itself; returns true when attached. */
     private fun attachPendingToHostMetadata(
         session: MediaSession,
         incoming: MediaMetadata,
         resolvedTrack: TrackIdentity
-    ): MediaMetadata? {
-        val pending = pendingStore.peek() ?: return null
-        if (!AppleMetadataArtwork.isReadyForLyricInfo(incoming)) return null
+    ): Boolean {
+        val pending = pendingStore.peek() ?: return false
+        if (!AppleMetadataArtwork.isReadyForLyricInfo(incoming)) return false
         val generation = generationPolicy.generation
         val currentTrack = generationPolicy.currentTrack ?: resolvedTrack.takeUnless { it.isBlank }
-        if (currentTrack == null) return null
+        if (currentTrack == null) return false
         if (!TrackIdentityPolicy.isSameTrack(pending.capturedTrack, currentTrack)) {
-            return null
+            return false
         }
         val liveTrack = AppleTrackIdentity.fromMetadata(incoming)
         if (!AppleTrackBindPolicy.unnamedOrSame(liveTrack, pending.capturedTrack ?: currentTrack)) {
-            return null
+            return false
         }
-        if (!generationController.acceptsPublication(currentTrack, generation)) return null
+        if (!generationController.acceptsPublication(currentTrack, generation)) return false
         val selected = sessions.selectUnique(currentTrack)
-        if (selected !== session && selected != null) return null
+        if (selected !== session && selected != null) return false
 
         val bound = pending.boundTo(currentTrack)
         val snapshot = AppleReplaySnapshot(WeakReference(session), currentTrack, generation, bound)
-        val (result, patched) = AppleNativePublisher.buildReplayMetadata(
+        val result = AppleNativePublisher.appendReplayLyricInfo(
             metadata = incoming,
             snapshot = snapshot,
             generationPolicy = generationPolicy,
             hostPackage = hostPackage
         )
-        if (!result.isPublished || patched == null) return null
-        if (!pendingStore.takeIfSame(pending)) return null
+        if (!result.isPublished) return false
+        if (!pendingStore.takeIfSame(pending)) return false
 
         synchronized(publicationLock) {
             replaySnapshot = snapshot
@@ -719,7 +717,7 @@ class ApplePlayerHooker(
         )
         logPublicationResult("PENDING_DRAINED", generation)
         logPublicationResult(result.name, generation)
-        return patched
+        return true
     }
 
     private fun drainPendingPublication() {

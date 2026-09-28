@@ -46,7 +46,7 @@ the Bridge five-slot control according to player-specific evidence. QQ Music HD 
 
 ## Universal Player Provider
 
-Universal Player Provider (`Provider-Universal 1.0.0 (1)`) is for players without a dedicated
+Universal Player Provider (`Provider-Universal 1.1.0 (2)`) is for players without a dedicated
 adapter that still create a standard Android `MediaSession`. It has static scope only in
 `system_server` and receives an explicit target-package list from its settings app; unselected music,
 video, and other media apps are never observed, queried for lyrics, or written with `lyricInfo`.

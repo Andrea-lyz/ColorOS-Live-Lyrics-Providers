@@ -9,6 +9,7 @@ package io.github.andrealtb.coloroslyrics.provider.universal
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticEvent
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
+import io.github.andrealtb.coloroslyrics.provider.universal.session.PlaybackClockQuality
 import io.github.andrealtb.coloroslyrics.provider.universal.session.ResolvedSession
 
 internal object UniversalDiagnostics {
@@ -297,13 +298,51 @@ internal object UniversalDiagnostics {
         )
     }
 
-    fun rawLyricPolicy(generation: Long, enabled: Boolean, hadRaw: Boolean, hadWordTiming: Boolean, attached: Boolean) {
+    fun rawLyricPolicy(generation: Long, enabled: Boolean, hadRaw: Boolean, hadWordTiming: Boolean, attached: Boolean, wordTimed: Boolean, clockFallback: Boolean) {
         pipeline(
             area = "lyrics",
             event = "RAW_LYRIC_POLICY",
             generation = generation,
-            session = "raw|$generation|$attached",
-            reason = "enabled=$enabled hadRaw=$hadRaw hadWordTiming=$hadWordTiming attached=$attached"
+            session = "raw|$generation|$attached|$wordTimed|$clockFallback",
+            reason = "enabled=$enabled hadRaw=$hadRaw hadWordTiming=$hadWordTiming attached=$attached wordTimed=$wordTimed clockFallback=$clockFallback"
+        )
+    }
+
+    fun identityGate(session: ResolvedSession) {
+        StructuredDiagnostics.logInfo(
+            DiagnosticEvent(
+                component = COMPONENT,
+                area = "identity",
+                event = "IDENTITY_GATE",
+                session = DiagnosticHasher.sha256(session.descriptor.sessionInstanceId),
+                generation = session.descriptor.trackGeneration,
+                trackHash = hashTrack(session),
+                reason = "gate=${session.identityGate} settleAtMs=${session.identitySettleAtElapsedMs ?: "none"}"
+            )
+        )
+    }
+
+    fun identitySettleFailed(ownerPackage: String, error: Throwable) {
+        StructuredDiagnostics.logWarning(
+            DiagnosticEvent(
+                component = COMPONENT,
+                area = "identity",
+                event = "IDENTITY_SETTLE_FAILED",
+                reason = "package=$ownerPackage error=${error.javaClass.simpleName}"
+            )
+        )
+    }
+
+    fun clockQualityChanged(ownerPackage: String, previous: String, stats: PlaybackClockQuality.Stats) {
+        StructuredDiagnostics.logInfo(
+            DiagnosticEvent(
+                component = COMPONENT,
+                area = "clock",
+                event = "CLOCK_QUALITY_CHANGED",
+                session = "clock|$ownerPackage|${stats.verdict}",
+                reason = "package=$ownerPackage verdict=${stats.verdict} previous=$previous samples=${stats.samples} " +
+                    "coarseSamples=${stats.coarseSamples} medianStepMs=${stats.medianJitterMs}"
+            )
         )
     }
 

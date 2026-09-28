@@ -14,6 +14,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.HostMetadataOverlay
 import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 
@@ -103,7 +104,8 @@ class QqPlayerHooker(private val hookContext: ProviderHookContext) {
                     val session = instanceOrNull as? MediaSession ?: return@before
                     val metadata = args.getOrNull(0) as? MediaMetadata ?: return@before
                     observeMetadata(metadata)
-                    args[0] = QqLyricInfoPublisher.prepareHostMetadata(
+                    // lyricInfo is appended into QQ's own object; args[0] is never replaced.
+                    QqLyricInfoPublisher.prepareHostMetadata(
                         session,
                         metadata,
                         hostPackage
@@ -260,7 +262,7 @@ class QqPlayerHooker(private val hookContext: ProviderHookContext) {
         )
         if (title.isNullOrBlank()) return
         val songId = QqOfficialLyricInfoEncoder.extractJsonString(
-            metadata.getString(QqPlayerConstants.METADATA_KEY_LYRIC_INFO).orEmpty(),
+            HostMetadataOverlay.hostLyricInfo(metadata).orEmpty(),
             "songId"
         )
         bindTrack(

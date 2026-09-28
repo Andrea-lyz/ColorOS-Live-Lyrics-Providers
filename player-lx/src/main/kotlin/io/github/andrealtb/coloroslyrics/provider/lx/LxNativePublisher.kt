@@ -58,11 +58,9 @@ object LxNativePublisher {
             return NativeLyricInfoPublisher.Result.STALE_GENERATION
         }
 
-        val prepared = LxMetadataArtwork.prepareForLyricInfo(live, track)
-        val builder = LxMetadataArtwork.newPreservingBuilder(prepared)
-        val result = NativeLyricInfoPublisher.publishToPlatformMetadata(
-            builder = builder,
-            originalMetadata = prepared,
+        LxMetadataArtwork.prepareIdentityForSystemUi(live, track)
+        val result = NativeLyricInfoPublisher.publishToHostMetadata(
+            metadata = live,
             track = track,
             lines = publication.lines,
             trackGeneration = trackGeneration,
@@ -71,7 +69,8 @@ object LxNativePublisher {
             hostPackage = hostPackage
         )
         if (result.isPublished) {
-            val patched = builder.build()
+            // lyricInfo now lives in the live metadata itself; re-send that same object.
+            val patched = live
             LxArtworkDiagnostics.log("PUBLISH_CANDIDATE", patched, session, trackGeneration)
             val committed = runCatching {
                 registry.withModuleWrite { session.setMetadata(patched) }
@@ -103,21 +102,20 @@ object LxNativePublisher {
         return result
     }
 
-    internal fun buildReplayMetadata(
+    /** Appends the replay snapshot into the host's own [metadata]; the object is never copied. */
+    internal fun appendReplayLyricInfo(
         metadata: MediaMetadata,
         snapshot: LxReplaySnapshot,
         generationPolicy: TrackGenerationPolicy,
         hostPackage: String
-    ): Pair<NativeLyricInfoPublisher.Result, MediaMetadata?> {
+    ): NativeLyricInfoPublisher.Result {
         if (!LxMetadataArtwork.isReadyForLyricInfo(metadata)) {
-            return NativeLyricInfoPublisher.Result.INVALID_INPUT to null
+            return NativeLyricInfoPublisher.Result.INVALID_INPUT
         }
         LxArtworkDiagnostics.log("REPLAY_BASE", metadata, null, snapshot.generation)
-        val prepared = LxMetadataArtwork.prepareForLyricInfo(metadata, snapshot.track)
-        val builder = LxMetadataArtwork.newPreservingBuilder(prepared)
-        val result = NativeLyricInfoPublisher.publishToPlatformMetadata(
-            builder = builder,
-            originalMetadata = prepared,
+        LxMetadataArtwork.prepareIdentityForSystemUi(metadata, snapshot.track)
+        val result = NativeLyricInfoPublisher.publishToHostMetadata(
+            metadata = metadata,
             track = snapshot.track,
             lines = snapshot.publication.lines,
             trackGeneration = snapshot.generation,
@@ -125,9 +123,13 @@ object LxNativePublisher {
             playerPackage = hostPackage,
             hostPackage = hostPackage
         )
-        val patched = if (result.isPublished) builder.build() else null
-        LxArtworkDiagnostics.log("REPLAY_CANDIDATE", patched, null, snapshot.generation)
-        return result to patched
+        LxArtworkDiagnostics.log(
+            "REPLAY_CANDIDATE",
+            if (result.isPublished) metadata else null,
+            null,
+            snapshot.generation
+        )
+        return result
     }
 
     internal fun classifyCommit(

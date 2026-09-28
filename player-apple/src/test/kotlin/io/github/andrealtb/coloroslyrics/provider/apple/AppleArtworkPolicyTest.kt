@@ -7,7 +7,6 @@
 package io.github.andrealtb.coloroslyrics.provider.apple
 
 import org.junit.Test
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AppleArtworkPolicyTest {
@@ -31,12 +30,5 @@ class AppleArtworkPolicyTest {
                 artworkUris = listOf(null, "")
             )
         )
-    }
-
-    @Test
-    fun hardwareOrOversizedBitmapsNeedBinderCopy() {
-        assertTrue(AppleArtworkPolicy.shouldCopyForBinder("HARDWARE", 64, 64))
-        assertTrue(AppleArtworkPolicy.shouldCopyForBinder("ARGB_8888", 512, 512))
-        assertFalse(AppleArtworkPolicy.shouldCopyForBinder("ARGB_8888", 120, 120))
     }
 }

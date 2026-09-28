@@ -15,6 +15,7 @@ import io.github.andrealtb.coloroslyrics.provider.core.mode.RuntimeModeResolver
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.DiagnosticHasher
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackGenerationPolicy
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.HostMetadataOverlay
 import io.github.andrealtb.coloroslyrics.provider.hook102.ProviderHookContext
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
 import java.io.File
@@ -46,6 +47,9 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
      */
     private val lyricLoadState = ThreadLocal<LyricLoadState?>()
 
+    /** Set while KuGou's own setMetadata is being prepared on this thread. */
+    private val hostWriteInProgress = ThreadLocal<Boolean>()
+
     @Volatile
     private var debugConfigAnnounced = false
 
@@ -56,6 +60,13 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
     private var currentGeneration = 0L
 
     private var lastLyricReadyGeneration = 0L
+
+    /** Timed lines of the official lyricInfo KuGou published for [officialLyricGeneration]. */
+    private var officialLyricLines: List<KuGouOriginalLyricCandidatePolicy.TimedText> = emptyList()
+    private var officialLyricSource = ""
+    private var officialLyricGeneration = 0L
+    private var lastBoundPath = ""
+    private var lastBoundGeneration = 0L
     private var pendingLocalProbeJob: Job? = null
     private var pendingLocalProbeGeneration = 0L
     private var lastEmittedSignature = ""
@@ -184,12 +195,18 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
                         return@before
                     }
                     val metadata = args.getOrNull(0) as? MediaMetadata ?: return@before
-                    observeMetadata(metadata)
-                    args[0] = KuGouLyricInfoPublisher.prepareHostMetadata(
-                        session,
-                        metadata,
-                        hostPackage
-                    )
+                    hostWriteInProgress.set(true)
+                    try {
+                        observeMetadata(metadata)
+                        // lyricInfo is appended into KuGou's own object; args[0] is never replaced.
+                        KuGouLyricInfoPublisher.prepareHostMetadata(
+                            session,
+                            metadata,
+                            hostPackage
+                        )
+                    } finally {
+                        hostWriteInProgress.remove()
+                    }
                 }
                 after {
                     KuGouLyricInfoPublisher.onHostMetadataApplied()
@@ -242,10 +259,8 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
             )
             return
         }
-        val songId = KuGouOfficialLyricInfoEncoder.extractJsonString(
-            metadata.getString(KuGouPlayerConstants.METADATA_KEY_LYRIC_INFO).orEmpty(),
-            "songId"
-        )
+        val hostLyricInfo = HostMetadataOverlay.hostLyricInfo(metadata).orEmpty()
+        val songId = KuGouOfficialLyricInfoEncoder.extractJsonString(hostLyricInfo, "songId")
         val track = KuGouTrackIdentity.sanitize(
             hostPackage = hostPackage,
             title = title,
@@ -287,6 +302,31 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
             if (!tryBindCachedOrPending(track, generation, "metadata")) {
                 scheduleLocalLyricProbe(track, generation)
             }
+        }
+        observeOfficialLyric(hostLyricInfo, track, generation)
+    }
+
+    /**
+     * KuGou fills its own lyricInfo for the playing song a little after the title. Its timed lines
+     * identify that song's lyric callback even when the KRC file name disagrees with the metadata
+     * (translated title, other credits), so a still-unbound generation re-tries pending candidates
+     * against it. Binding here runs before prepareHostMetadata, so this very host write already
+     * carries the module payload.
+     */
+    private fun observeOfficialLyric(hostLyricInfo: String, track: TrackIdentity, generation: Long) {
+        val official = KuGouOfficialLyricInfoEncoder.extractJsonString(hostLyricInfo, "lyric")
+        if (official.isNullOrBlank()) return
+        val retry = synchronized(stateLock) {
+            if (officialLyricGeneration == generation && officialLyricSource == official) {
+                return
+            }
+            officialLyricGeneration = generation
+            officialLyricSource = official
+            officialLyricLines = KuGouOriginalLyricCandidatePolicy.parseTimedLyric(official)
+            lastLyricReadyGeneration != generation && pendingCandidates.isNotEmpty()
+        }
+        if (retry) {
+            tryBindCachedOrPending(track, generation, "official")
         }
     }
 
@@ -344,19 +384,13 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
     private fun handleCandidate(candidate: LyricCandidate) {
         val current = currentSnapshot()
         val track = current.track
-        if (track != null && isForeign(candidate, track)) {
-            KuGouDiagnostics.debug(
-                area = "lyric",
-                event = "LYRIC_CANDIDATE_REJECTED",
-                generation = current.generation,
-                reason = "foreign",
-                message = "pathHash=${DiagnosticHasher.sha256(candidate.path)}"
-            )
-            return
-        }
         if (track != null && bindCandidate(candidate, track, current.generation)) {
             return
         }
+        val foreign = track?.let { foreignReason(candidate, it) }
+        // A candidate foreign to the current track is kept too: KuGou prefetches the next song's
+        // lyric while the current one plays and may not load it again when that song starts, so it
+        // must stay available for a later positive-identity or official-content bind.
         synchronized(stateLock) {
             pendingCandidates.removeAll { it.path == candidate.path }
             pendingCandidates.addLast(candidate)
@@ -367,8 +401,10 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
         KuGouDiagnostics.debug(
             area = "lyric",
             event = "LYRIC_CANDIDATE_PENDING",
-            generation = candidate.capturedGeneration,
-            message = "pathHash=${DiagnosticHasher.sha256(candidate.path)}"
+            generation = current.generation,
+            reason = foreign?.let { "foreign-$it" } ?: "unbound",
+            message = "capturedGeneration=${candidate.capturedGeneration} " +
+                "pathHash=${DiagnosticHasher.sha256(candidate.path)}"
         )
     }
 
@@ -383,7 +419,7 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
         val candidate = synchronized(stateLock) {
             pendingCandidates
                 .asSequence()
-                .filter { !isForeign(it, track) }
+                .filter { bindReason(it, track, generation) != null }
                 .maxByOrNull { it.completedAtElapsed }
                 ?.also { pendingCandidates.remove(it) }
         } ?: return false
@@ -395,14 +431,65 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
         track: TrackIdentity,
         generation: Long
     ): Boolean {
-        if (isForeign(candidate, track)) return false
+        val reason = bindReason(candidate, track, generation) ?: return false
+        KuGouDiagnostics.debug(
+            area = "lyric",
+            event = "LYRIC_CANDIDATE_BOUND",
+            generation = generation,
+            reason = reason,
+            message = "capturedGeneration=${candidate.capturedGeneration} " +
+                "pathHash=${DiagnosticHasher.sha256(candidate.path)}"
+        )
+        val emitted = emitLyrics(candidate.lyrics, track, generation, candidate.source)
+        if (emitted) {
+            synchronized(stateLock) {
+                lastBoundPath = candidate.path
+                lastBoundGeneration = generation
+            }
+        }
+        return emitted
+    }
+
+    /** Why [candidate] belongs to [track] in [generation], or null when it must not be bound. */
+    private fun bindReason(
+        candidate: LyricCandidate,
+        track: TrackIdentity,
+        generation: Long
+    ): String? {
+        if (foreignReason(candidate, track) != null) {
+            return if (matchesOfficialLyric(candidate, generation)) "official-content" else null
+        }
         val capturedId = candidate.capturedId.orEmpty()
-        val identityHit = capturedId.isNotBlank() &&
-            KuGouTrackIdentity.identityKeys(track).contains(capturedId)
-        val generationHit = candidate.capturedGeneration == generation ||
-            candidate.capturedGeneration == 0L
-        if (!identityHit && !generationHit) return false
-        return emitLyrics(candidate.lyrics, track, generation, candidate.source)
+        if (capturedId.isNotBlank() && KuGouTrackIdentity.identityKeys(track).contains(capturedId)) {
+            return "identity"
+        }
+        if (candidate.capturedGeneration == generation || candidate.capturedGeneration == 0L) {
+            return "generation"
+        }
+        // The load callback carries no song identity, and KuGou starts the next song's load just
+        // before publishing its metadata or prefetches it during the previous song. Such a
+        // candidate binds only when its own file name or leading metadata line names this track.
+        return KuGouOriginalLyricCandidatePolicy.positiveMatch(
+            path = candidate.path,
+            firstLineText = candidate.lyrics.firstOrNull()?.text,
+            expectedTitle = track.title,
+            expectedArtist = track.artist
+        )?.let { "positive-$it" }
+            ?: if (matchesOfficialLyric(candidate, generation)) "official-content" else null
+    }
+
+    /**
+     * Whether [candidate]'s timed lines are the official lyric KuGou published for [generation].
+     * A file already bound to an earlier song never matches, so a briefly stale official lyricInfo
+     * cannot move the previous song's lyric onto the new one.
+     */
+    private fun matchesOfficialLyric(candidate: LyricCandidate, generation: Long): Boolean {
+        val official = synchronized(stateLock) {
+            if (officialLyricGeneration != generation) return false
+            if (candidate.path == lastBoundPath && lastBoundGeneration != generation) return false
+            officialLyricLines
+        }
+        return KuGouOriginalLyricCandidatePolicy.matchesTimedLyric(official, candidate.lyrics)
     }
 
     private fun emitLyrics(
@@ -431,10 +518,17 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
         KuGouLyricsCache.put(KuGouTrackIdentity.identityKeys(track, listOf(track.id.orEmpty())), clean)
         val publication = KuGouPublication(track, clean, generation, source)
         KuGouLyricInfoPublisher.onLyricReady(publication)
-        val replayed = KuGouLyricInfoPublisher.replayIfNeeded(hostPackage)
+        // Inside KuGou's own setMetadata the write in progress is overlaid right after this, so
+        // re-sending an older host object from within that call would only add a stale frame.
+        val attachedToHostWrite = hostWriteInProgress.get() == true
+        val replayed = !attachedToHostWrite && KuGouLyricInfoPublisher.replayIfNeeded(hostPackage)
         KuGouDiagnostics.info(
             area = "publisher",
-            event = if (replayed) "NATIVE_LYRICINFO_PATCHED" else "LYRIC_READY_WAITING_HOST",
+            event = when {
+                replayed -> "NATIVE_LYRICINFO_PATCHED"
+                attachedToHostWrite -> "LYRIC_READY_ATTACHED_TO_HOST_WRITE"
+                else -> "LYRIC_READY_WAITING_HOST"
+            },
             generation = generation,
             message = "source=$source lines=${clean.size} replay=$replayed"
         )
@@ -521,7 +615,8 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
         ).filter { it.isDirectory }
     }
 
-    private fun isForeign(candidate: LyricCandidate, track: TrackIdentity): Boolean {
+    /** Which evidence ("leading" or "file") marks [candidate] as another song's lyric, if any. */
+    private fun foreignReason(candidate: LyricCandidate, track: TrackIdentity): String? {
         if (KuGouOriginalLyricCandidatePolicy.hasForeignLeadingMetadata(
                 candidate.capturedId,
                 track.id,
@@ -530,16 +625,17 @@ class KuGouPlayerHooker(private val hookContext: ProviderHookContext) {
                 track.artist
             )
         ) {
-            return true
+            return "leading"
         }
         val identity = KuGouOriginalLyricCandidatePolicy.fileIdentityFromPath(candidate.path)
-            ?: return false
-        return KuGouOriginalLyricCandidatePolicy.isForeignFileIdentity(
+            ?: return null
+        val foreign = KuGouOriginalLyricCandidatePolicy.isForeignFileIdentity(
             identity.artist,
             identity.title,
             track.title,
             track.artist
         )
+        return if (foreign) "file" else null
     }
 
     private suspend fun waitForReadableLyricFile(path: String): File? {

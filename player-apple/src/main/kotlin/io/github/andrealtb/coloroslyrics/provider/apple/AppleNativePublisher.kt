@@ -50,11 +50,8 @@ object AppleNativePublisher {
             return NativeLyricInfoPublisher.Result.STALE_GENERATION
         }
 
-        val prepared = AppleMetadataArtwork.prepareForLyricInfo(live)
-        val builder = AppleMetadataArtwork.newPreservingBuilder(prepared)
-        val result = NativeLyricInfoPublisher.publishToPlatformMetadata(
-            builder = builder,
-            originalMetadata = prepared,
+        val result = NativeLyricInfoPublisher.publishToHostMetadata(
+            metadata = live,
             track = track,
             lines = publication.lines,
             trackGeneration = trackGeneration,
@@ -63,7 +60,8 @@ object AppleNativePublisher {
             hostPackage = hostPackage
         )
         if (result.isPublished) {
-            val patched = builder.build()
+            // lyricInfo now lives in the live metadata itself; re-send that same object.
+            val patched = live
             val committed = runCatching {
                 registry.withModuleWrite { session.setMetadata(patched) }
             }.isSuccess
@@ -95,20 +93,18 @@ object AppleNativePublisher {
         return result
     }
 
-    internal fun buildReplayMetadata(
+    /** Appends the replay snapshot into the host's own [metadata]; the object is never copied. */
+    internal fun appendReplayLyricInfo(
         metadata: MediaMetadata,
         snapshot: AppleReplaySnapshot,
         generationPolicy: TrackGenerationPolicy,
         hostPackage: String
-    ): Pair<NativeLyricInfoPublisher.Result, MediaMetadata?> {
+    ): NativeLyricInfoPublisher.Result {
         if (!AppleMetadataArtwork.isReadyForLyricInfo(metadata)) {
-            return NativeLyricInfoPublisher.Result.INVALID_INPUT to null
+            return NativeLyricInfoPublisher.Result.INVALID_INPUT
         }
-        val prepared = AppleMetadataArtwork.prepareForLyricInfo(metadata)
-        val builder = AppleMetadataArtwork.newPreservingBuilder(prepared)
-        val result = NativeLyricInfoPublisher.publishToPlatformMetadata(
-            builder = builder,
-            originalMetadata = prepared,
+        return NativeLyricInfoPublisher.publishToHostMetadata(
+            metadata = metadata,
             track = snapshot.track,
             lines = snapshot.publication.lines,
             trackGeneration = snapshot.generation,
@@ -116,8 +112,6 @@ object AppleNativePublisher {
             playerPackage = hostPackage,
             hostPackage = hostPackage
         )
-        val patched = if (result.isPublished) builder.build() else null
-        return result to patched
     }
 
     internal fun classifyCommit(

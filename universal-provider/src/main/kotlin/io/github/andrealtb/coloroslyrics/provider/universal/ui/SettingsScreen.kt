@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 private data class ProcessingSettings(
     val translation: Boolean,
     val wordTiming: Boolean,
+    val clockLineFallback: Boolean,
     val rawLyric: Boolean,
     val debug: Boolean
 )
@@ -45,6 +46,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     var translationEnabled by remember { mutableStateOf(true) }
     var wordTimingEnabled by remember { mutableStateOf(false) }
+    var clockLineFallbackEnabled by remember { mutableStateOf(true) }
     var rawLyricEnabled by remember { mutableStateOf(true) }
     var debugEnabled by remember { mutableStateOf(false) }
     var settingsLoaded by remember { mutableStateOf(false) }
@@ -54,25 +56,34 @@ fun SettingsScreen(
             ProcessingSettings(
                 prefs.getBoolean(UniversalSettingsConstants.KEY_TRANSLATION, true),
                 prefs.getBoolean(UniversalSettingsConstants.KEY_WORD_TIMING, false),
+                prefs.getBoolean(UniversalSettingsConstants.KEY_CLOCK_LINE_FALLBACK, true),
                 prefs.getBoolean(UniversalSettingsConstants.KEY_RAW_LYRIC, true),
                 prefs.getBoolean(UniversalSettingsConstants.KEY_DEBUG, false)
             )
         }
         translationEnabled = settings.translation
         wordTimingEnabled = settings.wordTiming
+        clockLineFallbackEnabled = settings.clockLineFallback
         rawLyricEnabled = settings.rawLyric
         debugEnabled = settings.debug
         settingsLoaded = true
     }
 
     fun updateConfig() {
-        val settings = ProcessingSettings(translationEnabled, wordTimingEnabled, rawLyricEnabled, debugEnabled)
+        val settings = ProcessingSettings(
+            translationEnabled,
+            wordTimingEnabled,
+            clockLineFallbackEnabled,
+            rawLyricEnabled,
+            debugEnabled
+        )
         val appContext = context.applicationContext
         UniversalAppIo.execute {
             appContext.getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putBoolean(UniversalSettingsConstants.KEY_TRANSLATION, settings.translation)
                 .putBoolean(UniversalSettingsConstants.KEY_WORD_TIMING, settings.wordTiming)
+                .putBoolean(UniversalSettingsConstants.KEY_CLOCK_LINE_FALLBACK, settings.clockLineFallback)
                 .putBoolean(UniversalSettingsConstants.KEY_RAW_LYRIC, settings.rawLyric)
                 .putBoolean(UniversalSettingsConstants.KEY_DEBUG, settings.debug)
                 .apply()
@@ -80,6 +91,7 @@ fun SettingsScreen(
                 addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
                 putExtra(UniversalSnapshotStore.EXTRA_SOURCE_PRIORITY, LyricsSourceConfigStore.encode(LyricsSourceConfigStore.read(appContext)))
                 putExtra(UniversalSnapshotStore.EXTRA_WORD_TIMING_ENABLED, settings.wordTiming)
+                putExtra(UniversalSnapshotStore.EXTRA_CLOCK_LINE_FALLBACK_ENABLED, settings.clockLineFallback)
                 putExtra(UniversalSnapshotStore.EXTRA_TRANSLATION_ENABLED, settings.translation)
                 putExtra(UniversalSnapshotStore.EXTRA_RAW_LYRIC_ENABLED, settings.rawLyric)
                 putExtra(UniversalSnapshotStore.EXTRA_DEBUG_ENABLED, settings.debug)
@@ -175,6 +187,28 @@ fun SettingsScreen(
                         enabled = settingsLoaded,
                         onCheckedChange = {
                             wordTimingEnabled = it
+                            updateConfig()
+                        }
+                    )
+                }
+            )
+
+            ListItem(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 72.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                leadingContent = { Icon(Icons.Filled.Timer, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                headlineContent = { Text(stringResource(R.string.clock_line_fallback), style = MaterialTheme.typography.bodyLarge) },
+                supportingContent = { Text(stringResource(R.string.clock_line_fallback_desc), style = MaterialTheme.typography.bodySmall) },
+                trailingContent = {
+                    Switch(
+                        checked = clockLineFallbackEnabled,
+                        // Only word timing can fall back; line timing is already published otherwise.
+                        enabled = settingsLoaded && wordTimingEnabled,
+                        onCheckedChange = {
+                            clockLineFallbackEnabled = it
                             updateConfig()
                         }
                     )

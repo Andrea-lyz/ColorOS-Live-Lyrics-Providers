@@ -32,6 +32,8 @@ Provider 只在宿主自己的 metadata bundle 里写入唯一一个 `lyricInfo`
 
 - `KuWoMetadataBundle.kt`：反射取宿主 `MediaMetadata` 私有 `Bundle`（AOSP 名 `mBundle`，
   优先按名、否则按唯一非静态 Bundle 字段解析，`CandidateResolver` 保证不盲取），解析一次后缓存；失败即 fail-open。
+  2026-09-26 起迁入 `provider-core`（`HostMetadataBundle` / `HostMetadataOverlay`），KuWo 行为不变，
+  见 `LYRICINFO-APPEND-ONLY.zh-CN.md`。
 - `KuWoLyricOverlayPolicy.kt`：纯决策表 `APPEND / CLEAR / NOOP`。
 - `KuWoLyricInfoPublisher.kt`：命中当前曲 `putString("lyricInfo", json)`；串歌写 `""` 清 stale；
   值未变化不写。写入后 `MetadataParcelGuard.assess`，超限恢复原值并跳过。artwork、URI、rating、
@@ -58,6 +60,6 @@ Provider 只在宿主自己的 metadata bundle 里写入唯一一个 `lyricInfo`
 ## 未决
 
 - `mBundle` 反射已在本机通过（无 `LYRIC_INFO_APPEND_UNSUPPORTED`）；其他 ColorOS 版本仍以该事件为准。
-- LX / Poweramp / Apple / 酷狗 / 网易 / QQ / Metrolist 仍有 `Builder(existing)` 重建路径，
-  同一族风险面。本次按用户决定不动；如需统一，建议把本机制抽到 `provider-core` 共享。
+- LX / Poweramp / Apple / 酷狗 / 网易 / QQ / Metrolist 已于 2026-09-26 迁到 `provider-core` 共享机制
+  （尚待设备验证）；Spotify / 汽水 / Cone / Salt 仍是复制路径。见 `LYRICINFO-APPEND-ONLY.zh-CN.md`。
 

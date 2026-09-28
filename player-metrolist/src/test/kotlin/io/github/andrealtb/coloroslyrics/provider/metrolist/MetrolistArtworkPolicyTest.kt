@@ -32,12 +32,4 @@ class MetrolistArtworkPolicyTest {
             )
         )
     }
-
-    @Test
-    fun hardwareOrOversizedBitmapsNeedBinderCopy() {
-        assertTrue(MetrolistArtworkPolicy.shouldCopyForBinder("HARDWARE", 64, 64))
-        assertTrue(MetrolistArtworkPolicy.shouldCopyForBinder("ARGB_8888", 512, 512))
-        assertFalse(MetrolistArtworkPolicy.shouldCopyForBinder("ARGB_8888", 120, 120))
-    }
 }
-

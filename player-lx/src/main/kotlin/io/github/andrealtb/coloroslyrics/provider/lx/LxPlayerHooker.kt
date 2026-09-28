@@ -246,41 +246,41 @@ class LxPlayerHooker(private val hookContext: ProviderHookContext) {
                         bluetoothProjectionLogged = false
                     }
 
-                    var outgoing = LxMetadataArtwork.prepareIdentityForSystemUi(incoming, resolved.track)
-                    if (outgoing !== incoming) {
+                    // Identity and lyricInfo are written into LX's own metadata object; args[0]
+                    // is never replaced, so every artwork lane stays exactly as LX published it.
+                    if (LxMetadataArtwork.prepareIdentityForSystemUi(incoming, resolved.track)) {
                         LxArtworkDiagnostics.log(
                             "HOST_IDENTITY",
-                            outgoing,
+                            incoming,
                             session,
                             generationPolicy.generation
                         )
                     }
-                    sessions.onHostMetadata(session, resolved.track, outgoing)
-                    attachPendingToHostMetadata(session, outgoing, resolved.track)?.let { outgoing = it }
+                    sessions.onHostMetadata(session, resolved.track, incoming)
+                    attachPendingToHostMetadata(session, incoming, resolved.track)
 
                     val snapshot = synchronized(publicationLock) { replaySnapshot }
-                    val incomingLyricInfo = outgoing.getString("lyricInfo")
+                    val incomingLyricInfo = incoming.getString("lyricInfo")
                     val alreadyOwned = LxReplayPolicy.isModuleOwned(incomingLyricInfo, hostPackage)
 
                     if (!alreadyOwned && LxReplayPolicy.shouldReplay(
                             snapshot, session, resolved.track, generationPolicy.currentTrack,
                             generationPolicy.generation,
                             snapshot?.let { generationPolicy.isGenerationValid(it.generation) } == true,
-                            LxMetadataArtwork.isReadyForLyricInfo(outgoing),
+                            LxMetadataArtwork.isReadyForLyricInfo(incoming),
                             incomingLyricInfo
                         )
                     ) {
-                        LxNativePublisher.buildReplayMetadata(
-                            outgoing,
+                        LxNativePublisher.appendReplayLyricInfo(
+                            incoming,
                             snapshot!!,
                             generationPolicy,
                             hostPackage
-                        ).second?.let { outgoing = it }
+                        )
                     }
-                    if (outgoing !== incoming) args[0] = outgoing
                     LxArtworkDiagnostics.log(
                         "HOST_OUT",
-                        outgoing,
+                        incoming,
                         session,
                         generationPolicy.generation
                     )
@@ -415,31 +415,32 @@ class LxPlayerHooker(private val hookContext: ProviderHookContext) {
         }
     }
 
+    /** Appends a pending publication into [incoming] itself; returns true when attached. */
     private fun attachPendingToHostMetadata(
         session: MediaSession,
         incoming: MediaMetadata,
         resolvedTrack: TrackIdentity
-    ): MediaMetadata? {
-        val pending = pendingStore.peek() ?: return null
-        if (!LxMetadataArtwork.isReadyForLyricInfo(incoming)) return null
+    ): Boolean {
+        val pending = pendingStore.peek() ?: return false
+        if (!LxMetadataArtwork.isReadyForLyricInfo(incoming)) return false
         val generation = generationPolicy.generation
         val currentTrack = generationPolicy.currentTrack ?: resolvedTrack.takeUnless { it.isBlank }
-        if (currentTrack == null) return null
-        if (!LxLyricDecoder.matchesTrackIdentity(pending.capturedTrack, currentTrack)) return null
-        if (!generationController.acceptsPublication(currentTrack, generation)) return null
+        if (currentTrack == null) return false
+        if (!LxLyricDecoder.matchesTrackIdentity(pending.capturedTrack, currentTrack)) return false
+        if (!generationController.acceptsPublication(currentTrack, generation)) return false
         val selected = sessions.selectUnique(currentTrack)
-        if (selected !== session && selected != null) return null
+        if (selected !== session && selected != null) return false
 
         val bound = pending.boundTo(currentTrack)
         val snapshot = LxReplaySnapshot(WeakReference(session), currentTrack, generation, bound)
-        val (result, patched) = LxNativePublisher.buildReplayMetadata(
+        val result = LxNativePublisher.appendReplayLyricInfo(
             metadata = incoming,
             snapshot = snapshot,
             generationPolicy = generationPolicy,
             hostPackage = hostPackage
         )
-        if (!result.isPublished || patched == null) return null
-        if (!pendingStore.takeIfSame(pending)) return null
+        if (!result.isPublished) return false
+        if (!pendingStore.takeIfSame(pending)) return false
 
         synchronized(publicationLock) {
             replaySnapshot = snapshot
@@ -454,7 +455,7 @@ class LxPlayerHooker(private val hookContext: ProviderHookContext) {
         )
         logPublicationResult("PENDING_DRAINED", generation)
         logPublicationResult(result.name, generation)
-        return patched
+        return true
     }
 
     private fun drainPendingPublication() {

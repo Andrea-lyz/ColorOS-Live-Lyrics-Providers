@@ -26,8 +26,8 @@
   afterHook 把修补后的 JSON `putString` 回官方 Builder。歌词晚到时平台
   `MediaSession#setMetadata` 每代最多 replay 一次。
 - 罗马音（`LyricLoadBean.e()`）不得进入 `translationLyric` / `transLyric`。
-- 空 typed `MediaMetadata.Builder()` 全量拷贝（禁止 `Builder(existing)`）。
-  HARDWARE 或边长 >240px 的 bitmap 用 Canvas 重绘为 software ARGB_8888。
+- `lyricInfo` 原地追加进宿主 metadata，不复制、不重绘封面（4.1 起，见 `docs/4.1/LYRICINFO-APPEND-ONLY.zh-CN.md`）。
+  官方字段取自 QQ 自己写在该对象上的 `lyricInfo`。
   不 HTTP 拉封面、不 snapshot、不发明封面。
 - 调试开关复用 `provider-core`：`ProviderId.QQ`、prefs
   `qq_provider_debug_prefs`、`MODE_WORLD_READABLE` 写入 + Yuki
@@ -47,7 +47,7 @@ RemoteLyricController#onLoadSuc
 MediaSessionUpdateController#h afterHook
         ↓ 修补 lyricInfo JSON（rawLyric / translationLyric / transLyric）
 平台 MediaSession#setMetadata
-        ↓ 空 Builder 拷贝；歌词晚到时每代最多 replay 一次
+        ↓ 原地追加；歌词晚到时每代最多 replay 一次（重发宿主同一对象）
 NATIVE_LYRICINFO_PATCHED
 ```
 
