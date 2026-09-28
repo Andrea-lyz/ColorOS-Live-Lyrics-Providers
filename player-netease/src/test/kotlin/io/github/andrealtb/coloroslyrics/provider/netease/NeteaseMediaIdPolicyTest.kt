@@ -25,6 +25,21 @@ class NeteaseMediaIdPolicyTest {
     }
 
     @Test
+    fun carLinkPlaylistBrowseIdResolvesToSongId() {
+        // Observed on ColorOS 17 CarLink projection: playlist_id_<playlistId>_<songId>.
+        assertEquals(
+            "26129421",
+            NeteaseMediaIdPolicy.normalize("playlist_id_86192403_26129421")
+        )
+    }
+
+    @Test
+    fun browseIdWithoutSongYieldsItsTrailingNumber() {
+        // A playlist node is never the playing item; its number cannot match a song payload.
+        assertEquals("86192403", NeteaseMediaIdPolicy.normalize("playlist_id_86192403"))
+    }
+
+    @Test
     fun nonNumericBrowseTailIsKeptVerbatim() {
         assertEquals("other_id__abc", NeteaseMediaIdPolicy.normalize("other_id__abc"))
         assertEquals("other_id__", NeteaseMediaIdPolicy.normalize("other_id__"))
