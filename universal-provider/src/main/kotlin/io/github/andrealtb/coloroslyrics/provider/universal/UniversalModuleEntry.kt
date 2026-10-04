@@ -154,7 +154,20 @@ class UniversalModuleEntry : XposedModule() {
             "setPlaybackState",
             PlaybackState::class.java
         )
-        val recordField = stubClass.getDeclaredField("this\$0").apply { isAccessible = true }
+        // ColorOS 17 (Android 17) refactored SessionStub: the record is now held through the
+        // field "mRecord" as a WeakReference; older builds used the synthetic outer field
+        // "this$0" (a direct reference). Resolve by known names first, then by any field
+        // typed as the record, and unwrap the weak reference when reading.
+        val recordField = arrayOf("this\$0", "mRecord").firstNotNullOfOrNull { name ->
+            runCatching { stubClass.getDeclaredField(name) }.getOrNull()
+        } ?: stubClass.declaredFields.firstOrNull { it.type.name == recordClass.name }
+        ?: error("SessionStub record reference field not found")
+        recordField.isAccessible = true
+        fun recordOf(stub: Any?): Any? {
+            if (stub == null) return null
+            val raw = recordField.get(stub) ?: return null
+            return if (raw is java.lang.ref.WeakReference<*>) raw.get() else raw
+        }
         val packageField = fieldOrNull(recordClass, "mPackageName")
         val userField = fieldOrNull(recordClass, "mUserId")
         val metadataField = fieldOrNull(recordClass, "mMetadata")
@@ -176,7 +189,7 @@ class UniversalModuleEntry : XposedModule() {
             .setId("universal:setMetadata")
             .intercept { chain ->
                 val stub = chain.thisObject
-                val record = recordField.get(stub) ?: return@intercept chain.proceed()
+                val record = recordOf(stub) ?: return@intercept chain.proceed()
                 val ownerPackage = packageField?.get(record) as? String ?: return@intercept chain.proceed()
                 val commandContext = (contextField?.get(record) as? Context) ?: currentSystemContext()
                 commandContext?.let(::ensureRequestReceiver)
@@ -224,7 +237,7 @@ class UniversalModuleEntry : XposedModule() {
                 chain.proceed()
             }
         hookAfter(setPlaybackState, "setPlaybackState") {
-            val record = recordField.get(it) ?: return@hookAfter
+            val record = recordOf(it) ?: return@hookAfter
             publish(record, packageField, userField, metadataField, playbackField, contextField, lockField, pushMetadataUpdateMethod)
         }
         if (pushSessionDestroyedMethod != null) {
