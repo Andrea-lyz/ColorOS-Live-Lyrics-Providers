@@ -63,6 +63,22 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
+      - name: Verify artwork contract mirror
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify-artwork-contract.ps1 -RepoRoot .
+
+      - name: Build Dynamic Artwork Provider APK
+        run: |
+          if [ "$BUILD_TYPE" = "release" ]; then
+            ./gradlew :artwork-provider-am:assembleRelease --build-cache
+          else
+            ./gradlew :artwork-provider-am:assembleDebug --build-cache
+          fi
+        env:
+          RELEASE_STORE_FILE: ../release.jks
+          RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
       - name: Collect APKs to flat directory
         run: |
           mkdir -p collected-apks
@@ -101,6 +117,14 @@ jobs:
         with:
           name: ColorOS-Live-Lyrics-Providers-${{ env.BUILD_TYPE }}-bundle
           path: bundled-apks/*.zip
+          if-no-files-found: error
+          archive: false
+
+      - name: Upload Dynamic Artwork Provider to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dynamic-artwork-provider-${{ env.BUILD_TYPE }}
+          path: artwork-provider-am/build/outputs/apk/${{ env.BUILD_TYPE }}/*.apk
           if-no-files-found: error
           archive: false
 

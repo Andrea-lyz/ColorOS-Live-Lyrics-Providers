@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "suiteVersion": "4.4.0",
   "sourceTag": "main",
   "compileSdk": 37,
@@ -11,6 +11,23 @@
   "xposedExceptionMode": "protective",
   "xposedAutoHotReload": false,
   "bundleAsset": "ColorOS-Live-Lyrics-Providers-v4.4.0.zip",
+  "artworkProviders": [
+    {
+      "module": "artwork-provider-am",
+      "displayName": "Dynamic Artwork Provider",
+      "applicationId": "io.github.andrealtb.artwork.am",
+      "versionName": "1.0.0",
+      "versionCode": 4,
+      "minSdk": 30,
+      "asset": "ColorOS-Live-Lyrics-Dynamic-Artwork-Provider-v1.0.0.apk",
+      "protocolMajor": 1,
+      "serviceAction": "io.github.andrealtb.artwork.action.BIND_PROVIDER",
+      "settingsActivity": "io.github.andrealtb.artwork.am.AmArtworkActivity",
+      "contractModule": "artwork-contract",
+      "distribution": "bridge-preview",
+      "evidence": "artwork-provider-am/src/main/java/io/github/andrealtb/artwork/am/AmArtworkService.java"
+    }
+  ],
   "providers": [
     {
       "module": "player-salt",

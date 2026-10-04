@@ -49,7 +49,19 @@ val releaseArtifactTaskRequested = gradle.startParameter.taskNames.any { request
         "build"
     )
 }
-if (releaseArtifactTaskRequested) {
+
+// Dynamic artwork source: an optional, independently installed app. It is deliberately outside
+// the v5 lyric Provider matrix, so the matrix counts, bundle, and release jobs are unchanged.
+val artworkProviderModules = listOf(
+    ":artwork-contract",
+    ":artwork-provider-am"
+)
+val artworkReleaseTaskRequested = gradle.startParameter.taskNames.any { requestedTask ->
+    requestedTask.substringAfterLast(':').lowercase() in setOf(
+        "assembleartworkproviderrelease"
+    )
+}
+if (releaseArtifactTaskRequested || artworkReleaseTaskRequested) {
     val missingSigningEnvironment = releaseSigningEnvironment.filter { name ->
         System.getenv(name).isNullOrBlank()
     }
@@ -68,6 +80,46 @@ tasks.register("assembleV5MatrixRelease") {
     group = "build"
     description = "Build every device-validated v5 Provider release APK."
     dependsOn(v5ProviderModules.map { "$it:assembleRelease" })
+}
+
+
+tasks.register("verifyArtworkContract") {
+    group = "verification"
+    description = "Check that the artwork contract mirror matches the Bridge module when available."
+    val bridgeRoot = providers.environmentVariable("BRIDGE_REPO_ROOT").orNull
+    val scriptPath = layout.projectDirectory.file("scripts/verify-artwork-contract.ps1").asFile
+    val repoRoot = layout.projectDirectory.asFile
+    val required = bridgeRoot != null
+    doLast {
+        val arguments = mutableListOf("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath.absolutePath, "-RepoRoot", repoRoot.absolutePath)
+        if (bridgeRoot != null) {
+            arguments += listOf("-BridgeRepoRoot", bridgeRoot, "-Required")
+        }
+        val process = ProcessBuilder(listOf("pwsh") + arguments).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText().trim()
+        val exit = process.waitFor()
+        output.lines().forEach { line -> logger.lifecycle(line) }
+        if (exit != 0) throw GradleException("Artwork contract mirror verification failed with exit=$exit: $output")
+        logger.lifecycle("[CLL] component=build area=verification event=ARTWORK_CONTRACT_MIRROR_OK required=$required")
+    }
+}
+
+tasks.register("testArtworkProvider") {
+    group = "verification"
+    description = "Run the artwork contract and dynamic artwork source unit tests."
+    dependsOn(artworkProviderModules.map { "$it:testDebugUnitTest" })
+}
+
+tasks.register("assembleArtworkProviderDebug") {
+    group = "build"
+    description = "Build the dynamic artwork source debug APK."
+    dependsOn(":artwork-provider-am:assembleDebug")
+}
+
+tasks.register("assembleArtworkProviderRelease") {
+    group = "build"
+    description = "Build the dynamic artwork source release APK."
+    dependsOn(":artwork-provider-am:assembleRelease")
 }
 
 tasks.register("testV5Matrix") {

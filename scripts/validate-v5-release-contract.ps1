@@ -55,7 +55,7 @@ $settings = Get-Content -LiteralPath $settingsPath -Raw
 $versionCatalog = Get-Content -LiteralPath $versionCatalogPath -Raw
 $providers = @($contract.providers)
 
-Assert-Contract ($contract.schema -eq 3) 'unsupported schema'
+Assert-Contract ($contract.schema -eq 4) 'unsupported schema'
 Assert-Contract ($contract.suiteVersion -eq '4.4.0') 'unexpected suiteVersion'
 Assert-Contract ($contract.sourceTag -eq 'main') 'unexpected sourceTag'
 Assert-Contract ($providers.Count -eq 14) 'matrix must contain exactly 14 Providers'
@@ -120,6 +120,42 @@ $expectedModuleProp = [ordered]@{
     exceptionMode = [string]$contract.xposedExceptionMode
     autoHotReload = ([string]$contract.xposedAutoHotReload).ToLowerInvariant()
 }
+
+
+$artworkProviders = @($contract.artworkProviders)
+Assert-Contract ($artworkProviders.Count -eq 1) 'matrix must declare exactly one artwork Provider'
+$artworkModules = @()
+foreach ($artwork in $artworkProviders) {
+    $artworkModule = [string]$artwork.module
+    $artworkModules += $artworkModule
+    $artworkModuleDir = Join-Path $RepoRoot $artworkModule
+    $artworkBuildPath = Join-Path $artworkModuleDir 'build.gradle.kts'
+    $artworkManifestPath = Join-Path $artworkModuleDir 'src\main\AndroidManifest.xml'
+    $artworkContractDir = Join-Path $RepoRoot ([string]$artwork.contractModule)
+    $artworkEvidencePath = Join-Path $RepoRoot ([string]$artwork.evidence)
+    Assert-Contract (Test-Path -LiteralPath $artworkModuleDir -PathType Container) "artwork module directory missing: $artworkModule"
+    foreach ($requiredPath in @($artworkBuildPath, $artworkManifestPath, $artworkEvidencePath)) {
+        Assert-Contract (Test-Path -LiteralPath $requiredPath -PathType Leaf) "required artwork module file missing: $requiredPath"
+    }
+    Assert-Contract (Test-Path -LiteralPath $artworkContractDir -PathType Container) "artwork contract mirror is missing: $($artwork.contractModule)"
+    Assert-Contract ($settings.Contains('include(":' + $artworkModule + '")')) "settings.gradle.kts does not include $artworkModule"
+    Assert-Contract ($settings.Contains('include(":' + [string]$artwork.contractModule + '")')) "settings.gradle.kts does not include $($artwork.contractModule)"
+
+    $artworkBuild = Get-Content -LiteralPath $artworkBuildPath -Raw
+    Assert-Contract ($artworkBuild -match ('applicationId\s*=\s*"' + [regex]::Escape([string]$artwork.applicationId) + '"')) "$artworkModule applicationId differs"
+    Assert-Contract ($artworkBuild -match ('versionName\s*=\s*"' + [regex]::Escape([string]$artwork.versionName) + '"')) "$artworkModule versionName differs"
+    Assert-Contract ($artworkBuild -match ('versionCode\s*=\s*' + [string]$artwork.versionCode + '(\D|$)')) "$artworkModule versionCode differs"
+    Assert-Contract ($artworkBuild -match ('minSdk\s*=\s*' + [string]$artwork.minSdk + '(\D|$)')) "$artworkModule minSdk differs"
+    Assert-Contract ($artwork.asset -eq "ColorOS-Live-Lyrics-Dynamic-Artwork-Provider-v$($artwork.versionName).apk") "$artworkModule asset name differs"
+    Assert-Contract (-not $artworkBuild.Contains('gradle/provider-app-convention.gradle.kts')) "$artworkModule must not apply the API 102 Xposed app convention"
+    Assert-Contract (-not (Test-Path -LiteralPath (Join-Path $artworkModuleDir 'src\main\resources\META-INF\xposed'))) "$artworkModule must not declare xposed resources"
+    Assert-Contract ($declaredModules -notcontains $artworkModule) "$artworkModule must stay outside the v5 lyric matrix"
+    $artworkManifest = Get-Content -LiteralPath $artworkManifestPath -Raw
+    Assert-Contract ($artworkManifest.Contains([string]$artwork.serviceAction)) "$artworkModule manifest does not declare the artwork service action"
+    Assert-Contract ($artworkManifest.Contains([string]$artwork.settingsActivity)) "$artworkModule manifest does not declare the settings activity"
+    Assert-Contract (-not $artworkManifest.Contains('ProviderModuleApplication')) "$artworkModule must not use the Provider module application"
+}
+Assert-Contract (Test-Path -LiteralPath (Join-Path $RepoRoot 'scripts\verify-artwork-contract.ps1') -PathType Leaf) 'artwork contract mirror verification script is missing'
 
 foreach ($provider in $providers) {
     $module = [string]$provider.module
@@ -224,7 +260,9 @@ $forbiddenRuntimeStrings = @(
 $runtimeRoots = @(
     'provider-core', 'provider-hook-api102', 'provider-settings-api102', 'reflection-core',
     'parser-lrc', 'parser-qrc', 'parser-yrc', 'parser-krc', 'parser-ttml', 'share'
-) + $contractModules
+) + $contractModules + $artworkModules
+$artworkContractModules = @($artworkProviders | ForEach-Object { [string]$_.contractModule })
+$runtimeRoots += $artworkContractModules
 $runtimeFiles = @()
 foreach ($relativeRoot in $runtimeRoots) {
     $sourceRoot = Join-Path $RepoRoot (Join-Path $relativeRoot 'src\main')
@@ -247,4 +285,4 @@ foreach ($file in @($runtimeFiles | Sort-Object FullName -Unique)) {
     }
 }
 
-Write-Output "Provider release contract is valid: $($providers.Count) API-102 modules, suite=$($contract.suiteVersion), tag=$($contract.sourceTag)."
+Write-Output "Provider release contract is valid: $($providers.Count) API-102 modules, $($artworkProviders.Count) artwork Provider, suite=$($contract.suiteVersion), tag=$($contract.sourceTag)."

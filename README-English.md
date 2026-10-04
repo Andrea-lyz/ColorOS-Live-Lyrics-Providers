@@ -10,6 +10,10 @@ Universal Player Provider, and Readify TTS Provider. Every module uses a libxpos
 static scope, and protective exception handling; the Universal Provider settings app runs separately
 while its module logic is limited to `system_server`.
 
+An optional, independently installed [Dynamic Artwork Provider](#dynamic-artwork-provider-optional)
+(`:artwork-provider-am`) is also part of this repository. It is not a lyric Provider and is built,
+installed, and released on its own.
+
 [中文](README.md)
 
 Developer entry points:
@@ -130,6 +134,26 @@ the formal 14-app v5 release matrix and Provider bundle.
 
 See [player-readify/README.md](player-readify/README.md) for the protocol, host scope, and current
 device-validation limits.
+
+## Dynamic Artwork Provider (optional)
+
+`:artwork-provider-am` (`io.github.andrealtb.artwork.am`) is an optional standalone app that gives
+the lock screen a square motion cover: it matches the song against Apple Music's public catalog,
+downloads and verifies the square video, and hands it to an authorized Bridge over
+`artwork-contract` v1. It is not an Xposed module, it never injects into a player, and it is not
+part of the v5 lyric matrix above. Without it the lock screen keeps the official static cover.
+
+- First run: turn the source on inside the app (off by default, unmetered networks by default),
+  then pick and authorize it in the Bridge under "Settings → Dynamic artwork".
+- Fully independent of the lyric Providers: install, update, or remove it on its own; the lyric
+  path is unaffected.
+- Version 1.0.0 (versionCode 4), signed with the same release key as the lyric Providers. It is
+  published as its own asset and does not enter the Provider bundle.
+- Source chain and development entry point: [artwork-provider-am/README.md](artwork-provider-am/README.md).
+
+`artwork-contract/` mirrors the protocol module of the same name in the Bridge repository; files
+under `src/` must stay byte-identical to it, and `scripts/verify-artwork-contract.ps1` checks that
+whenever both checkouts are available (Gradle task `verifyArtworkContract`).
 
 ## Acknowledgements
 

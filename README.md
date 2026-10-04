@@ -9,6 +9,9 @@
 Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态作用域与保护性异常策略；
 通用 Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`。
 
+此外提供可选的独立应用[动态封面 Provider](#动态封面-provider可选)（`:artwork-provider-am`）：
+它不属于歌词矩阵，单独安装、单独发布。
+
 [English](README-English.md)
 
 开发者入口：
@@ -132,3 +135,21 @@ v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了�
 
 协议、宿主范围与当前设备验证限制见
 [player-readify/README.md](player-readify/README.md)。
+
+## 动态封面 Provider（可选）
+
+`:artwork-provider-am`（`io.github.andrealtb.artwork.am`）是可选、独立安装的应用，为锁屏提供
+方形动态封面：按歌曲信息匹配 Apple Music 公开目录中的方形视频，下载并校验后通过
+`artwork-contract` v1 交给已授权的 Bridge 渲染。它不是 Xposed 模块，不注入任何播放器，
+也不属于上面的 v5 歌词矩阵；不安装它时锁屏保持官方静态封面。
+
+- 首次使用：在应用内打开来源（默认关闭，默认仅非计费网络），再到 Bridge 的
+  「设置 → 动态封面」中选择并授权它。
+- 与歌词 Provider 完全独立：可单独安装、更新、卸载，歌词链路不受影响。
+- 版本 1.0.0（versionCode 4），使用与歌词 Provider 相同的发布签名；
+  正式发布时作为独立资产提供，不进入 Provider bundle。
+- 开发入口与来源链路见 [artwork-provider-am/README.md](artwork-provider-am/README.md)。
+
+`artwork-contract/` 是 Bridge 仓库同名协议模块的镜像，`src/` 必须与其逐字节一致；
+`scripts/verify-artwork-contract.ps1` 在同时具备两个仓库检出时校验（Gradle 任务
+`verifyArtworkContract`）。

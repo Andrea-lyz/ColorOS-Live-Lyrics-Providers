@@ -69,3 +69,9 @@ include(":universal-provider")
 
 // Experimental API 102 Readify adapter; not part of the release matrix yet.
 include(":player-readify")
+
+// Dynamic artwork source (artwork protocol v1). Independent optional app, not a lyric Provider:
+// it is built and released on its own tasks below, never as part of the v5 lyric matrix.
+// artwork-contract mirrors the canonical module in the Bridge repository.
+include(":artwork-contract")
+include(":artwork-provider-am")
