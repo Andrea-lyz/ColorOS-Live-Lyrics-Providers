@@ -38,6 +38,22 @@
 | UAPP 类粗粒度进度 + 当前 Bridge（行号时钟对齐） | 行边界不回跳，官方行号与逐字填充同时切换；Bridge 日志含 `Hooked lyric position controller`，renderer debug 下 `NATIVE_CLOCK_ALIGNED` 的 `\|deltaMs\|` ≤ 600 | Bridge 单元测试含粗粒度锚点模拟；2026-09-25 设备日志（自动逐行开启）：`controllerHooked=true`，`deltaMs` −174..+251，行号采样单调 |
 | 上一行场景下关闭“进度粒度粗时自动逐行” | 逐字模式下行切换不回跳，高亮行与逐字填充一致（不闪回上一行满填充） | 待设备复测 |
 
+## ColorOS 17（Android 17）适配
+
+`MediaSessionRecord$SessionStub` 在 ColorOS 16 → 17 之间重构：旧 ROM 使用合成字段 `this$0` 强引用
+外层 `MediaSessionRecord`，C17 改为持有 `mRecord`（`WeakReference`）。原实现硬编码按名查找
+`this$0`，在 C17 上必然抛 `NoSuchFieldException`；异常发生在 `onSystemServerStarting` 最前面且未被
+捕获，setMetadata / setPlaybackState / pushSessionDestroyed 等 hook 全部没有装上。表现是模块已启用、
+作用域正确、绑定正常，但对所有播放器零响应，日志里没有任何 hook 事件。
+
+1.1.1 起按 `this$0` → `mRecord` 逐名解析，再按字段类型兜底（指向 record 的 `WeakReference`），读取
+统一拆包；ColorOS 16 及更早仍优先 `this$0`，行为不变。
+
+真机证据（PR #3）：一加 PJZ110，ColorOS 17 / Android 17 `PJZ110_17.0.0.101(SP02CN01)`，
+LSPosed v2.20-it (7887)，模块作用域 = 系统框架。修复前每次开机必现 `NoSuchFieldException`；修复后
+开机无异常，Spotify 播放链路完整（`SET_METADATA_HOOK_ENTERED` → `METADATA_OBSERVED_BEFORE` →
+`LYRIC_INFO_ATTACHED`），provider 快照为 `boundPlayer=true / lyricStatus=success`。
+
 ## 已知缺陷：蓝牙/车载歌词冲突
 
 部分播放器会把当前歌词行持续写入 `MediaMetadata.TITLE`，将标准 MediaSession 的歌曲标题字段当作蓝牙/车载歌词显示通道。通用 Provider 无法在首次播放且没有稳定 media ID、queue ID、media URI 或历史缓存时可靠恢复真实歌名。

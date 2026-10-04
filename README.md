@@ -47,9 +47,14 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 
 ## 通用播放器 Provider
 
-通用播放器 Provider（`Provider-Universal 1.1.0 (2)`）面向没有专属适配、但会创建标准 Android
+通用播放器 Provider（`Provider-Universal 1.1.1 (3)`）面向没有专属适配、但会创建标准 Android
 `MediaSession` 的播放器。它以静态 scope 仅运行在 `system_server`，从设置 App 同步用户明确选择的
 目标包；没有被选择的音乐、视频和其他媒体 App 不会被观察、联网取词或写入 `lyricInfo`。
+
+1.1.1 修复 ColorOS 17（Android 17）上的模块加载失败：C17 的 `MediaSessionRecord$SessionStub`
+不再有合成字段 `this$0`，改为持有 `mRecord`（`WeakReference`），1.1.0 及更早版本按名查找
+`this$0` 抛 `NoSuchFieldException`，模块虽已启用但对所有播放器零响应。1.1.1 按名逐级解析并
+按字段类型兜底，ColorOS 16 及更早行为不变。
 
 安装 APK 后打开 **Universal Player Provider**：在“播放器”页选择目标 App，在“来源”页调整歌词源
 优先级，并按需打开逐字、翻译、原始歌词和脱敏诊断。模块会保留宿主已有 metadata，仅向选中播放器
