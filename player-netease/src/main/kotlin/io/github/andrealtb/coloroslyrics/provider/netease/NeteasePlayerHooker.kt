@@ -160,7 +160,9 @@ class NeteasePlayerHooker(
         val current = coordinator.bindTrack(
             TrackIdentity(
                 id = firstNonBlank(
-                    metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID),
+                    NeteaseMediaIdPolicy.normalize(
+                        metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
+                    ),
                     payloadSongId
                 ),
                 title = title,

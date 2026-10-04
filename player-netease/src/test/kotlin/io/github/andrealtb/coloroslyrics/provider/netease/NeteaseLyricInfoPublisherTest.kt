@@ -34,6 +34,21 @@ class NeteaseLyricInfoPublisherTest {
     }
 
     @Test
+    fun onTrackChangedKeepsPublicationForCarLinkBrowseId() {
+        NeteaseLyricInfoPublisher.onLyricReady(samplePublication("314159", "夜曲"))
+        assertTrue(
+            NeteaseLyricInfoPublisher.onTrackChanged(
+                2L,
+                TrackIdentity(
+                    id = NeteaseMediaIdPolicy.normalize("other_id__314159"),
+                    title = "夜曲",
+                    artist = "周杰伦"
+                )
+            )
+        )
+    }
+
+    @Test
     fun onTrackChangedClearsPublicationForDifferentTrack() {
         NeteaseLyricInfoPublisher.onLyricReady(samplePublication("314159", "夜曲"))
         assertFalse(
