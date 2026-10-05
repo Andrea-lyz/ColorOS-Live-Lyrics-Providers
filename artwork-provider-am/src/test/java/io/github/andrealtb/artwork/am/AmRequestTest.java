@@ -17,11 +17,11 @@ public class AmRequestTest {
         var task = new AmNetwork.Task(); task.cancel();
         try { task.check(); fail(); } catch (AmFailure expected) { assertEquals(Status.ERROR, expected.status); assertEquals("cancelled", expected.reason); }
     }
-    @Test public void queryCompletionAndPhysicalSizeCannotReuseWrongCacheEntry() {
+    @Test public void queryIdentityAndMarketAreIsolatedWhileDisplaySizesShareCache() {
         var incomplete = AmIdentityTest.query("Style", "", 288);
         var complete = AmIdentityTest.query("Style", "1989", 288);
         assertNotEquals(AmCache.key(incomplete, "us"), AmCache.key(complete, "us"));
         assertNotEquals(AmCache.key(complete, "us"), AmCache.key(complete, "cn"));
-        assertNotEquals(AmCache.key(complete, "us"), AmCache.key(AmIdentityTest.query("Style", "1989", 1080), "us"));
+        assertEquals(AmCache.key(complete, "us"), AmCache.key(AmIdentityTest.query("Style", "1989", 1080), "us"));
     }
 }

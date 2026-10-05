@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Dynamic Artwork Diagnostics</string>
+    <string name="inspection_summary">When diagnostics are on, keeps the first artwork video that fails processing (up to 20 MiB) and runs three background read checks. Wait about 15 seconds after reproducing, then export a ZIP containing the original video and results. Nothing is uploaded automatically.</string>
+    <string name="inspection_export">Export video inspection ZIP</string>
+    <string name="inspection_import">Import video for comparison</string>
+    <string name="inspection_clear">Clear inspection sample</string>
+    <string name="inspection_no_sample">No sample yet. Enable diagnostics and reproduce a video processing failure, or import a video.</string>
+    <string name="inspection_existing">A sample exists or checks are running. Export and clear the sample before importing another video.</string>
+    <string name="inspection_busy">Checks are still running; clearing is unavailable. You can export the original and current results.</string>
+    <string name="inspection_cleared">Inspection sample cleared. Bindings and video cache are unchanged.</string>
+    <string name="inspection_imported">Video imported; checks are running. Export the inspection ZIP in about 15 seconds.</string>
+    <string name="inspection_import_failed">Import failed. Select a video no larger than 20 MiB.</string>
+    <string name="inspection_exported">Inspection ZIP saved. Send the ZIP file.</string>
+    <string name="inspection_exported_pending">ZIP saved with the original and current results. Unfinished checks are marked in the reports.</string>
+</resources>

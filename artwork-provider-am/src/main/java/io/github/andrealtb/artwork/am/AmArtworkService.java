@@ -116,6 +116,11 @@ public final class AmArtworkService extends Service {
     private void perform(Request request) {
         if (!current(request)) return;
         request.started = true;
+        AmDiagnostics.begin();
+        long diagnosticStart = SystemClock.elapsedRealtime();
+        if (AmSettings.prefs(app).getBoolean("debug", false)) {
+            AmDiagnostics.record(app, "ARTWORK_AM_ENVIRONMENT", AmDiagnostics.environment(app));
+        }
         AmSettings.trace(app, "ARTWORK_AM_RESOLVE", "started");
         AmPauseDetector.begin();
         try {
@@ -135,8 +140,14 @@ public final class AmArtworkService extends Service {
                 reply(request.callback, request.id, new ArtworkResult(ArtworkResult.Status.READY, request.asset, 0, "am_web_verified"));
             }
         } catch (AmFailure failure) { fail(request, failure.result()); }
-        catch (Exception error) { fail(request, ArtworkResult.failure(ArtworkResult.Status.ERROR, "resolver_failed")); }
-        finally { DETACHED.remove(request); AmPauseDetector.end(); }
+        catch (Exception error) {
+            AmSettings.trace(app, "ARTWORK_AM_EXCEPTION", error.getClass().getSimpleName());
+            fail(request, ArtworkResult.failure(ArtworkResult.Status.ERROR, "resolver_failed"));
+        }
+        finally {
+            AmDiagnostics.record(app, "ARTWORK_AM_RESOLVE_FINISHED", "elapsedMs=" + (SystemClock.elapsedRealtime() - diagnosticStart));
+            DETACHED.remove(request); AmPauseDetector.end(); AmDiagnostics.end();
+        }
     }
     private boolean current(Request request) { return leases.get(request.uid, request.id, SystemClock.elapsedRealtime()) == request; }
     private void fail(Request request, ArtworkResult failure) {

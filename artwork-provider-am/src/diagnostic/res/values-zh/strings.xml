@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">动态封面诊断版</string>
+    <string name="inspection_summary">开启诊断后，另保留首份处理失败的原始封面视频（最多 20 MiB），并在后台做三组读取检查。复现后等待约 15 秒，导出含原视频和检查结果的 ZIP，不会自动上传。</string>
+    <string name="inspection_export">导出视频检查包 ZIP</string>
+    <string name="inspection_import">导入视频做对照</string>
+    <string name="inspection_clear">清除检查样本</string>
+    <string name="inspection_no_sample">尚无检查样本。请开启诊断并复现视频处理失败，或导入待检查的视频。</string>
+    <string name="inspection_existing">已有样本或正在检查。导出后可先清除检查样本，再导入其他视频。</string>
+    <string name="inspection_busy">检查仍在运行，暂不能清除；可以先导出原视频和当前结果。</string>
+    <string name="inspection_cleared">检查样本已清除，不影响绑定和视频缓存</string>
+    <string name="inspection_imported">视频已导入，正在后台检查。约 15 秒后导出检查包。</string>
+    <string name="inspection_import_failed">导入失败，请选择不超过 20 MiB 的视频文件</string>
+    <string name="inspection_exported">检查包已保存，请发送 ZIP 文件</string>
+    <string name="inspection_exported_pending">ZIP 已保存，含原视频和当前结果；仍有检查未结束，其状态已记录。</string>
+</resources>

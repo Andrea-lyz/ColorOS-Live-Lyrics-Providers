@@ -21,26 +21,25 @@ public class AmRecoveryTest {
     }
     @Test public void largeVideoCanServeSmallQueryBeforeItsPreferredVariantDownloads() throws Exception {
         var cache = new AmCache(temporary.newFolder()); var large = video(cache, 1080);
-        var hit = cache.compatibleVideo(AmIdentityTest.query("Style", "1989", 288), "us", "album");
+        var hit = cache.sharedVideo(AmIdentityTest.query("Style", "1989", 288), "us", "album");
         assertEquals(large, hit.file()); cache.unpin(hit.file());
     }
     @Test public void lowestSufficientCachedVariantIsPreferredAndNeverCrossesAlbumOrMarket() throws Exception {
-        var cache = new AmCache(temporary.newFolder()); video(cache, 1080); File small = video(cache, 360);
+        var cache = new AmCache(temporary.newFolder()); File full = video(cache, 1080); video(cache, 360);
         var query = AmIdentityTest.query("Style", "1989", 288);
-        var hit = cache.compatibleVideo(query, "us", "album"); assertEquals(small, hit.file()); cache.unpin(hit.file());
-        assertNull(cache.compatibleVideo(query, "cn", "album")); assertNull(cache.compatibleVideo(query, "us", "other"));
+        var hit = cache.sharedVideo(query, "us", "album"); assertEquals(full, hit.file()); cache.unpin(hit.file());
+        assertNull(cache.sharedVideo(query, "cn", "album")); assertNull(cache.sharedVideo(query, "us", "other"));
     }
-    @Test public void largeHostNeverReusesTheSmallCardVideoUnlessFetchingTheSharpOneFailed() throws Exception {
+    @Test public void smallCachedVideoIsNeverUsedByEitherSurface() throws Exception {
         // Device feedback: the large cover (1312 px) played the small card's 408 px video, visibly blurry.
         var cache = new AmCache(temporary.newFolder()); File small = video(cache, 408);
         var large = AmIdentityTest.query("Style", "1989", 1312);
-        assertNull(cache.compatibleVideo(large, "us", "album", true));
-        var fallback = cache.compatibleVideo(large, "us", "album", false);
-        assertEquals(small, fallback.file()); cache.unpin(fallback.file());
+        assertNull(cache.sharedVideo(large, "us", "album"));
+        assertNull(cache.sharedVideo(AmIdentityTest.query("Style", "1989", 288), "us", "album"));
     }
     @Test public void largestFetchableSizeCountsAsSharpEnoughForAnOversizedHost() throws Exception {
         var cache = new AmCache(temporary.newFolder()); File full = video(cache, 1080); video(cache, 408);
-        var hit = cache.compatibleVideo(AmIdentityTest.query("Style", "1989", 1312), "us", "album", true);
+        var hit = cache.sharedVideo(AmIdentityTest.query("Style", "1989", 1312), "us", "album");
         assertEquals("1080 is the resolution cap, so it is sufficient for a 1312 px host", full, hit.file());
         cache.unpin(hit.file());
     }
@@ -48,13 +47,13 @@ public class AmRecoveryTest {
         var cache = new AmCache(temporary.newFolder()); video(cache, 1080);
         var q = AmIdentityTest.query("Style", "1989", 288);
         var limited = new ArtworkQuery(q.title, q.artist, q.album, q.durationMs, "", 288, 288, 360, 360, q.maxFileBytes);
-        assertNull(cache.compatibleVideo(limited, "us", "album"));
+        assertNull(cache.sharedVideo(limited, "us", "album"));
         var tiny = new ArtworkQuery(q.title, q.artist, q.album, q.durationMs, "", 288, 288, 1080, 1080, 1);
-        assertNull(cache.compatibleVideo(tiny, "us", "album"));
+        assertNull(cache.sharedVideo(tiny, "us", "album"));
     }
     @Test public void fallbackPinSurvivesClearUntilConsumerReleasesIt() throws Exception {
         var cache = new AmCache(temporary.newFolder()); File large = video(cache, 1080);
-        var hit = cache.compatibleVideo(AmIdentityTest.query("Style", "1989", 288), "us", "album");
+        var hit = cache.sharedVideo(AmIdentityTest.query("Style", "1989", 288), "us", "album");
         cache.clear(); assertTrue(large.exists()); cache.unpin(hit.file()); cache.clear(); assertFalse(large.exists());
     }
     @Test public void networkRecoveryDiscardsTransportBackoffButNotRateLimit() throws Exception {

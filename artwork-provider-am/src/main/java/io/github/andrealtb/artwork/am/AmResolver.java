@@ -15,6 +15,7 @@ import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
 final class AmResolver {
     record Resolved(File file, ArtworkAsset asset) {}
     private final Context context;
+    private static final AmSharedDownload DOWNLOADS = new AmSharedDownload();
     private final AmCache cache;
     private final AmNetwork network;
     AmResolver(Context context) {
@@ -28,6 +29,12 @@ final class AmResolver {
         AmIdentity.AppleLink link = query.appleMusicUrl.isEmpty() ? null : AmIdentity.link(query.appleMusicUrl);
         // An exact catalog link outranks the user's album choice, which is meant for local files without one.
         AmBindings.Binding binding = link == null ? AmBindings.find(AmBindings.load(context), query) : null;
+        AmDiagnostics.record(context, "ARTWORK_AM_QUERY", "route=" + (link != null ? "link" : binding != null ? "binding" : "automatic")
+                + " market=" + (link != null ? link.country() : binding != null ? binding.country() : AmSettings.country(context))
+                + " titlePresent=" + !query.title.isEmpty() + " artistPresent=" + !query.artist.isEmpty()
+                + " albumPresent=" + !query.album.isEmpty() + " durationMs=" + query.durationMs
+                + " width=" + query.displayWidthPx + " height=" + query.displayHeightPx
+                + " maxWidth=" + query.maxWidth + " maxHeight=" + query.maxHeight + " maxBytes=" + query.maxFileBytes);
         if (binding != null) {
             AmRecentAlbums.note(context, query, AmRecentAlbums.Outcome.BOUND);
             AmSettings.trace(context, "ARTWORK_AM_BINDING", "user_album");
@@ -61,8 +68,6 @@ final class AmResolver {
         Resolved cached = albumVideo(query, country, albumId, key, task);
         if (cached != null) return cached;
         if (hit != null && hit.failure() != null) {
-            Resolved lower = lowerResolution(query, country, albumId);
-            if (lower != null) return lower;
             throw new AmFailure(hit.failure().status, hit.failure().reason, hit.failure().retryAfterMs);
         }
         long pausesAtStart = AmPauseDetector.pauses();
@@ -113,15 +118,14 @@ final class AmResolver {
             if (cached != null) return cached;
         }
         if (hit != null && hit.failure() != null && !(known != null && hit.failure().reason.equals("catalog_match_unconfirmed"))) {
-            Resolved lower = lowerResolution(query, country, albumId);
-            if (lower != null) return lower;
             throw new AmFailure(hit.failure().status, hit.failure().reason, hit.failure().retryAfterMs);
         }
         try {
             AmSettings.trace(context, "ARTWORK_AM_CACHE", "miss");
             if (!AmSettings.online(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "network_policy");
             AmPage.Album album = new AmCatalog((uri, limit) -> network.text(uri, limit, task),
-                    (stage, tracks) -> AmSettings.matching(context, stage, tracks, query)).resolve(query, link, country, known);
+                    (stage, tracks) -> AmSettings.matching(context, stage, tracks, query),
+                    detail -> AmSettings.trace(context, "ARTWORK_AM_CATALOG", detail)).resolve(query, link, country, known);
             task.check();
             albumId = album.id();
             cache.rememberAlbum(query, country, album);
@@ -132,7 +136,7 @@ final class AmResolver {
         }
     }
 
-    /** A cached video of the confirmed album: this size, or another size that is sharp enough for it. */
+    /** One native 1080 video of the confirmed album, shared by all display sizes. */
     private Resolved albumVideo(ArtworkQuery query, String country, String albumId, String key, AmNetwork.Task task) throws AmFailure {
         AmCache.Hit video = cache.lookup(AmCache.albumAssetKey(query, country, albumId));
         if (video != null && video.file() != null) {
@@ -147,13 +151,13 @@ final class AmResolver {
             catch (Exception error) { cache.unpin(video.file()); }
         }
         migrateLargeSlot(query, country, albumId);
-        AmCache.Hit compatible = cache.compatibleVideo(query, country, albumId, true);
+        AmCache.Hit compatible = cache.sharedVideo(query, country, albumId);
         if (compatible != null) {
             try {
                 Resolved ready = inspect(compatible.file(), query);
                 task.check();
-                AmSettings.dimensions(context, "ARTWORK_AM_CROSS_SIZE_CACHE", ready.asset().width, ready.asset().height, ready.asset().fileBytes);
-                // Do not replace the preferred-size index with a larger fallback.
+                AmSettings.dimensions(context, "ARTWORK_AM_SHARED_1080_CACHE", ready.asset().width, ready.asset().height, ready.asset().fileBytes);
+                // Each consumer owns a separate pin on the same immutable 1080 video.
                 return ready;
             } catch (AmFailure failure) { cache.unpin(compatible.file()); throw failure; }
             catch (Exception error) { cache.unpin(compatible.file()); }
@@ -163,6 +167,18 @@ final class AmResolver {
 
     /** Fetches, remuxes, verifies and caches the album's square motion video. */
     private Resolved download(ArtworkQuery query, String country, AmPage.Album album, String key, AmNetwork.Task task) throws AmFailure {
+        return DOWNLOADS.run(AmCache.albumAssetKey(query, country, album.id()), task,
+                () -> AmSettings.trace(context, "ARTWORK_AM_DOWNLOAD_JOIN", "same_album_1080"), () -> {
+                    Resolved shared = albumVideo(query, country, album.id(), key, task);
+                    if (shared != null) {
+                        AmSettings.trace(context, "ARTWORK_AM_DOWNLOAD_REUSED", "completed_1080");
+                        return shared;
+                    }
+                    return downloadExclusive(query, country, album, key, task);
+                });
+    }
+
+    private Resolved downloadExclusive(ArtworkQuery query, String country, AmPage.Album album, String key, AmNetwork.Task task) throws AmFailure {
         if (album.master() == null) throw new AmFailure(Status.NO_MOTION, "confirmed_album_no_motion");
         String master = network.text(album.master(), 256 * 1024, task);
         List<AmHls.Variant> variants = new java.util.ArrayList<>(AmHls.variants(album.master(), master, query));
@@ -172,11 +188,19 @@ final class AmResolver {
             if (++attempts > 4) break;
             AmHls.Variant variant = variants.remove(0);
             task.check();
+            AmDiagnostics.record(context, "ARTWORK_AM_VARIANT_ATTEMPT", "attempt=" + attempts + " remaining=" + variants.size()
+                    + " width=" + variant.width() + " height=" + variant.height() + " bitrate=" + variant.bitrate()
+                    + " fps=" + variant.fps() + " variantRef=" + AmCache.hash(variant.uri().getPath()).substring(0, 16));
             AmSettings.dimensions(context, "ARTWORK_AM_VARIANT", variant.width(), variant.height(), 0);
             File temp = null, normalized = null, pinned = null;
+            AmHls.FilePlan sourcePlan = null;
+            boolean downloaded = false;
             try {
                 String child = network.text(variant.uri(), 256 * 1024, task);
                 AmHls.FilePlan plan = AmHls.filePlan(variant.uri(), child, query.maxFileBytes);
+                sourcePlan = plan;
+                AmDiagnostics.record(context, "ARTWORK_AM_HLS_PLAN", "bytes=" + plan.bytes() + " durationSeconds=" + plan.durationSeconds()
+                        + " mediaRef=" + AmCache.hash(plan.uri().getPath()).substring(0, 16));
                 String resourceKey = AmCache.hash("avc-remux-v1\n" + country + "\n" + album.id() + "\n" + variant.uri()
                         + "\n" + plan.bytes() + "\n" + plan.durationSeconds());
                 AmCache.Hit resource = cache.lookup(resourceKey);
@@ -194,9 +218,12 @@ final class AmResolver {
                 }
                 temp = cache.temporary();
                 network.file(plan, temp, query.maxFileBytes, task);
+                downloaded = true;
                 AmSettings.dimensions(context, "ARTWORK_AM_DOWNLOAD", variant.width(), variant.height(), temp.length());
                 normalized = cache.temporary();
-                AmMp4Normalizer.remux(temp, normalized, variant, plan, query.maxFileBytes, task);
+                AmMp4Normalizer.remux(temp, normalized, variant, plan, query.maxFileBytes, task,
+                        AmSettings.prefs(context).getBoolean("debug", false)
+                                ? detail -> AmSettings.trace(context, "ARTWORK_AM_INITIAL_SAMPLE", detail) : null);
                 AmSettings.dimensions(context, "ARTWORK_AM_REMUX", variant.width(), variant.height(), normalized.length());
                 // Inspect the final zero-origin MP4 before immutable cache commit.
                 Resolved checked = inspect(normalized, query);
@@ -217,23 +244,39 @@ final class AmResolver {
                 AmSettings.dimensions(context, "ARTWORK_AM_READY", asset.width, asset.height, asset.fileBytes);
                 return result;
             } catch (AmFailure failure) {
-                last = failure;
+                if (downloaded && failure.status == Status.UNSUPPORTED) inspectFailure(temp, variant, sourcePlan, failure);
+                last = AmFailure.preferVariantFailure(last, failure);
+                AmDiagnostics.record(context, "ARTWORK_AM_VARIANT_FAILED", "attempt=" + attempts + " status=" + failure.status
+                        + " reason=" + failure.reason + " detail=" + (failure.detail == null ? "none" : failure.detail));
                 // A slow or unsupported rendition moves to the next variant; API-level answers do not.
                 boolean tryNextVariant = failure.status == Status.UNSUPPORTED
                         || failure.status == Status.RETRY_LATER && AmConnectivity.transport(failure.reason);
                 if (!tryNextVariant) throw failure;
                 if (failure.status == Status.RETRY_LATER) {
-                    AmHls.transportFallback(variants, variant);
                     AmSettings.trace(context, "ARTWORK_AM_VARIANT_FALLBACK", failure.reason);
                 }
-            } catch (Exception error) { last = new AmFailure(Status.UNSUPPORTED, "media_validation_failed"); }
+            } catch (Exception error) {
+                if (downloaded) inspectFailure(temp, variant, sourcePlan, new AmFailure(Status.UNSUPPORTED,
+                        "media_validation_failed", 0, AmExceptionDiagnostic.describe("download_or_validation", error)));
+                AmDiagnostics.record(context, "ARTWORK_AM_VARIANT_FAILED", "attempt=" + attempts
+                        + " reason=media_validation_failed " + AmExceptionDiagnostic.describe("download_or_validation", error));
+                last = AmFailure.preferVariantFailure(last, new AmFailure(Status.UNSUPPORTED, "media_validation_failed"));
+            }
             finally { if (temp != null) temp.delete(); if (normalized != null) normalized.delete(); }
             if (pinned != null) cache.unpin(pinned);
         }
         throw last == null ? new AmFailure(Status.UNSUPPORTED, "no_usable_variant") : last;
     }
 
-    /** Caches what the failure says about the source, then prefers a smaller cached video to the static cover. */
+    private void inspectFailure(File source, AmHls.Variant variant, AmHls.FilePlan plan, AmFailure failure) {
+        try {
+            if (source != null && plan != null && AmSettings.prefs(context).getBoolean("debug", false)) {
+                AmInspectionFeature.capture(context, source, variant, plan, failure);
+            }
+        } catch (RuntimeException ignored) { /* Inspection must not change the resolver's failure or retry policy. */ }
+    }
+
+    /** Caches the source failure; never substitutes a small video for the fixed 1080 resource. */
     private Resolved failed(AmFailure failure, ArtworkQuery query, String country, String albumId, String key,
             String networkEpoch, long pausesAtStart, AmNetwork.Task task) throws AmFailure {
         if (failure.detail != null) AmSettings.trace(context, "ARTWORK_AM_FAILURE_DETAIL", failure.reason + " step=" + failure.detail);
@@ -245,28 +288,16 @@ final class AmResolver {
         else if (!transport || networkEpoch.equals(AmConnectivity.get(context).token())) {
             cache.remember(key, null, failure.result(), networkEpoch);
         }
-        Resolved lower = lowerResolution(query, country, albumId);
-        if (lower != null) return lower;
         throw failure;
-    }
-
-    /** A sharper size could not be fetched now: a smaller cached video of the album still beats the static cover. */
-    private Resolved lowerResolution(ArtworkQuery query, String country, String albumId) {
-        if (albumId == null) return null;
-        AmCache.Hit lower = cache.compatibleVideo(query, country, albumId, false);
-        if (lower == null) return null;
-        Resolved ready;
-        try { ready = inspect(lower.file(), query); }
-        catch (Exception error) { cache.unpin(lower.file()); return null; }
-        AmSettings.dimensions(context, "ARTWORK_AM_LOWER_RESOLUTION_FALLBACK", ready.asset().width, ready.asset().height, ready.asset().fileBytes);
-        return ready;
     }
 
     private Resolved inspect(File file, ArtworkQuery query) throws Exception {
         try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
             String version = file.getName().matches("[a-f0-9]{64}\\.mp4") ? file.getName().substring(0, 64) : "web-v1";
             ArtworkAsset asset = ArtworkFileVerifier.inspect(fd, UUID.randomUUID().toString(), version, query.maxFileBytes);
-            if (!asset.fits(query)) throw new AmFailure(Status.UNSUPPORTED, "resource_limits");
+            if (!asset.fits(query) || asset.width != AmHls.ARTWORK_SIZE || asset.height != AmHls.ARTWORK_SIZE) {
+                throw new AmFailure(Status.UNSUPPORTED, "resource_limits");
+            }
             return new Resolved(file, asset);
         }
     }
@@ -282,7 +313,8 @@ final class AmResolver {
     private void migrateLargeSlot(ArtworkQuery query, String country, String albumId) {
         ArtworkQuery large = new ArtworkQuery(query.title, query.artist, query.album, query.durationMs, query.appleMusicUrl,
                 1080, 1080, 1080, 1080, io.github.andrealtb.artwork.contract.ArtworkContract.MAX_FILE_BYTES);
-        AmCache.Hit old = cache.lookup(AmCache.albumAssetKey(large, country, albumId));
+        AmCache.Hit old = cache.lookup(AmCache.hash("album-asset-v2\n" + country + "\n" + albumId
+                + "\n1080x1080\n1080x1080\n" + large.maxFileBytes));
         if (old == null || old.file() == null) return;
         try { Resolved ready = inspect(old.file(), large); cache.rememberVideo(country, albumId, old.file(), ready.asset()); }
         catch (Exception ignored) { /* only a validated legacy asset enters the new inventory */ }

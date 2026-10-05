@@ -44,9 +44,9 @@ final class AmCache {
     }
     static String key(ArtworkQuery query, String country) {
         // Include raw URL, limits and completed query fields: no success or negative reuse across edition changes.
-        return hash("match-v3\n" + country + "\n" + AmIdentity.normalize(query.title) + "\n" + AmIdentity.normalize(query.artist)
+        return hash("match-v4-1080\n" + country + "\n" + AmIdentity.normalize(query.title) + "\n" + AmIdentity.normalize(query.artist)
                 + "\n" + AmIdentity.normalize(query.album) + "\n" + query.durationMs + "\n" + query.appleMusicUrl
-                + "\n" + query.displayWidthPx + "x" + query.displayHeightPx + "\n" + query.maxWidth + "x" + query.maxHeight + "\n" + query.maxFileBytes);
+                + "\n" + query.maxWidth + "x" + query.maxHeight + "\n" + query.maxFileBytes);
     }
     Hit lookup(String key) {
         return lookup(key, "");
@@ -79,8 +79,7 @@ final class AmCache {
         return hash("album-v2\n" + country + "\n" + AmIdentity.normalize(query.artist) + "\n" + AmIdentity.normalize(query.album));
     }
     static String albumAssetKey(ArtworkQuery query, String country, String albumId) {
-        return hash("album-asset-v2\n" + country + "\n" + albumId + "\n" + query.displayWidthPx + "x" + query.displayHeightPx
-                + "\n" + query.maxWidth + "x" + query.maxHeight + "\n" + query.maxFileBytes);
+        return hash("album-asset-v3-1080\n" + country + "\n" + albumId + "\n" + query.maxWidth + "x" + query.maxHeight + "\n" + query.maxFileBytes);
     }
     /** A user-bound album answers for the whole album at one size; changing the binding changes the key. */
     static String boundKey(ArtworkQuery query, String country, String albumId) {
@@ -173,38 +172,26 @@ final class AmCache {
         } catch (Exception ignored) { /* immutable video remains usable through its ordinary indexes */ }
         finally { if (temp != null) temp.delete(); }
     }
-    Hit compatibleVideo(io.github.andrealtb.artwork.contract.ArtworkQuery query, String country, String albumId) {
-        return compatibleVideo(query, country, albumId, false);
-    }
-    /**
-     * Another size of the same album. With {@code sufficientOnly} a smaller video is never reused for a
-     * larger host: device feedback showed the small card's 360-408 px video upscaled onto the large cover.
-     * Sufficiency is capped at the query's resolution limit, the largest size that can ever be fetched.
-     */
-    Hit compatibleVideo(io.github.andrealtb.artwork.contract.ArtworkQuery query, String country, String albumId,
-            boolean sufficientOnly) {
+    /** Both surfaces reuse only the confirmed album's native 1080 video, including legacy inventory. */
+    Hit sharedVideo(io.github.andrealtb.artwork.contract.ArtworkQuery query, String country, String albumId) {
         File index = new File(root, inventoryKey(country, albumId) + ".json");
         try {
             if (!index.isFile() || index.length() > 16 * 1024) return null;
             org.json.JSONArray videos = new JSONObject(new String(java.nio.file.Files.readAllBytes(index.toPath()), StandardCharsets.UTF_8)).getJSONArray("videos");
             if (videos.length() > 8) return null;
             File best = null;
-            int bestSize = 0;
-            int target = Math.min(Math.max(query.displayWidthPx, query.displayHeightPx), Math.min(query.maxWidth, query.maxHeight));
             for (int i = 0; i < videos.length(); i++) {
                 JSONObject item = videos.getJSONObject(i);
                 String name = item.getString("file");
                 int width = item.getInt("width"), height = item.getInt("height");
                 long size = item.getLong("bytes"), remaining = item.getLong("expires") - System.currentTimeMillis();
-                if (!name.matches("[a-f0-9]{64}\\.mp4") || width <= 0 || width != height || width > query.maxWidth || height > query.maxHeight
+                if (!name.matches("[a-f0-9]{64}\\.mp4") || width != AmHls.ARTWORK_SIZE || height != AmHls.ARTWORK_SIZE || width > query.maxWidth || height > query.maxHeight
                         || size <= 0 || size > query.maxFileBytes || remaining <= 0 || remaining > 86_400_000) continue;
                 File candidate = new File(root, name);
                 if (!candidate.isFile() || candidate.length() != size) continue;
-                boolean sufficient = width >= target, bestSufficient = bestSize >= target;
-                if (best == null || sufficient && !bestSufficient || sufficient && bestSufficient && width < bestSize
-                        || !sufficient && !bestSufficient && width > bestSize) { best = candidate; bestSize = width; }
+                if (best == null) best = candidate;
             }
-            if (best == null || sufficientOnly && bestSize < target) return null;
+            if (best == null) return null;
             pin(best); best.setLastModified(System.currentTimeMillis());
             return new Hit(best, null);
         } catch (Exception ignored) { return null; }

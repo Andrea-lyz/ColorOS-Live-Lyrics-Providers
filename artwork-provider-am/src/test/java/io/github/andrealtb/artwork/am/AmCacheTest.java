@@ -65,11 +65,11 @@ public class AmCacheTest {
         assertNull(cache.album(query, "cn"));
         assertNull(cache.album(AmIdentityTest.query("Style", "1989 Deluxe", 288), "us"));
     }
-    @Test public void albumVideoKeySharesAcrossSongsButSeparatesAlbumIdAndDisplaySize() {
+    @Test public void albumVideoKeySharesAcrossSongsAndDisplaySizesButSeparatesAlbums() {
         var first = AmIdentityTest.query("Style", "1989", 288);
         var next = AmIdentityTest.query("Blank Space", "1989", 288);
         assertEquals(AmCache.albumAssetKey(first, "us", "10"), AmCache.albumAssetKey(next, "us", "10"));
         assertNotEquals(AmCache.albumAssetKey(first, "us", "10"), AmCache.albumAssetKey(first, "us", "20"));
-        assertNotEquals(AmCache.albumAssetKey(first, "us", "10"), AmCache.albumAssetKey(AmIdentityTest.query("Style", "1989", 1080), "us", "10"));
+        assertEquals(AmCache.albumAssetKey(first, "us", "10"), AmCache.albumAssetKey(AmIdentityTest.query("Style", "1989", 1080), "us", "10"));
     }
 }

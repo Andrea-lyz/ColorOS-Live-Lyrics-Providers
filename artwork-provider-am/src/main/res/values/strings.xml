@@ -74,7 +74,12 @@
     <string name="market_saved">Market set to %1$s. Applies from the next song.</string>
     <string name="section_advanced">Advanced</string>
     <string name="debug">Redacted diagnostics</string>
-    <string name="debug_summary">Writes match and download steps to logcat, without lyrics or link parameters.</string>
+    <string name="debug_summary">Records matching, downloads and video checks locally (up to about 1 MB). No song text, media IDs, URLs or credentials. Export below after reproducing; no computer needed.</string>
+    <string name="diagnostics_export">Export diagnostic log</string>
+    <string name="diagnostics_clear">Clear diagnostic log</string>
+    <string name="diagnostics_exported">Log saved. Send the TXT file using your file manager.</string>
+    <string name="diagnostics_export_failed">Log operation failed. Check the destination and try again.</string>
+    <string name="diagnostics_cleared">Diagnostic log cleared</string>
     <string name="bridge_title">Bridge in-app preview</string>
     <string name="bridge_state_allowed">Authorized for the installed Bridge</string>
     <string name="bridge_state_none">Not authorized. The lock screen does not need this.</string>

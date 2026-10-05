@@ -1,11 +1,17 @@
 # 动态封面 Provider（Dynamic Artwork Provider）
 
-v1.0.1。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
+v1.0.2。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
 不注入 Apple Music 或 SystemUI，不进入任何播放器进程。通过 `artwork-contract` v1 向已授权的
 Bridge 返回 `localTestOnly=false` 与完整本地 MP4 的只读 FD。
 
 它是**可选**的独立应用：不安装它时，锁屏仍然是官方静态封面；安装并启用后才会联网匹配动态封面。
 界面默认英文，中文系统显示中文，语言跟随系统。
+
+1.0.2 随 C17 Artwork Preview1 交付：大小卡共用原生 1080×1080 视频和下载，
+提供默认关闭的本地 TXT 诊断，并区分没有可读样本、读取异常、超限与重封装失败。
+使用步骤和状态码见 [日志流程与状态码](../docs/ARTWORK-LOGGING-AND-STATUS.zh-CN.md)。
+原视频留存与三路检查仅属于独立 diagnostic 变体，标准 debug/release 不打包这些能力。
+历史 diagnostic1–4 的复现记录保留在 `docs/ARTWORK-DIAGNOSTIC*.zh-CN.md`，不作为本次最终签名包验收结论。
 
 来源：本模块原先在 Bridge 仓库中开发（`artwork-provider-am/`，迁出前为 Bridge 提交 `7adbdb2`）。
 逐次真机联调记录（fix1–fix24）保留在 Bridge 仓库的 `docs/DYNAMIC-ARTWORK-*` 文档中，本仓库不再复制。
@@ -30,8 +36,9 @@ iTunes 候选/精确 lookup（专辑搜索为空时回退同市场 Apple Music �
 
 ## 缓存与并发
 
-- 已验证整专辑曲目表与按 albumId/目标尺寸的视频索引；同专辑新歌仍逐首核对身份，缓存不绕过版本匹配。
-- 已验证视频清单支持在查询上限内跨尺寸复用；网络恢复失效旧传输错误，429 等上游退避保留。
+- 已验证整专辑曲目表与按市场/albumId/资源限制建立的固定 1080 视频索引；展示尺寸不再拆分缓存，同专辑新歌仍逐首核对身份，缓存不绕过版本匹配。
+- 大小卡都只选原生 AVC SDR 1080×1080，最低码率优先。没有可用 1080 时保留静态，不下载或复用旧的小尺寸资源；已验证的旧 1080 缓存仍可复用。
+- 同专辑资源下载中的新请求等待后复核缓存，各自获取文件租约；取消等待者不取消拥有者，其他专辑可并行。网络恢复失效旧传输错误，429 等上游退避保留。
 - 瞬时 IOException 在同一请求内有界重试（每次尝试使用新输出流），HTTP 状态类错误不重试。
 - 身份匹配成功后不因客户端取消而中止下载：请求转为 detached，完成后仍写入缓存；工作线程与
   detached 计数是进程级的，服务随解绑销毁时已开始的下载继续完成。

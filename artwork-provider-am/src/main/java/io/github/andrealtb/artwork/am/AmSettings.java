@@ -43,18 +43,14 @@ final class AmSettings {
         } catch (RuntimeException error) { return -1; }
     }
     static void trace(Context context, String event, String reason) {
-        if (prefs(context).getBoolean("debug", false)) android.util.Log.i("CLL-Artwork-AM",
-                "[CLL] level=INFO component=provider/artwork_am area=resource event=" + event + " reason=" + reason);
+        AmDiagnostics.record(context, event, "reason=" + reason);
     }
     static void dimensions(Context context, String event, int width, int height, long bytes) {
-        if (prefs(context).getBoolean("debug", false)) android.util.Log.i("CLL-Artwork-AM",
-                "[CLL] level=INFO component=provider/artwork_am area=resource event=" + event
-                        + " width=" + width + " height=" + height + " bytes=" + bytes);
+        AmDiagnostics.record(context, event, "width=" + width + " height=" + height + " bytes=" + bytes);
     }
     static void matching(Context context, String stage, java.util.List<AmIdentity.Track> tracks,
             io.github.andrealtb.artwork.contract.ArtworkQuery query) {
-        if (prefs(context).getBoolean("debug", false)) android.util.Log.i("CLL-Artwork-AM",
-                "[CLL] level=INFO component=provider/artwork_am area=resource event=ARTWORK_AM_MATCH_CHECK stage="
-                        + stage + " " + AmIdentity.diagnostics(tracks, query));
+        if (prefs(context).getBoolean("debug", false)) AmDiagnostics.record(context, "ARTWORK_AM_MATCH_CHECK",
+                "stage=" + stage + " " + AmIdentity.diagnostics(tracks, query));
     }
 }

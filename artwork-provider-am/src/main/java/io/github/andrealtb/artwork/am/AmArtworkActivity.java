@@ -49,6 +49,7 @@ public final class AmArtworkActivity extends Activity {
     private static final String[] MARKETS = { "us", "cn", "jp", "gb", "hk", "tw", "kr", "sg", "ca", "au", "de", "fr", "it", "es", "br", "mx" };
     private static final int[] CACHE_LIMIT_PRESETS = { 512, 1000, 2000, 4000, 8000 };
     private static final int GALLERY_MAX = 24;
+    private static final int EXPORT_DIAGNOSTICS = 4101;
     private static final int DOT_ON = 0xFF3DD36B;
     private static final int DOT_OFF = 0xFFB4B3BC;
 
@@ -394,13 +395,53 @@ public final class AmArtworkActivity extends Activity {
         card.addView(AmUi.row(this, R.drawable.ic_am_code, color(R.color.am_muted), getString(R.string.debug), debugSummary, debug),
                 AmUi.marginTop(this, 4));
         debug.setOnCheckedChangeListener((view, checked) -> {
-            if (!binding) AmSettings.prefs(this).edit().putBoolean("debug", checked).apply();
+            if (!binding) {
+                AmSettings.prefs(this).edit().putBoolean("debug", checked).apply();
+                if (checked) AmDiagnostics.record(this, "ARTWORK_AM_DIAGNOSTICS_ENABLED", AmDiagnostics.environment(this));
+            }
         });
+        TextView export = AmUi.tonalButton(this, getString(R.string.diagnostics_export), color(R.color.am_accent));
+        export.setOnClickListener(view -> {
+            Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("text/plain").putExtra(Intent.EXTRA_TITLE, "artwork-diagnostics-" + System.currentTimeMillis() + ".txt");
+            try { startActivityForResult(intent, EXPORT_DIAGNOSTICS); }
+            catch (ActivityNotFoundException error) { diagnosticToast(R.string.diagnostics_export_failed); }
+        });
+        card.addView(export, AmUi.marginTop(this, 8));
+        TextView clearDiagnostics = AmUi.tonalButton(this, getString(R.string.diagnostics_clear), color(R.color.am_muted));
+        clearDiagnostics.setOnClickListener(view -> io.execute(() -> {
+            try { AmDiagnostics.clear(getApplicationContext()); diagnosticToast(R.string.diagnostics_cleared); }
+            catch (Exception error) { diagnosticToast(R.string.diagnostics_export_failed); }
+        }));
+        card.addView(clearDiagnostics, AmUi.marginTop(this, 8));
+        AmInspectionFeature.addControls(this, card, io, this::diagnosticToast);
         card.addView(AmUi.divider(this));
         bridgeState = new TextView(this);
         bridgeAction = AmUi.tonalButton(this, "", color(R.color.am_accent));
         card.addView(AmUi.row(this, R.drawable.ic_am_shield, color(R.color.am_good), getString(R.string.bridge_title), bridgeState, bridgeAction));
         return card;
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        android.net.Uri destination = data.getData();
+        if (AmInspectionFeature.handleResult(this, requestCode, destination, io, this::diagnosticToast)) return;
+        if (requestCode != EXPORT_DIAGNOSTICS) return;
+        io.execute(() -> {
+            try {
+                byte[] snapshot = AmDiagnostics.snapshot(getApplicationContext());
+                try (java.io.OutputStream out = getContentResolver().openOutputStream(destination, "wt")) {
+                    if (out == null) throw new java.io.IOException("diagnostic_destination");
+                    out.write(snapshot);
+                }
+                diagnosticToast(R.string.diagnostics_exported);
+            } catch (Exception error) { diagnosticToast(R.string.diagnostics_export_failed); }
+        });
+    }
+
+    private void diagnosticToast(int message) {
+        runOnUiThread(() -> { if (!isFinishing() && !isDestroyed()) Toast.makeText(this, message, Toast.LENGTH_LONG).show(); });
     }
 
     private View footer() {

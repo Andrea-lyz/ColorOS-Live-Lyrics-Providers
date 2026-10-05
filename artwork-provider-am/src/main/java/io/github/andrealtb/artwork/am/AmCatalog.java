@@ -12,7 +12,11 @@ final class AmCatalog {
     interface Fetch { String text(URI uri, int limit) throws AmFailure; }
     private final Fetch fetch;
     private final BiConsumer<String, List<AmIdentity.Track>> diagnostic;
-    AmCatalog(Fetch fetch, BiConsumer<String, List<AmIdentity.Track>> diagnostic) { this.fetch = fetch; this.diagnostic = diagnostic; }
+    private final java.util.function.Consumer<String> discovery;
+    AmCatalog(Fetch fetch, BiConsumer<String, List<AmIdentity.Track>> diagnostic) { this(fetch, diagnostic, detail -> {}); }
+    AmCatalog(Fetch fetch, BiConsumer<String, List<AmIdentity.Track>> diagnostic, java.util.function.Consumer<String> discovery) {
+        this.fetch = fetch; this.diagnostic = diagnostic; this.discovery = discovery;
+    }
     AmPage.Album resolve(ArtworkQuery query, AmIdentity.AppleLink link, String country, AmPage.Album known) throws AmFailure {
         if (known != null && (link == null || link.albumId().isEmpty() || link.albumId().equals(known.id()))) {
             return verify(known, query, link == null ? "" : link.songId(), "catalog_cache");
@@ -26,6 +30,7 @@ final class AmCatalog {
         AmIdentity.Track selected;
         try { selected = AmIdentity.unique(tracks, query, link == null ? "" : link.songId(), ""); }
         catch (AmFailure failure) {
+            discovery.accept("song_match=" + failure.reason + " candidates=" + tracks.size());
             if (failure.status != Status.RETRY_LATER || query.album.isEmpty()) throw failure;
             List<String> albums = albumSearch(query.artist, query, country);
             // An album is credited to its lead artist; a full guest list can keep the album out of the results.
@@ -42,17 +47,23 @@ final class AmCatalog {
     private List<String> albumSearch(String artist, ArtworkQuery query, String country) throws AmFailure {
         String term = artist + " " + query.album;
         List<String> matches = AmPage.albumIds(fetch.text(albumSearchUri(term, country), 2 * 1024 * 1024), query.album, query.artist);
+        discovery.accept("stage=itunes_album matched=" + matches.size() + " market=" + country);
         if (!matches.isEmpty()) return matches;
         // Web search supplies candidates only. Missing edition metadata cannot resolve ambiguity;
         // the selected album's actual track table is still verified by resolve().
         java.util.Set<String> ids = new java.util.TreeSet<>();
-        for (AmPage.AlbumHit hit : webAlbums(fetch, term, country)) {
+        List<AmPage.AlbumHit> candidates = webAlbums(fetch, term, country);
+        int titleMatches = 0;
+        for (AmPage.AlbumHit hit : candidates) {
+            if (AmIdentity.normalize(query.album).equals(AmIdentity.normalize(hit.title()))) titleMatches++;
             if (!AmIdentity.normalize(query.album).isEmpty()
                     && AmIdentity.normalize(query.album).equals(AmIdentity.normalize(hit.title()))
                     && (AmIdentity.sameArtists(query.artist, "", hit.artist(), "")
                         || !AmIdentity.primaryArtist(query.artist).isEmpty()
                             && AmIdentity.primaryArtist(query.artist).equals(AmIdentity.primaryArtist(hit.artist())))) ids.add(hit.id());
         }
+        discovery.accept("stage=web_album candidates=" + candidates.size() + " titleMatches=" + titleMatches
+                + " matched=" + ids.size() + " market=" + country);
         return List.copyOf(ids);
     }
     /** iTunes can return HTTP 200 with no music in a storefront that Apple Music serves (CN). */

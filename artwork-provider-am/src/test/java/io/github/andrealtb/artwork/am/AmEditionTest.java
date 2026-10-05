@@ -17,11 +17,11 @@ public class AmEditionTest {
         assertEquals("1838810949", album.id()); assertEquals(12, album.tracks().size());
         assertNotNull(album.master()); assertTrue(album.master().getPath().endsWith("P1189220687_default.m3u8"));
     }
-    @Test public void actualShowgirlUsesItsNativeAvc360SingleFileVariant() throws Exception {
+    @Test public void actualShowgirlUsesNative1080AndLegacyByteRangeFixtureStillParses() throws Exception {
         var base = java.net.URI.create("https://mvod.itunes.apple.com/master.m3u8");
         var variant = AmHls.variants(base, resource("/showgirl-explicit-square-master.m3u8"), query()).get(0);
-        assertEquals(360, variant.width());
-        var plan = AmHls.filePlan(variant.uri(), resource("/showgirl-avc360-child.m3u8"), query().maxFileBytes);
+        assertEquals(1080, variant.width());
+        var plan = AmHls.filePlan(base, resource("/showgirl-avc360-child.m3u8"), query().maxFileBytes);
         assertEquals(450783, plan.bytes()); assertEquals(14.93158, plan.durationSeconds(), 0.00001);
     }
     private static String resource(String name) throws Exception {

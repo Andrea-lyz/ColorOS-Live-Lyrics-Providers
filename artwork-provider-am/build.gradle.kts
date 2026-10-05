@@ -5,6 +5,8 @@
  */
 
 import com.android.build.api.dsl.ApplicationExtension
+import com.android.build.api.variant.ApplicationAndroidComponentsExtension
+import com.android.build.api.variant.HostTestBuilder
 
 plugins {
     alias(libs.plugins.android.application)
@@ -24,8 +26,8 @@ configure<ApplicationExtension> {
         minSdk = 30
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
         // versionCode stays monotonic over the 0.2.x integration builds.
-        versionCode = 5
-        versionName = "1.0.1"
+        versionCode = 6
+        versionName = "1.0.2"
     }
 
     signingConfigs {
@@ -41,6 +43,13 @@ configure<ApplicationExtension> {
         getByName("debug") {
             signingConfig = signingConfigs.getByName("debug")
         }
+        create("diagnostic") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".diagnostic"
+            versionNameSuffix = "-diagnostic4"
+            isDebuggable = false
+            matchingFallbacks += listOf("debug")
+        }
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
             // Kept off: the provider re-packages MP4 through MediaExtractor/MediaMuxer and reads
@@ -49,12 +58,23 @@ configure<ApplicationExtension> {
         }
     }
 
+    sourceSets {
+        getByName("debug").java.directories.add("src/standard/java")
+        getByName("release").java.directories.add("src/standard/java")
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 
     tasks.withType<JavaCompile>().configureEach { options.encoding = "UTF-8" }
+}
+
+configure<ApplicationAndroidComponentsExtension> {
+    beforeVariants(selector().withBuildType("diagnostic")) { variant ->
+        variant.hostTests.getValue(HostTestBuilder.UNIT_TEST_TYPE).enable = true
+    }
 }
 
 dependencies {
