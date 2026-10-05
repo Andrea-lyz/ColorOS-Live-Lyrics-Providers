@@ -166,6 +166,50 @@ final class AmPage {
             return hits;
         } catch (Exception error) { throw new AmFailure(Status.RETRY_LATER, "catalog_schema_changed", 300_000); }
     }
+    /** Public Apple Music search data; only the album shelf in the requested storefront is used. */
+    static List<AlbumHit> searchAlbums(String html, String country) throws AmFailure {
+        try {
+            Matcher matcher = SERVER_DATA.matcher(html);
+            if (!matcher.find()) throw new IllegalArgumentException();
+            JSONObject page = new JSONObject(matcher.group(1)).getJSONArray("data").getJSONObject(0);
+            JSONObject intent = page.getJSONObject("intent");
+            if (!"SearchResultsPageIntent".equals(intent.getString("$kind"))
+                    || !country.equalsIgnoreCase(intent.getString("storefront"))) throw new IllegalArgumentException();
+            JSONArray sections = page.getJSONObject("data").getJSONArray("sections");
+            if (sections.length() > 100) throw new IllegalArgumentException();
+            java.util.Map<String, AlbumHit> hits = new java.util.LinkedHashMap<>();
+            for (int s = 0; s < sections.length(); s++) {
+                JSONObject section = sections.getJSONObject(s);
+                if (!"square-section - album".equals(section.optString("id"))) continue;
+                JSONArray items = section.getJSONArray("items");
+                if (items.length() > 250) throw new IllegalArgumentException();
+                for (int i = 0; i < items.length(); i++) {
+                    JSONObject item = items.getJSONObject(i), descriptor = item.getJSONObject("contentDescriptor");
+                    if (!"album".equals(descriptor.getString("kind"))) throw new IllegalArgumentException();
+                    String albumId = id(descriptor.getJSONObject("identifiers"), "storeAdamID");
+                    AmIdentity.AppleLink link = AmIdentity.link(descriptor.getString("url"));
+                    if (!country.equalsIgnoreCase(link.country()) || !albumId.equals(link.albumId())
+                            || !link.songId().isEmpty()) throw new IllegalArgumentException();
+                    String title = item.getJSONArray("titleLinks").getJSONObject(0).getString("title");
+                    // Apple omits artist credits for some compilations in otherwise valid results.
+                    // Keep them displayable with an empty artist; automatic artist matching rejects them.
+                    JSONArray artists = item.has("subtitleLinks") && item.isNull("subtitleLinks")
+                            ? new JSONArray() : item.getJSONArray("subtitleLinks");
+                    List<String> names = new ArrayList<>();
+                    for (int a = 0; a < artists.length(); a++) names.add(artists.getJSONObject(a).getString("title"));
+                    String artist = String.join(" & ", names);
+                    if (title.isBlank() || artists.length() > 0 && artist.isBlank()) throw new IllegalArgumentException();
+                    JSONObject art = item.optJSONObject("artwork");
+                    JSONObject dictionary = art == null ? null : art.optJSONObject("dictionary");
+                    String raw = dictionary == null ? "" : dictionary.optString("url");
+                    String artwork = artworkUrl(raw.replace("{w}", "300").replace("{h}", "300").replace("{f}", "jpg"), ARTWORK_PX);
+                    hits.putIfAbsent(albumId, new AlbumHit(albumId, title, artist, "", item.optInt("trackCount", 0),
+                            item.optBoolean("showExplicitBadge", false), artwork));
+                }
+            }
+            return List.copyOf(hits.values());
+        } catch (Exception error) { throw new AmFailure(Status.RETRY_LATER, "web_schema_changed", 300_000, "search/" + error.getClass().getSimpleName()); }
+    }
     /** Album art on Apple's image CDN, asked for at {@code px}; any other address is dropped. */
     static String artworkUrl(String raw, int px) {
         if (raw == null || raw.isEmpty() || raw.length() > 512) return "";

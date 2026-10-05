@@ -40,7 +40,29 @@ final class AmCatalog {
         return verify(page(selected.albumId(), country), query, selected.songId(), "web_song_album");
     }
     private List<String> albumSearch(String artist, ArtworkQuery query, String country) throws AmFailure {
-        return AmPage.albumIds(fetch.text(albumSearchUri(artist + " " + query.album, country), 2 * 1024 * 1024), query.album, query.artist);
+        String term = artist + " " + query.album;
+        List<String> matches = AmPage.albumIds(fetch.text(albumSearchUri(term, country), 2 * 1024 * 1024), query.album, query.artist);
+        if (!matches.isEmpty()) return matches;
+        // Web search supplies candidates only. Missing edition metadata cannot resolve ambiguity;
+        // the selected album's actual track table is still verified by resolve().
+        java.util.Set<String> ids = new java.util.TreeSet<>();
+        for (AmPage.AlbumHit hit : webAlbums(fetch, term, country)) {
+            if (!AmIdentity.normalize(query.album).isEmpty()
+                    && AmIdentity.normalize(query.album).equals(AmIdentity.normalize(hit.title()))
+                    && (AmIdentity.sameArtists(query.artist, "", hit.artist(), "")
+                        || !AmIdentity.primaryArtist(query.artist).isEmpty()
+                            && AmIdentity.primaryArtist(query.artist).equals(AmIdentity.primaryArtist(hit.artist())))) ids.add(hit.id());
+        }
+        return List.copyOf(ids);
+    }
+    /** iTunes can return HTTP 200 with no music in a storefront that Apple Music serves (CN). */
+    static List<AmPage.AlbumHit> searchAlbums(Fetch fetch, String term, String country) throws AmFailure {
+        List<AmPage.AlbumHit> hits = AmPage.albumHits(fetch.text(albumSearchUri(term, country), 2 * 1024 * 1024));
+        return hits.isEmpty() ? webAlbums(fetch, term, country) : hits;
+    }
+    private static List<AmPage.AlbumHit> webAlbums(Fetch fetch, String term, String country) throws AmFailure {
+        URI uri = URI.create("https://music.apple.com/" + country + "/search?term=" + encode(term));
+        return AmPage.searchAlbums(fetch.text(uri, 3 * 1024 * 1024), country);
     }
     static URI albumSearchUri(String term, String country) {
         return URI.create("https://itunes.apple.com/search?term=" + encode(term) + "&media=music&entity=album&country=" + country + "&limit=25");

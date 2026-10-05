@@ -298,7 +298,7 @@ public final class AmBindingActivity extends Activity {
                             link.albumId());
                     choices.add(linked(link, page, current));
                 } else {
-                    for (AmPage.AlbumHit hit : AmPage.albumHits(network.text(AmCatalog.albumSearchUri(query, market), 2 * 1024 * 1024, current))) {
+                    for (AmPage.AlbumHit hit : AmCatalog.searchAlbums((uri, limit) -> network.text(uri, limit, current), query, market)) {
                         choices.add(new Choice(market, hit.id(), hit.title(), hit.artist(), detail(hit), hit.artwork(), hit.explicit(), null));
                     }
                 }

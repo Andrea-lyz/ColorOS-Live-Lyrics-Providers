@@ -1,6 +1,6 @@
 # 动态封面 Provider（Dynamic Artwork Provider）
 
-v1.0.0。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
+v1.0.1。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
 不注入 Apple Music 或 SystemUI，不进入任何播放器进程。通过 `artwork-contract` v1 向已授权的
 Bridge 返回 `localTestOnly=false` 与完整本地 MP4 的只读 FD。
 
@@ -12,7 +12,7 @@ Bridge 返回 `localTestOnly=false` 与完整本地 MP4 的只读 FD。
 
 ## 来源链路
 
-iTunes 候选/精确 lookup → 已确认的 Apple Music 专辑公开结构化数据 →
+iTunes 候选/精确 lookup（专辑搜索为空时回退同市场 Apple Music 网页搜索）→ 已确认的 Apple Music 专辑公开结构化数据 →
 方形 HLS master → AVC SDR variant → 有限、连续、单文件 byterange VOD →
 完整下载 → Android MediaExtractor/MediaMuxer 归零重封装 → 文件校验 → 原子缓存/租约。
 不抓取 Web token、不需要 Apple 账号，不调用第三方 resolver。
@@ -23,7 +23,8 @@ iTunes 候选/精确 lookup → 已确认的 Apple Music 专辑公开结构化�
 - 同名同艺人 Explicit/Clean 发行版按封面等价策略合并，冷查询稳定优先 Explicit，精确 URL 仍优先；其他版本歧义继续拒绝。
 - 多个候选返回 AMBIGUOUS；有界搜索空结果、HTTP 与结构变化不当成永久 NO_MATCH。
 - 缺艺人或时长拒绝；纯歌曲 URL 在地区 lookup 无结果时暂不可用，带 albumId 的链接可直接核对 Web 曲目表。
-- 无 URL 的 CN 不完整搜索不会静默跨到 US；已知专辑时可经严格 album search 与 Web 曲目表 fallback。
+- 手动搜索在 iTunes 无专辑结果时读取同市场 Apple Music 网页专辑区；自动匹配在 iTunes 无精确专辑候选时也使用该回退，仍严格核对专辑/艺人及实际曲目表，不静默跨到 US。
+- 网页候选缺少发行日期，不能用于 Explicit/Clean 等价合并；多个精确候选仍返回 AMBIGUOUS。网页结构或市场不符报告解析错误，不冒充搜索为空。
 - 多碟专辑按碟分区的曲目表合并；专辑页解析分步骤记录失败点，单个异常曲目只跳过。
 - 手动绑定：把 Apple Music 专辑绑定到本地专辑名（可限定歌手），命中时跳过曲目核对。绑定只影响展示来源，不修改本地文件或标签。
 
@@ -68,7 +69,12 @@ scripts\dev.cmd provider assembleArtworkProviderDebug
 
 ## 测试 fixture
 
+2026-10-05 桌面直连复现：相同 `Taylor Swift` 查询，iTunes 专辑搜索 US/HK 分别返回 24/23 条，CN 为 HTTP 200、0 条；Apple Music CN 公开网页专辑区返回 21 条。市场设置保存及读取链路正确，空结果源于 iTunes 搜索响应。`cn-album-search-public.html` 保存同次公开响应的精简专辑字段；回归覆盖手动回退、市场/ID 核对、错误与真实空结果区分、自动匹配曲目核验和版本歧义。以上是桌面网络与本地测试证据，修复包的设备搜索/绑定效果仍待验收。
+
 `apple-1989-deluxe-public.html`、`showgirl-*-public.*` 等是公开 Apple 页面中必要字段的精简快照，
 无个人数据；`*.m3u8` 为公开清单片段。Android 原生重封装、解析/解码、UI 与真实网络结果必须真机验收，
 JVM 测试不代替它们。
 
+## 1.0.1 修复与验证
+
+修复 CN 搜索为空及搜索结果中合辑 `subtitleLinks=null` 导致整批解析失败。公开响应回归确认“周杰伦 最伟大的作品”的首项为专辑 `1633408719`、12 首歌曲；用户已确认修复后的开发包实机搜索成功。100 项单测通过。正式签名预览附件由受控 CI 构建，开发包确认不冒充最终签名 RC 验收。
