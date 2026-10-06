@@ -61,7 +61,8 @@ public class AmSearchTest {
         }, "Taylor Swift & 1989", "cn");
         assertEquals(21, hits.size());
         assertEquals(2, calls.size());
-        assertTrue(calls.get(0).getQuery().contains("country=cn"));
+        // CN's iTunes API is empty; the album search goes to the US catalog, the web fallback stays in CN.
+        assertTrue(calls.get(0).getQuery().contains("country=us"));
         assertEquals("/cn/search", calls.get(1).getPath());
         assertTrue(calls.get(1).getRawQuery().contains("%26"));
     }
