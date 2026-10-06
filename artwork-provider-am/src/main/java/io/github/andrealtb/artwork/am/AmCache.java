@@ -43,9 +43,14 @@ final class AmCache {
         catch (Exception impossible) { throw new IllegalStateException(impossible); }
     }
     static String key(ArtworkQuery query, String country) {
+        return key(query, country, AmIdentity.MatchProfile.STANDARD);
+    }
+    static String key(ArtworkQuery query, String country, AmIdentity.MatchProfile profile) {
         // Include raw URL, limits and completed query fields: no success or negative reuse across edition changes.
-        return hash("match-v4-1080\n" + country + "\n" + AmIdentity.normalize(query.title) + "\n" + AmIdentity.normalize(query.artist)
+        return hash("match-v5-1080\n" + profile.exactDeltaMs + "/" + profile.albumDeltaMs + "/" + profile.prefixRatioPct
+                + "\n" + country + "\n" + AmIdentity.normalize(query.title) + "\n" + AmIdentity.normalizeArtist(query.artist)
                 + "\n" + AmIdentity.normalize(query.album) + "\n" + query.durationMs + "\n" + query.appleMusicUrl
+                + "\ntruncated=" + AmIdentity.truncated(query.album)
                 + "\n" + query.maxWidth + "x" + query.maxHeight + "\n" + query.maxFileBytes);
     }
     Hit lookup(String key) {
@@ -76,7 +81,8 @@ final class AmCache {
         } catch (Exception ignored) { map.delete(); return null; }
     }
     private static String albumKey(ArtworkQuery query, String country) {
-        return hash("album-v2\n" + country + "\n" + AmIdentity.normalize(query.artist) + "\n" + AmIdentity.normalize(query.album));
+        return hash("album-v3\n" + country + "\n" + AmIdentity.normalizeArtist(query.artist) + "\n" + AmIdentity.normalize(query.album)
+                + "\ntruncated=" + AmIdentity.truncated(query.album));
     }
     static String albumAssetKey(ArtworkQuery query, String country, String albumId) {
         return hash("album-asset-v3-1080\n" + country + "\n" + albumId + "\n" + query.maxWidth + "x" + query.maxHeight + "\n" + query.maxFileBytes);
@@ -97,10 +103,13 @@ final class AmCache {
         } catch (Exception error) { file.delete(); return null; }
     }
     void rememberAlbum(ArtworkQuery query, String country, AmPage.Album album) {
+        rememberAlbum(query, country, album, AmIdentity.MatchProfile.STANDARD);
+    }
+    void rememberAlbum(ArtworkQuery query, String country, AmPage.Album album, AmIdentity.MatchProfile profile) {
         if (AmIdentity.normalize(query.album).isEmpty()) return;
         File temp = null;
         try {
-            AmIdentity.unique(album.tracks(), query, "", album.id());
+            AmIdentity.unique(album.tracks(), query, "", album.id(), profile);
             JSONObject value = AmPage.snapshot(album).put("expires", System.currentTimeMillis() + 86_400_000);
             byte[] bytes = value.toString().getBytes(StandardCharsets.UTF_8);
             if (bytes.length > 256 * 1024) return;

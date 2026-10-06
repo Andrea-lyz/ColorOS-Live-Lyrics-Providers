@@ -24,16 +24,14 @@ final class AmIdentity {
     record AppleLink(String country, String albumId, String songId) {}
 
     /** A bracketed alias containing no Latin letters or digits: "MEOVV (미야오)", "aespa (에스파)". */
-    private static final Pattern NATIVE_ALIAS = Pattern.compile("\\s*[(\\[（【][^()\\[\\]（）【】]*[)\\】】]");
+    private static final Pattern NATIVE_ALIAS = Pattern.compile("\\([^()]*\\)|\\[[^\\[\\]]*\\]|【[^【】]*】");
     private static final Pattern LATIN_IN_ALIAS = Pattern.compile("[a-zA-Z0-9]");
-    /** "(Explicit)" / "(Clean)" are content-ratings, not different recordings: "Infinite Dream (Explicit)" is "Infinite Dream". */
-    private static final Pattern RATING_LABEL = Pattern.compile("\\s*[(\\[（【]\\s*(?:explicit|clean)\\s*[)\\】】]", Pattern.CASE_INSENSITIVE);
+    /** Rating annotations are interpreted against catalog evidence, never removed by normalize(). */
+    private static final Pattern RATING_LABEL = Pattern.compile(
+            "\\s*(?:\\(\\s*(explicit|clean)\\s*\\)|\\[\\s*(explicit|clean)\\s*\\]|【\\s*(explicit|clean)\\s*】)\\s*$",
+            Pattern.CASE_INSENSITIVE);
 
-    /**
-     * "MEOVV (미야오)" -> "MEOVV"; a bracketed alias that contains no Latin letter or digit is
-     * dropped before NFKC, because normalization would erase the brackets and leave the foreign
-     * script glued to the name. "(Explicit)", "(Taylor's Version)" and "(2024)" keep their brackets.
-     */
+    /** Artist-only aliases such as "MEOVV (미야오)"; title and album brackets retain their words. */
     private static String stripNativeAlias(String value) {
         if (value == null || value.isEmpty()) return value;
         Matcher matcher = NATIVE_ALIAS.matcher(value);
@@ -53,45 +51,38 @@ final class AmIdentity {
     }
 
     static String normalize(String value) {
-        return Normalizer.normalize(stripRatingLabel(stripNativeAlias(value)), Normalizer.Form.NFKC)
-                .toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", " ").trim();
+        return AmMatchText.normalize(value);
+    }
+    static String normalizeArtist(String value) {
+        return normalize(stripNativeAlias(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)));
+    }
+    /** Discovery/pairing helper only; callers must establish the catalog's content rating. */
+    static String ratingBase(String value) {
+        return normalize(stripRatingLabel(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)));
+    }
+    private static String ratingLabel(String value) {
+        Matcher matcher = RATING_LABEL.matcher(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC));
+        if (!matcher.find()) return "";
+        for (int i = 1; i <= 3; i++) if (matcher.group(i) != null) {
+            return matcher.group(i).equalsIgnoreCase("clean") ? "cleaned" : "explicit";
+        }
+        return "";
     }
 
     /** A title's guest credit, e.g. "Fortnight (feat. Post Malone)". */
-    private static final Pattern FEATURED = Pattern.compile("[(\\[]\\s*(?:feat\\.?|ft\\.?|featuring|with)\\s+([^)\\]]+)[)\\]]",
+    private static final Pattern FEATURED = Pattern.compile("[(\\[]\\s*(?:feat\\.?|ft\\.?|featuring|with(?!\\s+(?:intro|outro)\\b))\\s+([^)\\]]+)[)\\]]|\\s+(?:feat\\.|ft\\.|featuring)\\s+([^()\\[\\]]+)$",
             Pattern.CASE_INSENSITIVE);
     /** Artist-list separators players and stores use; full-width forms are folded by NFKC first. */
     private static final Pattern CREDIT_SEPARATOR = Pattern.compile("\\s*(?:[/;,\u3001&]|\\b(?:feat|ft)\\b\\.?|\\bfeaturing\\b)\\s*",
             Pattern.CASE_INSENSITIVE);
 
     /** Only a guest credit, bracketed or trailing; version words such as "Taylor's Version" stay in the title. */
-    private static final Pattern GUEST_CLAUSE = Pattern.compile(
-            "\\s*[(\\[]\\s*(?:feat\\.?|ft\\.?|featuring)\\s+[^)\\]]+[)\\]]|\\s+(?:feat\\.|ft\\.|featuring)\\s+[^()\\[\\]]+$",
-            Pattern.CASE_INSENSITIVE);
+    private static final Pattern GUEST_CLAUSE = FEATURED;
 
-    /**
-     * A trailing edition clause that never changes the cover: "(Explicit)", "(Deluxe Edition)",
-     * "(Mastered for iTunes)", " - Expanded", "[Japan]", "- The 6th Mini Album". Matches the
-     * normalized form, where brackets become spaces, so it also folds bare "1989 Explicit".
-     */
+    /** Delimited release-type suffixes only; editions, remasters, regions and volumes stay distinct. */
     private static final Pattern EDITION_TRAILER = Pattern.compile(
-            "(?:\\s+|^)(?:explicit|clean|deluxe|expanded|edition|remaster|remastered|reissue|super\\s+deluxe|bonus\\s+tracks?|"
-                    + "special\\s+edition|fan\\s+edition|digital\\s+(?:album|edition)|japan(?:ese)?|international|standard|anniversary|3am|"
-                    + "mastered\\s+for\\s+itunes|digitally\\s+remastered|limited\\s+edition|collector(?:'s)?\\s+edition|number(?:ed)?\\s+edition|"
-                    + "gatefold|vinyl|box\\s+set|\\d{4}\\s+remaster(?:ed)?|mini\\s+album|full\\s+album|single\\s+album|digital\\s+single|ep|"
-                    + "(?:the\\s+)?\\d{1,2}(?:st|nd|rd|th)?\\s+(?:mini|full|single)\\s+album|vol(?:ume)?\\s*\\d+)(?:\\s+edition)?\\s*$",
-            Pattern.CASE_INSENSITIVE);
-    /** Rerecording markers inside a trailing clause; those albums have distinct covers. */
-    private static final Pattern RE_RECORD_MARK = Pattern.compile(
-            "taylor'?s?\\s+version|taylor\\s+s\\s+version|re[- ]?record|taylor\\s+swift", Pattern.CASE_INSENSITIVE);
-    /**
-     * A title suffix that does not change the recording identity: "(Explicit)", "(Radio Edit)",
-     * "(2013 Remaster)", "(Live)". Only ever accepted behind the album.
-     */
-    private static final Pattern TITLE_TRAILER = Pattern.compile(
-            "\\s+(?:explicit|clean|remix|radio\\s+edit|single\\s+version|album\\s+version|main\\s+version|video\\s+version|"
-                    + "soundtrack\\s+version|original\\s+mix|extended\\s+mix|extended|edit|acoustic|instrumental|acapella|demo|reprise|live|"
-                    + "remaster(?:ed)?|deluxe|bonus\\s+tracks?|with\\s+intro|with\\s+outro|\\d{4}\\s+remaster(?:ed)?)\\s*$",
+            "(?:\\s+[-–—]\\s+|\\s*\\()(?:(?:the\\s+)?\\d{1,2}(?:st|nd|rd|th)?\\s+)?"
+                    + "(?:mini\\s+album|full\\s+album|single\\s+album|digital\\s+single|single|ep)\\)?\\s*$",
             Pattern.CASE_INSENSITIVE);
 
     /** Title without its guest credit, e.g. "End Game (feat. Ed Sheeran & Future)" and "End Game" agree. */
@@ -99,30 +90,18 @@ final class AmIdentity {
         return normalize(GUEST_CLAUSE.matcher(Normalizer.normalize(title == null ? "" : title, Normalizer.Form.NFKC)).replaceAll(""));
     }
 
-    /**
-     * Title without guest credit and without a harmless version suffix: "Shake It Off (Explicit)"
-     * and "Shake It Off (Radio Edit)" both collapse to "Shake It Off". Rerecording markers and
-     * foreign words such as "[Karaoke Version]" stay. Only ever accepted behind the album.
-     */
-    static String coreTitleLoose(String title) {
-        String core = coreTitle(title);
-        Matcher matcher = TITLE_TRAILER.matcher(core);
-        if (!matcher.find()) return core;
-        String base = matcher.replaceAll("").trim();
-        return base.isEmpty() ? core : base;
-    }
 
     /** Credited artists: the artist field split into names, plus the guests named in the title. */
     static Set<String> credits(String artist, String title) {
         Set<String> names = new TreeSet<>();
         addCredits(artist, names);
         Matcher featured = FEATURED.matcher(Normalizer.normalize(title == null ? "" : title, Normalizer.Form.NFKC));
-        while (featured.find()) addCredits(featured.group(1), names);
+        while (featured.find()) addCredits(featured.group(1) == null ? featured.group(2) : featured.group(1), names);
         return names;
     }
     private static void addCredits(String value, Set<String> names) {
         for (String part : CREDIT_SEPARATOR.split(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC))) {
-            String name = normalize(part);
+            String name = normalizeArtist(part);
             if (!name.isEmpty()) names.add(name);
         }
     }
@@ -132,7 +111,7 @@ final class AmIdentity {
      * Sets must be equal, so a lone primary artist never matches a duet credited to two.
      */
     static boolean sameArtists(String artist, String title, String otherArtist, String otherTitle) {
-        String a = normalize(artist), b = normalize(otherArtist);
+        String a = normalizeArtist(artist), b = normalizeArtist(otherArtist);
         if (a.isEmpty() || b.isEmpty()) return false;
         return a.equals(b) || credits(artist, title).equals(credits(otherArtist, otherTitle));
     }
@@ -148,37 +127,36 @@ final class AmIdentity {
     }
     /**
      * Multilingual or alias-dotted names: "周杰伦 Jay Chou" and "Jay Chou" credit the same artist
-     * when one side's name tokens are contained in the other's. Only ever accepted behind the album.
+     * when a complete lead name appears in an explicitly mixed-script credit. Same-language
+     * fragments and combined guest-token sets are not aliases. Only accepted behind the album.
      */
     static boolean namesOverlap(String artist, String title, String otherArtist, String otherTitle) {
-        Set<String> a = nameTokens(artist, title), b = nameTokens(otherArtist, otherTitle);
+        String a = primaryArtist(artist), b = primaryArtist(otherArtist);
         if (a.isEmpty() || b.isEmpty()) return false;
-        return a.containsAll(b) || b.containsAll(a);
+        return multilingualAlias(a, b) || multilingualAlias(b, a);
     }
-    /** Word-level tokens of every credited name: "周杰伦 Jay Chou" -> {周杰伦, jay, chou}. */
-    private static Set<String> nameTokens(String artist, String title) {
-        Set<String> tokens = new TreeSet<>();
-        for (String credit : credits(artist, title)) {
-            for (String word : credit.split(" ")) {
-                if (!word.isEmpty()) tokens.add(word);
-            }
-        }
-        return tokens;
+    private static boolean multilingualAlias(String longer, String shorter) {
+        if (!(" " + longer + " ").contains(" " + shorter + " ") || longer.equals(shorter)) return false;
+        String remainder = (" " + longer + " ").replace(" " + shorter + " ", " ").trim();
+        boolean shortLatin = shorter.matches("[a-z]+(?: [a-z]+)+");
+        boolean shortNative = shorter.matches("[^\\p{IsLatin}\\p{N} ]+");
+        return shortLatin && remainder.matches("[^\\p{IsLatin}\\p{N} ]+")
+                || shortNative && remainder.matches("[a-z]+(?: [a-z]+)+");
     }
-    /** Album name without a harmless trailing edition clause; rerecordings keep their marker. */
+    /** Album name without its release-type descriptors; all edition/recording words survive. */
     static String editionBase(String album) {
-        String value = normalize(album);
-        if (value.isEmpty()) return "";
-        Matcher matcher = EDITION_TRAILER.matcher(value);
-        if (!matcher.find()) return value;
-        if (RE_RECORD_MARK.matcher(matcher.group(0)).find()) return value;
-        String base = matcher.replaceAll("").trim();
-        return base.isEmpty() ? value : base;
+        String value = Normalizer.normalize(album == null ? "" : album, Normalizer.Form.NFKC).trim();
+        for (;;) {
+            Matcher matcher = EDITION_TRAILER.matcher(value);
+            if (!matcher.find()) return normalize(value);
+            String base = matcher.replaceAll("").trim();
+            if (base.isEmpty()) return normalize(value);
+            value = base;
+        }
     }
     /**
-     * "Midnights" and "Midnights (3am Edition)", "1989" and "1989 (Explicit)" name the same album;
-     * rerecordings do not. A display-truncated name ("Rich Man - The 6th Mini Al...") is accepted
-     * when it is a long prefix of the full album name.
+     * Release types may differ. A query ending in an explicit ellipsis may be a long prefix of
+     * the complete catalog name; complete names never acquire a guessed truncation marker.
      */
     static boolean albumClose(String a, String b) {
         return albumClose(a, b, MatchProfile.STANDARD);
@@ -187,19 +165,30 @@ final class AmIdentity {
         if (a.isEmpty() || b.isEmpty()) return false;
         String baseA = editionBase(a), baseB = editionBase(b);
         if (baseA.equals(baseB)) return true;
-        // Truncated player text: the shorter raw name is a prefix of the longer one and carries
-        // most of its length. "1989" vs "1989 (Taylor's Version)" stays apart (too short a prefix).
         String rawA = normalize(a), rawB = normalize(b);
         int shorter = Math.min(rawA.length(), rawB.length());
-        return shorter >= 6 && (rawA.startsWith(rawB) || rawB.startsWith(rawA))
+        // Only the query may be display-truncated; never interpret a complete edition name as a prefix.
+        return truncated(a) && rawB.startsWith(rawA) && shorter >= 6
                 && shorter * 100 >= Math.max(rawA.length(), rawB.length()) * profile.prefixRatioPct;
     }
+    static boolean truncated(String value) {
+        String text = value == null ? "" : value.trim();
+        return text.endsWith("...") || text.endsWith("…");
+    }
+    static boolean albumAgrees(String want, String have, AmEdition.Info info, MatchProfile profile) {
+        if (normalize(want).equals(normalize(have))) return true;
+        String wantRating = ratingLabel(want), haveRating = ratingLabel(have);
+        if (!wantRating.isEmpty() && !wantRating.equals(info.rating())
+                || !haveRating.isEmpty() && !haveRating.equals(info.rating())) return false;
+        return albumClose(wantRating.isEmpty() ? want : stripRatingLabel(Normalizer.normalize(want, Normalizer.Form.NFKC)),
+                haveRating.isEmpty() ? have : stripRatingLabel(Normalizer.normalize(have, Normalizer.Form.NFKC)), profile);
+    }
     /** First credited name; album-level search only, before the track table is verified. */
-    static String primaryArtist(String artist) { return normalize(leadCredit(artist)); }
+    static String primaryArtist(String artist) { return normalizeArtist(leadCredit(artist)); }
     /** The first credited name as written, for search terms shown to the user. */
     static String leadCredit(String artist) {
         for (String part : CREDIT_SEPARATOR.split(Normalizer.normalize(artist == null ? "" : artist, Normalizer.Form.NFKC))) {
-            if (!normalize(part).isEmpty()) return part.trim();
+            if (!normalizeArtist(part).isEmpty()) return part.trim();
         }
         return "";
     }
@@ -251,22 +240,19 @@ final class AmIdentity {
     /**
      * The track answers the query. Strict equality first (title, credited set, album, duration);
      * then bounded tolerance: a guest list that credits the same lead artist, a multilingual or
-     * alias-dotted name, an edition or version suffix that does not change cover or recording,
-     * and up to 12s for live/rerelease masters when the exact title is backed by the album.
+     * mixed-script lead name, a corroborated rating annotation, and a configured duration drift
+     * when the exact title is backed by the album. Recording and edition labels remain distinct.
      * Nothing weaker than that is ever accepted.
      */
     static boolean agrees(Track track, ArtworkQuery query) {
         return agrees(track, query, MatchProfile.STANDARD);
     }
     static boolean agrees(Track track, ArtworkQuery query, MatchProfile profile) {
-        String title = normalize(query.title), artist = normalize(query.artist), album = normalize(query.album);
+        String title = normalize(query.title), artist = normalizeArtist(query.artist), album = normalize(query.album);
         if (title.isEmpty() || artist.isEmpty() || query.durationMs <= 0 || track.durationMs() <= 0) return false;
         String trackTitle = normalize(track.title());
         boolean exactTitle = title.equals(trackTitle);
-        boolean titleOk = exactTitle || coreTitle(query.title).equals(coreTitle(track.title()));
-        // Symbol and version differences ("Shake It Off (Explicit)" vs "Shake It Off") are accepted
-        // only behind the album; a bare title pair stays strict.
-        if (!titleOk && (album.isEmpty() || !coreTitleLoose(query.title).equals(coreTitleLoose(track.title())))) return false;
+        if (!recordingAgrees(track, query)) return false;
 
         long delta = Math.abs(query.durationMs - track.durationMs());
         if (delta > profile.albumDeltaMs) return false;             // never: a different recording
@@ -280,19 +266,29 @@ final class AmIdentity {
 
         String trackAlbum = normalize(track.album());
         boolean albumExact = album.isEmpty() || album.equals(trackAlbum);
-        if (!albumExact && !albumClose(album, trackAlbum, profile)) return false;
+        if (!albumExact && !albumAgrees(query.album, track.album(), track.edition(), profile)) return false;
 
         // A live or rerelease master (duration drift) is accepted only with the exact title
         // and the album behind it; never from a bare title-only match.
         if (delta > profile.exactDeltaMs) {
-            return exactTitle && !album.isEmpty() && (album.equals(trackAlbum) || albumClose(album, trackAlbum, profile));
+            return exactTitle && !album.isEmpty();
         }
         if (exactTitle) return true;
         if (album.isEmpty()) return false;
-        // Inside the named album a version suffix ("Shake It Off (Explicit)") binds the album's
-        // cover like the exact title, but only when the lead artist agrees; a guest's own listing
-        // never takes over the album.
+        // Guest credits and corroborated rating annotations still require the album's artist.
         return sameAlbumTrack(track, query) || primaryArtist(query.artist).equals(primaryArtist(track.artist()));
+    }
+    private static boolean recordingAgrees(Track track, ArtworkQuery query) {
+        String wanted = ratingLabel(query.title), supplied = ratingLabel(track.title()), albumRating = ratingLabel(query.album);
+        String evidence = track.edition().rating();
+        boolean rated = evidence.equals("explicit") || evidence.equals("cleaned");
+        if (rated && !albumRating.isEmpty() && !albumRating.equals(evidence)) return false;
+        if (rated && (!wanted.isEmpty() && !wanted.equals(evidence) || !supplied.isEmpty() && !supplied.equals(evidence))) return false;
+        if (coreTitle(query.title).equals(coreTitle(track.title()))) return true;
+        // Only a corroborated content-rating annotation can disappear. Recording/language labels survive.
+        return !query.album.isEmpty() && rated && (!wanted.isEmpty() || !supplied.isEmpty())
+                && coreTitle(stripRatingLabel(Normalizer.normalize(query.title, Normalizer.Form.NFKC)))
+                    .equals(coreTitle(stripRatingLabel(Normalizer.normalize(track.title(), Normalizer.Form.NFKC))));
     }
 
     /**
@@ -324,7 +320,7 @@ final class AmIdentity {
             Track equivalent = query.album.isEmpty() ? null : explicitCleanTrack(List.copyOf(matches.values()));
             if (equivalent != null) return equivalent;
             // Several candidates qualify; the most exact one wins, a tie stays ambiguous.
-            Track best = bestMatch(List.copyOf(matches.values()), query);
+            Track best = bestMatch(List.copyOf(matches.values()), query, profile);
             if (best != null) return best;
             throw new AmFailure(Status.AMBIGUOUS, "multiple_catalog_matches");
         }
@@ -335,7 +331,7 @@ final class AmIdentity {
     private static Track explicitCleanTrack(List<Track> matches) {
         if (matches.size() != 2) return null;
         Track a = matches.get(0), b = matches.get(1);
-        if (a.albumId().equals(b.albumId()) || !normalize(a.title()).equals(normalize(b.title()))
+        if (a.albumId().equals(b.albumId()) || !ratingBase(a.title()).equals(ratingBase(b.title()))
                 || a.durationMs() <= 0 || b.durationMs() <= 0 || Math.abs(a.durationMs() - b.durationMs()) > 3000) return null;
         java.util.ArrayList<AmEdition.Candidate> editions = new java.util.ArrayList<>();
         for (Track track : matches) editions.add(new AmEdition.Candidate(track.albumId(), track.artist(), track.album(), track.edition()));
@@ -344,44 +340,49 @@ final class AmIdentity {
         return a.albumId().equals(chosen) ? a : b;
     }
     /** Among several qualifying tracks the most exact one wins; a tie stays ambiguous. */
-    private static Track bestMatch(List<Track> matches, ArtworkQuery query) {
-        int best = 0; Track chosen = null; boolean tie = false;
+    private static Track bestMatch(List<Track> matches, ArtworkQuery query, MatchProfile profile) {
+        long best = Long.MIN_VALUE; Track chosen = null; boolean tie = false;
         for (Track track : matches) {
-            int score = matchScore(track, query);
+            long score = matchScore(track, query, profile);
             if (chosen == null || score > best) { best = score; chosen = track; tie = false; }
             else if (score == best) tie = true;
         }
         return tie ? null : chosen;
     }
     /** Exact fields outrank tolerant ones; only candidates that already passed {@link #agrees} are scored. */
-    private static int matchScore(Track track, ArtworkQuery query) {
-        int score = 0;
+    private static long matchScore(Track track, ArtworkQuery query, MatchProfile profile) {
+        // Lexicographic fields: exact album, title, credited artists, then duration. A weaker
+        // album cannot win by adding several lower-priority bonuses; true ties stay ambiguous.
+        long score = 0;
         String title = normalize(query.title), trackTitle = normalize(track.title());
-        if (title.equals(trackTitle)) score += 4;
-        else if (coreTitle(query.title).equals(coreTitle(track.title()))) score += 2;
-        if (sameArtists(query.artist, query.title, track.artist(), track.title())) score += 4;
-        else if (sharesLeadArtist(query.artist, query.title, track.artist(), track.title())) score += 2;
+        if (title.equals(trackTitle)) score += 1L << 44;
+        else if (coreTitle(query.title).equals(coreTitle(track.title()))) score += 1L << 40;
+        if (sameArtists(query.artist, query.title, track.artist(), track.title())) score += 1L << 36;
+        else if (sharesLeadArtist(query.artist, query.title, track.artist(), track.title())) score += 1L << 32;
         String album = normalize(query.album), trackAlbum = normalize(track.album());
         if (!album.isEmpty()) {
-            if (album.equals(trackAlbum)) score += 4;
-            else if (albumClose(album, trackAlbum)) score += 2;
+            if (album.equals(trackAlbum)) score += 1L << 48;
         }
         long delta = Math.abs(query.durationMs - track.durationMs());
-        if (delta <= 3000) score += 4;
-        else if (delta <= 12000) score += 2;
-        return score;
+        if (delta <= profile.exactDeltaMs) score += 1L << 28;
+        else if (delta <= profile.albumDeltaMs) score += 1L << 24;
+        return score - delta;
     }
     static String diagnostics(List<Track> tracks, ArtworkQuery query) {
+        return diagnostics(tracks, query, MatchProfile.STANDARD);
+    }
+    static String diagnostics(List<Track> tracks, ArtworkQuery query, MatchProfile profile) {
         int titles = 0, artists = 0, albums = 0, durations = 0, complete = 0;
         java.util.Map<String, Track> matched = new TreeMap<>();
         for (Track track : tracks) {
-            if (normalize(query.title).equals(normalize(track.title()))
-                    || !query.album.isEmpty() && coreTitle(query.title).equals(coreTitle(track.title()))) titles++;
+            if (recordingAgrees(track, query)) titles++;
             if (sameArtists(query.artist, query.title, track.artist(), track.title())
-                    || !query.album.isEmpty() && sameAlbumTrack(track, query)) artists++;
-            if (query.album.isEmpty() || normalize(query.album).equals(normalize(track.album()))) albums++;
-            if (query.durationMs > 0 && track.durationMs() > 0 && Math.abs(query.durationMs - track.durationMs()) <= 3000) durations++;
-            if (agrees(track, query)) { complete++; matched.put(track.albumId() + "/" + track.songId(), track); }
+                    || !query.album.isEmpty() && (sharesLeadArtist(query.artist, query.title, track.artist(), track.title())
+                        || namesOverlap(query.artist, query.title, track.artist(), track.title()))) artists++;
+            if (query.album.isEmpty() || albumAgrees(query.album, track.album(), track.edition(), profile)) albums++;
+            if (query.durationMs > 0 && track.durationMs() > 0 && Math.abs(query.durationMs - track.durationMs())
+                    <= (query.album.isEmpty() ? profile.exactDeltaMs : profile.albumDeltaMs)) durations++;
+            if (agrees(track, query, profile)) { complete++; matched.put(track.albumId() + "/" + track.songId(), track); }
         }
         return "candidates=" + tracks.size() + " titleMatches=" + titles + " artistMatches=" + artists
                 + " albumMatches=" + albums + " durationMatches=" + durations + " completeMatches=" + complete

@@ -587,11 +587,11 @@ public final class AmArtworkActivity extends Activity {
         marketValue.setText(code.toUpperCase(Locale.ROOT));
     }
 
-    private static String matchLevelName(String level) {
+    private String matchLevelName(String level) {
         switch (level) {
-            case "strict": return "Strict";
-            case "loose": return "Loose";
-            default: return "Standard";
+            case "strict": return getString(R.string.match_strict);
+            case "loose": return getString(R.string.match_loose);
+            default: return getString(R.string.match_standard);
         }
     }
 

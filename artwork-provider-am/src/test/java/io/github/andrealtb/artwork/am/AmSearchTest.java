@@ -98,8 +98,8 @@ public class AmSearchTest {
         return new AmCatalog((uri, limit) -> {
             if (uri.getHost().equals("itunes.apple.com")) return "{\"results\":[]}";
             if (uri.getPath().equals("/cn/search")) return page(items);
-            assertEquals("/cn/album/-/10", uri.getPath());
-            return AmPageTest.page("null").replace("/us/", "/cn/");
+            assertTrue(uri.getPath(),uri.getPath().equals("/cn/album/-/10") || uri.getPath().equals("/cn/album/-/20"));
+            return AmCatalogTest.albumPage(uri.getPath().endsWith("/20") ? "20" : "10","Style").replace("/us/", "/cn/");
         }, (stage, tracks) -> {});
     }
     @Test public void automaticCnResolutionStillVerifiesActualSongTable() throws Exception {

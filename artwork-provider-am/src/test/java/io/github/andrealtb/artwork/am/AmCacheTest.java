@@ -72,4 +72,30 @@ public class AmCacheTest {
         assertNotEquals(AmCache.albumAssetKey(first, "us", "10"), AmCache.albumAssetKey(first, "us", "20"));
         assertEquals(AmCache.albumAssetKey(first, "us", "10"), AmCache.albumAssetKey(AmIdentityTest.query("Style", "1989", 1080), "us", "10"));
     }
+    @Test public void positiveAndNegativeDecisionEntriesCannotCrossMatchingProfiles() throws Exception {
+        var cache=new AmCache(temporary.newFolder());
+        var query=AmIdentityTest.query("Style","1989",288);
+        String loose=AmCache.key(query,"us",AmIdentity.MatchProfile.LOOSE);
+        String strict=AmCache.key(query,"us",AmIdentity.MatchProfile.STRICT);
+        cache.remember(loose,null,ArtworkResult.failure(Status.NO_MOTION,"album_has_no_motion"));
+        assertNotNull(cache.lookup(loose)); assertNull(cache.lookup(strict));
+        File temp=cache.temporary(); Files.write(temp.toPath(),new byte[]{1,2,3});
+        File file=cache.commit(temp); cache.remember(loose,file,null);
+        var hit=cache.lookup(loose); assertEquals(file,hit.file()); assertNull(cache.lookup(strict));
+        cache.unpin(hit.file()); cache.unpin(file);
+    }
+    @Test public void completeAndExplicitlyTruncatedAlbumQueriesHaveSeparateDecisions() {
+        assertNotEquals(AmCache.key(AmIdentityTest.query("Style","A Long Album",288),"us"),
+                AmCache.key(AmIdentityTest.query("Style","A Long Album…",288),"us"));
+    }
+    @Test public void sharedAlbumSnapshotKeepsRatingEvidenceAndRevalidatesStrictness() throws Exception {
+        var cache=new AmCache(temporary.newFolder());
+        var query=AmIdentityTest.query("Style","1989",288);
+        var track=new AmIdentity.Track("1","10","Style","Taylor Swift","1989",240000,new AmEdition.Info("explicit","2014-10-27",13));
+        cache.rememberAlbum(query,"us",new AmPage.Album("10",java.util.List.of(track),null),AmIdentity.MatchProfile.STANDARD);
+        var known=cache.album(query,"us"); assertNotNull(known); assertEquals(track.edition(),known.tracks().get(0).edition());
+        assertEquals("1",AmIdentity.unique(known.tracks(),query,"","10",AmIdentity.MatchProfile.STANDARD).songId());
+        try { AmIdentity.unique(known.tracks(),query,"","10",AmIdentity.MatchProfile.STRICT); fail(); }
+        catch(AmFailure failure) { assertEquals("catalog_match_unconfirmed",failure.reason); }
+    }
 }
