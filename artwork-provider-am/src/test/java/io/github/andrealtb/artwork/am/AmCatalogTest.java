@@ -86,6 +86,28 @@ public class AmCatalogTest {
         catch (AmFailure failure) { assertEquals(Status.RETRY_LATER, failure.status); }
         assertTrue("the normalized clean search term was never issued", sawClean.get());
     }
+    @Test public void cnPageMissingFallsBackToUsCatalogPageAndStillVerifies() throws Exception {
+        var resolver = new AmCatalog((uri, limit) -> {
+            if (uri.getHost().equals("music.apple.com")) {
+                // The CN storefront cannot serve the album at all; the US page can.
+                return uri.getPath().startsWith("/cn/album/") ? "<html>unavailable</html>" : AmPageTest.page("null");
+            }
+            if (uri.getQuery().contains("entity=album")) return "{\"results\":[]}";
+            return "{\"results\":[{\"wrapperType\":\"track\",\"kind\":\"song\",\"trackId\":1,\"trackName\":\"Style\",\"artistName\":\"Taylor Swift\","
+                    + "\"collectionId\":10,\"collectionName\":\"1989\",\"trackTimeMillis\":231000}]}";
+        }, (stage, tracks) -> {});
+        assertEquals("10", resolver.resolve(AmIdentityTest.query("Style", "1989", 288), null, "cn", null).id());
+    }
+    @Test public void sameMarketPageFailureIsNotMaskedByFallback() throws Exception {
+        var resolver = new AmCatalog((uri, limit) -> {
+            if (uri.getHost().equals("music.apple.com")) return "<html>unavailable</html>";
+            if (uri.getQuery().contains("entity=album")) return "{\"results\":[]}";
+            return "{\"results\":[{\"wrapperType\":\"track\",\"kind\":\"song\",\"trackId\":1,\"trackName\":\"Style\",\"artistName\":\"Taylor Swift\","
+                    + "\"collectionId\":10,\"collectionName\":\"1989\",\"trackTimeMillis\":231000}]}";
+        }, (stage, tracks) -> {});
+        try { resolver.resolve(AmIdentityTest.query("Style", "1989", 288), null, "us", null); fail(); }
+        catch (AmFailure failure) { assertEquals(Status.RETRY_LATER, failure.status); }
+    }
     @Test public void matchDiagnosticsRevealFieldsOnlyNotPrivateTextOrIdentity() {
         String value = AmIdentity.diagnostics(List.of(new AmIdentity.Track("private-id", "private-album", "Style", "Taylor Swift", "1989", 231000)),
                 AmIdentityTest.query("Style", "1989", 288));
