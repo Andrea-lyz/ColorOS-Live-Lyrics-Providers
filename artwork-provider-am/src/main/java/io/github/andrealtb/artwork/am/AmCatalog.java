@@ -26,7 +26,7 @@ final class AmCatalog {
         if (known != null && (link == null || link.albumId().isEmpty() || link.albumId().equals(known.id()))) {
             return verify(known, query, link == null ? "" : link.songId(), "catalog_cache");
         }
-        if (link != null && !link.albumId().isEmpty()) return verify(page(link.albumId(), country), query, link.songId(), "web_link");
+        if (link != null && !link.albumId().isEmpty()) return verified(link.albumId(), country, query, link.songId(), "web_link");
         String songId = link == null ? "" : link.songId();
         if (link != null) {
             // A pasted song link pins the store track id: exact lookup, no search fallback.
@@ -40,7 +40,7 @@ final class AmCatalog {
                 if (failure.status != Status.RETRY_LATER || query.album.isEmpty()) throw failure;
                 return albumFallback(query, country, songId);
             }
-            return verify(page(selected.albumId(), country), query, selected.songId(), "web_song_album");
+            return verified(selected.albumId(), country, query, selected.songId(), "web_song_album");
         }
         // No exact link: search the store with progressively broader terms. Every round still
         // verifies the track table, so broader terms can never attach a foreign album.
@@ -56,7 +56,7 @@ final class AmCatalog {
             }
         }
         if (selected == null) return albumFallback(query, country, "");
-        return verify(page(selected.albumId(), country), query, selected.songId(), "web_song_album");
+        return verified(selected.albumId(), country, query, selected.songId(), "web_song_album");
     }
     /**
      * The iTunes Search API returns an HTTP 200 with an empty body for storefronts that Apple
@@ -96,7 +96,7 @@ final class AmCatalog {
         if (albums.isEmpty()) throw new AmFailure(Status.RETRY_LATER,
                 query.album.isEmpty() ? "catalog_match_unconfirmed" : "catalog_album_unconfirmed",
                 query.album.isEmpty() ? 60_000 : 30_000);
-        return verify(page(albums.get(0), country), query, songId, "web_album_fallback");
+        return verified(albums.get(0), country, query, songId, "web_album_fallback");
     }
     private List<String> albumSearch(String artist, ArtworkQuery query, String country) throws AmFailure {
         // Without an album name the track title stands in: the single/EP it belongs to is still
@@ -147,6 +147,25 @@ final class AmCatalog {
     }
     private AmPage.Album page(String id, String country) throws AmFailure {
         return AmPage.album(fetch.text(pageUri(country, id), 3 * 1024 * 1024), id);
+    }
+    /**
+     * Verify the album page in the user's own storefront first; the artwork must really exist
+     * there. Only a page fetch/parse failure retries in the search market once (the Adam ID is
+     * global, and an auto match beats a manual bind); a track that is absent from the album's
+     * track table is not a market problem and never retries.
+     */
+    private AmPage.Album verified(String id, String country, ArtworkQuery query, String song, String stage) throws AmFailure {
+        String market = searchMarket(country);
+        AmPage.Album album;
+        try {
+            album = page(id, country);
+        } catch (AmFailure failure) {
+            if (failure.status != Status.RETRY_LATER || market.equals(country)) throw failure;
+            discovery.accept("page_market_fallback id=" + id + " reason=" + failure.reason);
+            album = page(id, market);
+            stage += "_market_fallback";
+        }
+        return verify(album, query, song, stage);
     }
     private static String encode(String value) {
         try { return URLEncoder.encode(value, "UTF-8"); }
