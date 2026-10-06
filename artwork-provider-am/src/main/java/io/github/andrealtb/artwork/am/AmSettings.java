@@ -22,6 +22,11 @@ final class AmSettings {
         String value = prefs(context).getString("country", "us");
         return value != null && value.matches("[a-zA-Z]{2}") ? value.toLowerCase(Locale.ROOT) : "us";
     }
+    /** Matching strictness: "strict" / "standard" / "loose"; anything unknown falls back to standard. */
+    static String matchLevel(Context context) {
+        String value = prefs(context).getString("matchLevel", "standard");
+        return "strict".equals(value) || "loose".equals(value) ? value : "standard";
+    }
     static boolean online(Context context) {
         if (!enabled(context) || !connected(context)) return false;
         ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);

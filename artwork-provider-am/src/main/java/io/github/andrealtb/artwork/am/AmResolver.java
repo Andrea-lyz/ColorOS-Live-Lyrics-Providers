@@ -125,7 +125,8 @@ final class AmResolver {
             if (!AmSettings.online(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "network_policy");
             AmPage.Album album = new AmCatalog((uri, limit) -> network.text(uri, limit, task),
                     (stage, tracks) -> AmSettings.matching(context, stage, tracks, query),
-                    detail -> AmSettings.trace(context, "ARTWORK_AM_CATALOG", detail)).resolve(query, link, country, known);
+                    detail -> AmSettings.trace(context, "ARTWORK_AM_CATALOG", detail),
+                    AmIdentity.MatchProfile.forLevel(AmSettings.matchLevel(context))).resolve(query, link, country, known);
             task.check();
             albumId = album.id();
             cache.rememberAlbum(query, country, album);

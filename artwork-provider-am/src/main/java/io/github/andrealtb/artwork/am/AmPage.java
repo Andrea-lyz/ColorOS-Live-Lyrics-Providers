@@ -136,8 +136,10 @@ final class AmPage {
             List<AmEdition.Candidate> editions = new ArrayList<>();
             for (int i = 0; i < results.length(); i++) {
                 JSONObject item = results.getJSONObject(i);
+                String want = AmIdentity.normalize(album), have = AmIdentity.normalize(item.optString("collectionName"));
+                boolean sameAlbum = want.isEmpty() || want.equals(have) || AmIdentity.albumClose(want, have);
                 if ("collection".equals(item.optString("wrapperType")) && "Album".equals(item.optString("collectionType"))
-                        && !AmIdentity.normalize(album).isEmpty() && AmIdentity.normalize(album).equals(AmIdentity.normalize(item.optString("collectionName")))
+                        && sameAlbum
                         && (AmIdentity.sameArtists(artist, "", item.optString("artistName"), "")
                             || !AmIdentity.primaryArtist(artist).isEmpty()
                                 && AmIdentity.primaryArtist(artist).equals(AmIdentity.primaryArtist(item.optString("artistName"))))) {
