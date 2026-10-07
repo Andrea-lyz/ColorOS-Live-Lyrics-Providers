@@ -151,7 +151,7 @@ v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了�
 - 首次使用：在应用内打开来源（默认关闭，默认仅非计费网络），再到 Bridge 的
   「设置 → 动态封面」中选择并授权它。
 - 与歌词 Provider 完全独立：可单独安装、更新、卸载，歌词链路不受影响。
-- 版本 1.0.2（versionCode 6），使用与歌词 Provider 相同的发布签名；
+- 源码版本 1.0.3（versionCode 7），使用与歌词 Provider 相同的发布签名；
   正式发布时作为独立资产提供，不进入 Provider bundle。
 - 开发入口与来源链路见 [artwork-provider-am/README.md](artwork-provider-am/README.md)。
 

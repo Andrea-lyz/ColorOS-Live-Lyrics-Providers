@@ -152,7 +152,7 @@ part of the v5 lyric matrix above. Without it the lock screen keeps the official
   then pick and authorize it in the Bridge under "Settings → Dynamic artwork".
 - Fully independent of the lyric Providers: install, update, or remove it on its own; the lyric
   path is unaffected.
-- Version 1.0.2 (versionCode 6), signed with the same release key as the lyric Providers. It is
+- Source version 1.0.3 (versionCode 7), signed with the same release key as the lyric Providers. It is
   published as its own asset and does not enter the Provider bundle.
 - Source chain and development entry point: [artwork-provider-am/README.md](artwork-provider-am/README.md).
 

@@ -1,11 +1,14 @@
 # 动态封面 Provider（Dynamic Artwork Provider）
 
-v1.0.2。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
+v1.0.3（versionCode 7）。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
 不注入 Apple Music 或 SystemUI，不进入任何播放器进程。通过 `artwork-contract` v1 向已授权的
 Bridge 返回 `localTestOnly=false` 与完整本地 MP4 的只读 FD。
 
 它是**可选**的独立应用：不安装它时，锁屏仍然是官方静态封面；安装并启用后才会联网匹配动态封面。
 界面默认英文，中文系统显示中文，语言跟随系统。
+
+1.0.3 改善跨平台自动匹配、分档缓存与候选复核，修复 `betty (Explicit)` 的目录候选遗漏和
+CN 手动绑定搜索错用 US 结果。更新说明见 [CHANGELOG.md](CHANGELOG.md)。
 
 1.0.2 随 C17 Artwork Preview1 交付：大小卡共用原生 1080×1080 视频和下载，
 提供默认关闭的本地 TXT 诊断，并区分没有可读样本、读取异常、超限与重封装失败。
