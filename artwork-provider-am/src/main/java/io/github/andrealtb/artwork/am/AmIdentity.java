@@ -60,6 +60,9 @@ final class AmIdentity {
     static String ratingBase(String value) {
         return normalize(stripRatingLabel(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)));
     }
+    private static String ratingTitleBody(String value) {
+        return coreTitle(stripRatingLabel(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)));
+    }
     private static String ratingLabel(String value) {
         Matcher matcher = RATING_LABEL.matcher(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC));
         if (!matcher.find()) return "";
@@ -67,6 +70,17 @@ final class AmIdentity {
             return matcher.group(i).equalsIgnoreCase("clean") ? "cleaned" : "explicit";
         }
         return "";
+    }
+    static String requestedRating(ArtworkQuery query) {
+        String title = ratingLabel(query.title), album = ratingLabel(query.album);
+        if (!title.isEmpty() && !album.isEmpty() && !title.equals(album)) return "conflict";
+        return title.isEmpty() ? album : title;
+    }
+    static boolean ratingCompatible(ArtworkQuery query, AmEdition.Info info) {
+        String wanted = requestedRating(query);
+        if (wanted.equals("conflict")) return false;
+        boolean known = info.rating().equals("explicit") || info.rating().equals("cleaned");
+        return wanted.isEmpty() || !known || wanted.equals(info.rating());
     }
 
     /** A title's guest credit, e.g. "Fortnight (feat. Post Malone)". */
@@ -287,8 +301,7 @@ final class AmIdentity {
         if (coreTitle(query.title).equals(coreTitle(track.title()))) return true;
         // Only a corroborated content-rating annotation can disappear. Recording/language labels survive.
         return !query.album.isEmpty() && rated && (!wanted.isEmpty() || !supplied.isEmpty())
-                && coreTitle(stripRatingLabel(Normalizer.normalize(query.title, Normalizer.Form.NFKC)))
-                    .equals(coreTitle(stripRatingLabel(Normalizer.normalize(track.title(), Normalizer.Form.NFKC))));
+                && ratingTitleBody(query.title).equals(ratingTitleBody(track.title()));
     }
 
     /**
@@ -372,10 +385,12 @@ final class AmIdentity {
         return diagnostics(tracks, query, MatchProfile.STANDARD);
     }
     static String diagnostics(List<Track> tracks, ArtworkQuery query, MatchProfile profile) {
-        int titles = 0, artists = 0, albums = 0, durations = 0, complete = 0;
+        int titles = 0, titleBodies = 0, ratingRejected = 0, artists = 0, albums = 0, durations = 0, complete = 0;
         java.util.Map<String, Track> matched = new TreeMap<>();
         for (Track track : tracks) {
             if (recordingAgrees(track, query)) titles++;
+            if (ratingTitleBody(query.title).equals(ratingTitleBody(track.title()))) titleBodies++;
+            if (!ratingCompatible(query, track.edition())) ratingRejected++;
             if (sameArtists(query.artist, query.title, track.artist(), track.title())
                     || !query.album.isEmpty() && (sharesLeadArtist(query.artist, query.title, track.artist(), track.title())
                         || namesOverlap(query.artist, query.title, track.artist(), track.title()))) artists++;
@@ -386,6 +401,8 @@ final class AmIdentity {
         }
         return "candidates=" + tracks.size() + " titleMatches=" + titles + " artistMatches=" + artists
                 + " albumMatches=" + albums + " durationMatches=" + durations + " completeMatches=" + complete
-                + " explicitCleanEquivalent=" + (!query.album.isEmpty() && explicitCleanTrack(List.copyOf(matched.values())) != null);
+                + " explicitCleanEquivalent=" + (!query.album.isEmpty() && explicitCleanTrack(List.copyOf(matched.values())) != null)
+                + " titleBodyMatches=" + titleBodies + " ratingRejected=" + ratingRejected + " requestedRating="
+                + (requestedRating(query).isEmpty() ? "none" : requestedRating(query));
     }
 }

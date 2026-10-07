@@ -47,7 +47,7 @@ final class AmCache {
     }
     static String key(ArtworkQuery query, String country, AmIdentity.MatchProfile profile) {
         // Include raw URL, limits and completed query fields: no success or negative reuse across edition changes.
-        return hash("match-v5-1080\n" + profile.exactDeltaMs + "/" + profile.albumDeltaMs + "/" + profile.prefixRatioPct
+        return hash("match-v6-1080\n" + profile.exactDeltaMs + "/" + profile.albumDeltaMs + "/" + profile.prefixRatioPct
                 + "\n" + country + "\n" + AmIdentity.normalize(query.title) + "\n" + AmIdentity.normalizeArtist(query.artist)
                 + "\n" + AmIdentity.normalize(query.album) + "\n" + query.durationMs + "\n" + query.appleMusicUrl
                 + "\ntruncated=" + AmIdentity.truncated(query.album)

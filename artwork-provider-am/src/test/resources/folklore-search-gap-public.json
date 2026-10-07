@@ -1,0 +1,189 @@
+{
+  "query": {
+    "title": "betty (Explicit)",
+    "artist": "Taylor Swift",
+    "album": "folklore (deluxe version)",
+    "durationMs": 294521
+  },
+  "songs": {
+    "sourceSha256": "4c582001a6475b9aedfa0e47a2415defae7bf374c0c0ea4a629d7a2b18dfa83b",
+    "results": [
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528112140,
+        "collectionId": 1528111535,
+        "trackName": "betty",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 294521,
+        "collectionExplicitness": "cleaned",
+        "trackExplicitness": "cleaned",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      },
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528112366,
+        "collectionId": 1528112358,
+        "trackName": "mirrorball",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 208978,
+        "collectionExplicitness": "explicit",
+        "trackExplicitness": "notExplicit",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      },
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528112370,
+        "collectionId": 1528112358,
+        "trackName": "august",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 261923,
+        "collectionExplicitness": "explicit",
+        "trackExplicitness": "notExplicit",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      }
+    ]
+  },
+  "albums": {
+    "sourceSha256": "af3a4bba410c278dd6cb04e58ce05a7269e65fb23f5c80240fbae3f3220bb2c1",
+    "results": [
+      {
+        "wrapperType": "collection",
+        "collectionType": "Album",
+        "collectionId": 1528111535,
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "collectionExplicitness": "cleaned",
+        "releaseDate": "2020-08-18T07:00:00Z",
+        "trackCount": 17
+      }
+    ]
+  },
+  "explicit": {
+    "sourceSha256": "a871e85292f3c2606dff6e931cbfa2c7d120e4c166419cc2cdcd25c4424e2042",
+    "results": [
+      {
+        "wrapperType": "collection",
+        "collectionType": "Album",
+        "collectionId": 1528112358,
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "collectionExplicitness": "explicit",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      },
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528112366,
+        "collectionId": 1528112358,
+        "trackName": "mirrorball",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 208978,
+        "collectionExplicitness": "explicit",
+        "trackExplicitness": "notExplicit",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      },
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528112370,
+        "collectionId": 1528112358,
+        "trackName": "august",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 261923,
+        "collectionExplicitness": "explicit",
+        "trackExplicitness": "notExplicit",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      },
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528112557,
+        "collectionId": 1528112358,
+        "trackName": "betty",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 294521,
+        "collectionExplicitness": "explicit",
+        "trackExplicitness": "explicit",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      }
+    ]
+  },
+  "clean": {
+    "sourceSha256": "8a585062e3f6c68139523d0e145812a1ff1704a021816c3e89e723fd5d3ce65c",
+    "results": [
+      {
+        "wrapperType": "collection",
+        "collectionType": "Album",
+        "collectionId": 1528111535,
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "collectionExplicitness": "cleaned",
+        "releaseDate": "2020-08-18T07:00:00Z",
+        "trackCount": 17
+      },
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528111855,
+        "collectionId": 1528111535,
+        "trackName": "mirrorball",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 208978,
+        "collectionExplicitness": "cleaned",
+        "trackExplicitness": "notExplicit",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      },
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528112065,
+        "collectionId": 1528111535,
+        "trackName": "august",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 261923,
+        "collectionExplicitness": "cleaned",
+        "trackExplicitness": "notExplicit",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      },
+      {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1528112140,
+        "collectionId": 1528111535,
+        "trackName": "betty",
+        "artistName": "Taylor Swift",
+        "collectionName": "folklore (deluxe version)",
+        "trackTimeMillis": 294521,
+        "collectionExplicitness": "cleaned",
+        "trackExplicitness": "cleaned",
+        "releaseDate": "2020-07-24T07:00:00Z",
+        "trackCount": 17
+      }
+    ]
+  },
+  "sources": [
+    "https://itunes.apple.com/search?term=Taylor+Swift+folklore+betty&media=music&entity=musicTrack&country=us&limit=100",
+    "https://itunes.apple.com/search?term=Taylor+Swift+folklore+deluxe+version&media=music&entity=album&country=us&limit=25",
+    "https://itunes.apple.com/lookup?id=1528112358&entity=song&country=us&limit=100"
+  ]
+}
