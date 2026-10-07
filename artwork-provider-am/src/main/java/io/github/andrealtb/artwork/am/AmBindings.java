@@ -17,7 +17,13 @@ final class AmBindings {
     private static final String PREFERENCES = "am_bindings";
     private static final String KEY = "bindings";
 
-    record Binding(String localAlbum, String localArtist, String country, String albumId, String title, String artist) {
+    record Binding(String localAlbum, String localArtist, String country, String albumId, String title, String artist,
+            String source, String songId) {
+        Binding(String localAlbum, String localArtist, String country, String albumId, String title, String artist) {
+            this(localAlbum, localArtist, country, albumId, title, artist, "am", "");
+        }
+        boolean netease() { return "netease".equals(source); }
+        String thumbnailScope() { return netease() ? "netease" : country; }
         boolean sameLocal(Binding other) {
             return AmIdentity.normalize(localAlbum).equals(AmIdentity.normalize(other.localAlbum))
                     && AmIdentity.normalizeArtist(localArtist).equals(AmIdentity.normalizeArtist(other.localArtist));
@@ -60,7 +66,7 @@ final class AmBindings {
             JSONArray items = new JSONArray();
             for (Binding binding : bindings) items.put(new JSONObject().put("localAlbum", binding.localAlbum())
                     .put("localArtist", binding.localArtist()).put("country", binding.country()).put("albumId", binding.albumId())
-                    .put("title", binding.title()).put("artist", binding.artist()));
+                    .put("title", binding.title()).put("artist", binding.artist()).put("source", binding.source()).put("songId", binding.songId()));
             return items.toString();
         } catch (Exception impossible) { throw new IllegalStateException(impossible); }
     }
@@ -74,7 +80,8 @@ final class AmBindings {
                 JSONObject item = items.optJSONObject(i);
                 if (item == null) continue;
                 Binding binding = new Binding(item.optString("localAlbum"), item.optString("localArtist"),
-                        item.optString("country"), item.optString("albumId"), item.optString("title"), item.optString("artist"));
+                        item.optString("country"), item.optString("albumId"), item.optString("title"), item.optString("artist"),
+                        item.optString("source", "am"), item.optString("songId"));
                 if (valid(binding)) bindings.add(binding);
             }
         } catch (Exception ignored) { /* unreadable store: no bindings */ }
@@ -83,6 +90,8 @@ final class AmBindings {
 
     static boolean valid(Binding binding) {
         return !AmIdentity.normalize(binding.localAlbum()).isEmpty() && binding.country().matches("[a-z]{2}")
+                && ("am".equals(binding.source()) && binding.songId().isEmpty()
+                    || binding.netease() && binding.songId().matches("[0-9]{1,20}"))
                 && binding.albumId().matches("[0-9]{1,20}") && binding.localAlbum().length() <= 512
                 && binding.localArtist().length() <= 512 && binding.title().length() <= 512 && binding.artist().length() <= 512;
     }

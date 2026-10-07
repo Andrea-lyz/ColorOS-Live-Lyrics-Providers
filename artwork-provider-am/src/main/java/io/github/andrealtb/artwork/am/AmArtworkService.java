@@ -78,7 +78,7 @@ public final class AmArtworkService extends Service {
             if (request == null || !AmSettings.enabled(AmArtworkService.this)) return null;
             synchronized (request) {
                 if (!current(request) || request.asset == null || request.file == null || request.opened
-                        || !request.asset.assetId.equals(assetId)) return null;
+                        || !request.asset.assetId.equals(assetId) || request.resolved == null || !request.resolved.available(app)) return null;
                 try {
                     ParcelFileDescriptor fd = ParcelFileDescriptor.open(request.file, ParcelFileDescriptor.MODE_READ_ONLY);
                     request.opened = true;
@@ -103,6 +103,7 @@ public final class AmArtworkService extends Service {
         reaper.scheduleWithFixedDelay(() -> {
             for (Request request : leases.reap(SystemClock.elapsedRealtime())) dispose(request);
             if (!AmSettings.enabled(app)) for (Request request : leases.clear()) dispose(request);
+            for (Request request : leases.values()) if (request.resolved != null && !request.resolved.available(app)) remove(request);
             cache.cleanup();
         }, 2, 2, TimeUnit.SECONDS);
     }
@@ -126,18 +127,20 @@ public final class AmArtworkService extends Service {
         try {
             AmResolver.Resolved result = resolver.resolve(request.query, request.task);
             synchronized (request) {
-                if (!current(request) || request.task.cancelled.get() || !AmSettings.enabled(app)) {
+                if (!current(request) || request.task.cancelled.get() || !result.available(app)) {
                     AmSettings.trace(app, "ARTWORK_AM_DETACHED_RESULT", "ready_cached");
                     cache.unpin(result.file()); return;
                 }
                 request.file = result.file();
+                request.resolved = result;
                 ArtworkAsset asset = result.asset();
                 long remaining = request.created + ArtworkContract.LEASE_MS - SystemClock.elapsedRealtime();
                 if (remaining <= 0) { remove(request); return; }
                 request.asset = new ArtworkAsset(asset.assetId, asset.version, asset.codec, asset.width,
                         asset.height, asset.durationMs, asset.fileBytes, remaining);
                 request.finished = true;
-                reply(request.callback, request.id, new ArtworkResult(ArtworkResult.Status.READY, request.asset, 0, "am_web_verified"));
+                reply(request.callback, request.id, new ArtworkResult(ArtworkResult.Status.READY, request.asset, 0,
+                        "netease".equals(result.source()) ? "netease_official_verified" : "am_web_verified"));
             }
         } catch (AmFailure failure) { fail(request, failure.result()); }
         catch (Exception error) {
@@ -180,11 +183,12 @@ public final class AmArtworkService extends Service {
         final IArtworkCallback callback;
         final ArtworkQuery query;
         final long created = SystemClock.elapsedRealtime();
-        final AmNetwork.Task task = new AmNetwork.Task();
+        final AmNetwork.Task task = new AmNetwork.Task(NcmSession.enabled(app) ? 52_000 : 38_000);
         final IBinder.DeathRecipient death;
         final Runnable work;
         File file;
         ArtworkAsset asset;
+        volatile AmResolver.Resolved resolved;
         boolean opened;
         volatile boolean started;
         volatile boolean finished;

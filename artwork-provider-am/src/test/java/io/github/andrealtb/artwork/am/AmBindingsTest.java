@@ -92,6 +92,26 @@ public class AmBindingsTest {
         assertNull(AmRecentAlbums.outcome(new AmFailure(Status.ERROR, "cancelled")));
     }
 
+    @Test public void recentAlbumsPreserveLatestSongForNeteasePrefillAndReadLegacyEntries() {
+        var first = new AmRecentAlbums.Entry("Eagles", "Eagles", AmRecentAlbums.Outcome.MATCHED, "Take It Easy");
+        var next = new AmRecentAlbums.Entry("Eagles", "Eagles", AmRecentAlbums.Outcome.MATCHED, "Witchy Woman");
+        var entries = AmRecentAlbums.note(AmRecentAlbums.note(List.of(), first), next);
+        assertEquals(1, entries.size());
+        assertEquals("Eagles", entries.get(0).album()); assertEquals("Witchy Woman", entries.get(0).title());
+        assertEquals(entries, AmRecentAlbums.decode(AmRecentAlbums.encode(entries)));
+        var old = AmRecentAlbums.decode("[{\"album\":\"reputation\",\"artist\":\"Taylor Swift\",\"outcome\":\"MATCHED\"}]").get(0);
+        assertEquals("reputation", old.album());
+        assertEquals("missing song must not be replaced with an album title", "", old.title());
+    }
+    @Test public void neteaseThumbnailsCannotOverwriteAppleCnAlbumThumbnailsWithTheSameId() {
+        var apple = new AmBindings.Binding("Local", "", "cn", "9", "Album", "Artist");
+        var netease = new AmBindings.Binding("Local", "", "cn", "9", "Album", "Artist", "netease", "1");
+        assertEquals("cn", apple.thumbnailScope());
+        assertEquals("netease", netease.thumbnailScope());
+        assertNotEquals(apple.thumbnailScope(), netease.thumbnailScope());
+        assertEquals(netease.thumbnailScope(), AmBindings.decode(AmBindings.encode(List.of(netease))).get(0).thumbnailScope());
+    }
+
     @Test public void albumSearchOffersEveryAlbumWithItsEditionDetails() throws Exception {
         var hits = AmPage.albumHits("{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":10,"
                 + "\"collectionName\":\"1989 (Deluxe Edition)\",\"artistName\":\"Taylor Swift\",\"releaseDate\":\"2014-10-27T07:00:00Z\","

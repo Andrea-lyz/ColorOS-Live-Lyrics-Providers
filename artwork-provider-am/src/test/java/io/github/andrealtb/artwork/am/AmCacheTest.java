@@ -12,6 +12,40 @@ import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
 
 public class AmCacheTest {
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
+    @Test public void neteaseSongMissKeepsOtherSongsAndTheSharedVerifiedVideoAvailable() throws Exception {
+        var cache = new AmCache(temporary.newFolder());
+        var query = AmIdentityTest.query("Style", "1989", 288);
+        var first = new NcmSearch.Song("1", "Style", "Taylor Swift", "1989", "10", 231000);
+        var second = new NcmSearch.Song("2", "Blank Space", "Taylor Swift", "1989", "10", 240000);
+        String failureKey = NcmSearch.failureKey(first, query);
+        cache.remember(failureKey, null, ArtworkResult.failure(Status.NO_MOTION, "netease_album_no_motion"));
+        assertEquals(Status.NO_MOTION, cache.lookup(failureKey).failure().status);
+        assertNull(cache.lookup(NcmSearch.failureKey(second, query)));
+        assertNull(cache.lookup(NcmSearch.albumKey(second, query)));
+        File temp = cache.temporary(); Files.write(temp.toPath(), new byte[]{1, 2, 3});
+        File file = cache.commit(temp); cache.remember(NcmSearch.albumKey(second, query), file, null);
+        var hit = cache.lookup(NcmSearch.albumKey(first, query));
+        assertEquals(file, hit.file());
+        cache.unpin(hit.file()); cache.unpin(file);
+    }
+    @Test public void recoveryBypassesOnlyTransientFailureWithoutDeletingOtherRequestsCache() throws Exception {
+        var cache = new AmCache(temporary.newFolder());
+        String key = AmCache.hash("recovery-query"), epoch = "same-network";
+        cache.remember(key, null, new ArtworkResult(Status.RETRY_LATER, null, 30_000, "network_io"), epoch);
+        assertEquals("network_io", cache.lookup(key, epoch).failure().reason);
+        assertNull(cache.lookup(key, epoch, true));
+        assertEquals("ordinary requests still observe the backoff", "network_io", cache.lookup(key, epoch).failure().reason);
+        for (String reason : java.util.List.of("upstream_rate_limit", "upstream_http_error", "network_deadline", "catalog_match_unconfirmed")) {
+            cache.remember(key, null, new ArtworkResult(Status.RETRY_LATER, null, 30_000, reason), epoch);
+            assertEquals(reason, cache.lookup(key, epoch, true).failure().reason);
+        }
+        cache.remember(key, null, ArtworkResult.failure(Status.NO_MOTION, "netease_album_no_motion"), epoch);
+        assertEquals(Status.NO_MOTION, cache.lookup(key, epoch, true).failure().status);
+        File temp = cache.temporary(); Files.write(temp.toPath(), new byte[]{1, 2, 3});
+        File file = cache.commit(temp); cache.remember(key, file, null);
+        var hit = cache.lookup(key, epoch, true); assertEquals(file, hit.file());
+        cache.unpin(hit.file()); cache.unpin(file);
+    }
     private File video(AmCache cache, int resolution) throws Exception {
         File temp = cache.temporary(); Files.write(temp.toPath(), ("fixture-" + resolution).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         File file = cache.commit(temp);

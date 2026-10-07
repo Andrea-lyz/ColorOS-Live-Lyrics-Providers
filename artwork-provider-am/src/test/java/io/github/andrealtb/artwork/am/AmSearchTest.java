@@ -134,6 +134,6 @@ public class AmSearchTest {
         catch (AmFailure failure) { assertEquals(Status.AMBIGUOUS, failure.status); }
         resolver = catalog(item("10", "1989", "Someone Else"));
         try { resolver.resolve(AmIdentityTest.query("Style", "1989", 288), null, "cn", null); fail(); }
-        catch (AmFailure failure) { assertEquals("catalog_album_unconfirmed", failure.reason); }
+        catch (AmFailure failure) { assertEquals("catalog_match_unconfirmed", failure.reason); }
     }
 }

@@ -31,6 +31,12 @@ final class CoverTile extends View {
     private final Paint letterPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint scrim = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint glyph = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint sourceText = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint sourceBackground = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint.FontMetrics sourceMetrics = new Paint.FontMetrics();
+    private final RectF sourceRect = new RectF();
+    private final float sourceTextSize;
+    private String sourceBadge = "";
     private final RectF rect = new RectF();
     private final Matrix matrix = new Matrix();
     private final Path play = new Path();
@@ -46,6 +52,10 @@ final class CoverTile extends View {
     CoverTile(Context context, float radius) {
         super(context);
         this.radius = radius;
+        sourceTextSize = 10 * context.getResources().getDisplayMetrics().scaledDensity;
+        sourceText.setColor(0xFFFFFFFF);
+        sourceText.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+        sourceBackground.setColor(0xE6272230);
         letterPaint.setColor(0xF2FFFFFF);
         letterPaint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
         letterPaint.setTextAlign(Paint.Align.CENTER);
@@ -78,6 +88,8 @@ final class CoverTile extends View {
     }
 
     void setPlayBadge(boolean show) { playBadge = show; invalidate(); }
+
+    void setSourceBadge(String label) { sourceBadge = label == null ? "" : label; invalidate(); }
 
     void setRing(boolean show) { selectedRing = show; invalidate(); }
 
@@ -122,6 +134,20 @@ final class CoverTile extends View {
             float size = Math.min(width, height) * 0.3f;
             canvas.drawCircle(width - size * 0.75f, height - size * 0.75f, size / 2f, scrim);
             canvas.drawPath(play, glyph);
+        }
+        if (!sourceBadge.isEmpty()) {
+            float margin = AmUi.dp(getContext(), 6), horizontal = AmUi.dp(getContext(), 5), vertical = AmUi.dp(getContext(), 3);
+            float available = width - margin * 2 - horizontal * 2;
+            if (available > 0) {
+                sourceText.setTextSize(sourceTextSize);
+                float textWidth = sourceText.measureText(sourceBadge);
+                if (textWidth > available) sourceText.setTextSize(sourceTextSize * available / textWidth);
+                sourceText.getFontMetrics(sourceMetrics);
+                sourceRect.set(margin, margin, margin + sourceText.measureText(sourceBadge) + horizontal * 2,
+                        margin + sourceMetrics.descent - sourceMetrics.ascent + vertical * 2);
+                canvas.drawRoundRect(sourceRect, AmUi.dp(getContext(), 6), AmUi.dp(getContext(), 6), sourceBackground);
+                canvas.drawText(sourceBadge, margin + horizontal, margin + vertical - sourceMetrics.ascent, sourceText);
+            }
         }
         if (selectedRing) {
             float inset = ring.getStrokeWidth() / 2f;

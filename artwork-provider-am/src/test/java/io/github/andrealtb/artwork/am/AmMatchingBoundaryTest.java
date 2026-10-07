@@ -12,7 +12,8 @@ public class AmMatchingBoundaryTest {
     @Test public void recordingAndNativeLanguageVersionsRemainDistinctOnEveryProfile() {
         var studio = new AmIdentity.Track("1", "10", "Song", "Artist Name", "Album", 200000);
         var original = query("Song", "Artist Name", "Album", 200000);
-        for (String suffix : List.of("(中文版本)", "（中文版本）", "[中文版本]", "【现场版】", "(翻唱)", "(伴奏)",
+        for (String suffix : List.of("(中文版本)", "（中文版本）", "[中文版本]", "(中文版)", "(粵語版)", "(日语版)",
+                "(重錄)", "(現場)", "【现场版】", "(翻唱)", "(伴奏)",
                 "(Remix)", "(Live)", "(Acoustic)", "(Demo)", "(Instrumental)", "(Radio Edit)", "(2013 Remaster)", "(with intro)", "(with outro)")) {
             var version = query("Song " + suffix, "Artist Name", "Album", 200000);
             assertNotEquals(suffix, AmCache.key(original,"us"), AmCache.key(version,"us"));

@@ -1,7 +1,7 @@
 <resources>
     <string name="app_name">动态封面 Provider</string>
     <!-- 首页 -->
-    <string name="hero_subtitle">Apple Music 公开目录 · 无需账号</string>
+    <string name="hero_subtitle">Apple Music · 可选网易云官方动态封面</string>
     <string name="hero_state_on">来源已启用</string>
     <string name="hero_state_off">来源已关闭</string>
     <string name="hero_live">动态</string>
@@ -10,7 +10,7 @@
     <string name="enable_summary_on">按需匹配并下载方形动态封面</string>
     <string name="enable_summary_off">已关闭，锁屏保留静态封面</string>
     <string name="enable_dialog_title">启用动态封面来源？</string>
-    <string name="enable_dialog_message">锁屏请求某首歌的动态封面时，会用歌曲名、艺人、专辑和时长查询 Apple Music 公开目录，并下载匹配的方形视频。无需 Apple 账号，不发送歌词、账号或设备标识。默认仅在非计费网络下载。</string>
+    <string name="enable_dialog_message">使用歌名、歌手、专辑和时长匹配动态封面。优先查询 Apple Music，无需 Apple 账号；只有单独开启网易云来源并使用自己的账号登录后，才会尝试网易云。不发送歌词和设备标识，默认仅在非计费网络下载。</string>
     <string name="enable_dialog_confirm">启用</string>
     <string name="tile_network">网络</string>
     <string name="network_unmetered">非计费网络</string>
@@ -93,20 +93,18 @@
     <string name="allowed">已授权 Bridge 预览</string>
     <string name="revoked">已撤销 Bridge 预览授权</string>
     <string name="bridge_missing">未安装 Bridge</string>
-    <string name="footer_privacy">独立联网封面来源，不需要 Apple 账号；仅提供已匹配、完整验证的方形视频。默认关闭，默认仅在非计费网络下载。公开页面结构变化或版本无法区分时保留原封面。</string>
+    <string name="footer_privacy">独立封面来源，Apple Music 无需账号，可选网易云需使用自己的账号登录。仅提供已匹配并验证的方形视频。默认关闭，默认仅在非计费网络下载。找不到可用动态封面时保留原封面。</string>
     <string name="footer_version">版本 %1$s</string>
     <!-- 手动绑定 -->
     <string name="binding_title">手动绑定专辑</string>
     <string name="binding_back">返回</string>
-    <string name="binding_description">本地音乐的专辑名或歌手与 Apple Music 不一致时，可把 Apple Music 专辑绑定到本地专辑名。绑定后，该专辑名下的歌曲直接使用所选专辑的动态封面，不再逐首核对曲目，也不修改本地文件。搜索时会把输入的关键词发送给 Apple。最近请求的专辑名只保存在本应用内，可随时清除。</string>
+    <string name="binding_description">把目录中的专辑绑定到播放器显示的专辑名，该专辑下的歌曲使用你选定来源的动态封面，不修改本地文件。AM 按专辑搜索；开启网易云后，可在独立搜索框中搜索曲目或粘贴单曲分享文本。两路关键词与结果互不影响。最近的专辑和曲目名只保存在本应用内。</string>
     <string name="binding_step_local">本地专辑</string>
-    <string name="binding_step_search">在 Apple Music 中查找</string>
+    <string name="binding_step_search">按来源分别搜索</string>
     <string name="binding_local_album">专辑名</string>
     <string name="binding_local_album_hint">与播放器显示完全一致</string>
     <string name="binding_local_artist">仅限歌手（可选）</string>
     <string name="binding_local_artist_hint">留空则对所有歌手生效</string>
-    <string name="binding_terms">搜索关键词，或粘贴 Apple Music 专辑链接</string>
-    <string name="binding_search">搜索 Apple Music</string>
     <string name="binding_searching">正在搜索…</string>
     <string name="binding_need_terms">请填写搜索关键词或本地专辑名</string>
     <string name="binding_need_album">请先填写本地专辑名</string>
@@ -134,8 +132,8 @@
     <string name="binding_delete_message">本地「%1$s」的歌曲将恢复自动匹配。</string>
     <string name="binding_deleted">已删除绑定</string>
     <string name="binding_recent">最近请求的专辑</string>
-    <string name="binding_recent_hint">点按专辑可填入专辑名</string>
+    <string name="binding_recent_hint">点按记录，AM 填入专辑名，网易云填入曲目名</string>
     <string name="binding_recent_none">暂无记录。启用来源并播放音乐后会在这里列出。</string>
-    <string name="binding_recent_picked">已填入本地专辑名，确认搜索关键词后点击搜索</string>
+    <string name="binding_recent_picked">已按来源填入搜索词，可分别搜索</string>
     <string name="binding_recent_clear">清除</string>
 </resources>

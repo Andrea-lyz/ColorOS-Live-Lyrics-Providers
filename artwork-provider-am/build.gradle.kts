@@ -26,8 +26,8 @@ configure<ApplicationExtension> {
         minSdk = 30
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
         // versionCode stays monotonic over the 0.2.x integration builds.
-        versionCode = 7
-        versionName = "1.0.3"
+        versionCode = 8
+        versionName = "1.0.4"
     }
 
     signingConfigs {
@@ -42,6 +42,7 @@ configure<ApplicationExtension> {
     buildTypes {
         getByName("debug") {
             signingConfig = signingConfigs.getByName("debug")
+            versionNameSuffix = "-debug"
         }
         create("diagnostic") {
             initWith(getByName("debug"))
@@ -79,6 +80,7 @@ configure<ApplicationAndroidComponentsExtension> {
 
 dependencies {
     implementation(project(":artwork-contract"))
+    implementation("com.google.zxing:core:3.5.3")
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")
 }

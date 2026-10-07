@@ -1,7 +1,7 @@
 <resources>
     <string name="app_name">Dynamic Artwork Provider</string>
     <!-- Home -->
-    <string name="hero_subtitle">Apple Music public catalog · No account needed</string>
+    <string name="hero_subtitle">Apple Music · Optional NetEase official covers</string>
     <string name="hero_state_on">Source on</string>
     <string name="hero_state_off">Source off</string>
     <string name="hero_live">LIVE</string>
@@ -10,7 +10,7 @@
     <string name="enable_summary_on">Matches and downloads square motion covers on demand</string>
     <string name="enable_summary_off">Off. The lock screen keeps the static cover.</string>
     <string name="enable_dialog_title">Turn on the source?</string>
-    <string name="enable_dialog_message">When the lock screen asks for a song\'s motion cover, its title, artist, album and duration are used to search Apple Music\'s public catalog, and the matching square video is downloaded. No Apple account is needed. Lyrics, accounts and device identifiers are never sent. Downloads use unmetered networks unless you allow metered ones.</string>
+    <string name="enable_dialog_message">Song title, artist, album and duration are used to match motion covers. Apple Music is tried first and needs no account. NetEase is tried only after you enable it separately and sign in with your own account. Lyrics and device identifiers are never sent. Downloads use unmetered networks unless you allow metered ones.</string>
     <string name="enable_dialog_confirm">Turn on</string>
     <string name="tile_network">Network</string>
     <string name="network_unmetered">Unmetered</string>
@@ -97,20 +97,18 @@
     <string name="allowed">Bridge preview authorized</string>
     <string name="revoked">Bridge preview authorization revoked</string>
     <string name="bridge_missing">Bridge is not installed</string>
-    <string name="footer_privacy">Independent online artwork source; no Apple account. Only matched, fully validated square videos are supplied. Off by default, and downloads use unmetered networks by default. When the public page changes or an edition cannot be told apart, the original cover stays.</string>
+    <string name="footer_privacy">Independent artwork source. Apple Music needs no account; optional NetEase needs your own sign-in. Only matched, validated square videos are supplied. Off by default, with unmetered downloads by default. If no usable cover is found, the original cover stays.</string>
     <string name="footer_version">Version %1$s</string>
     <!-- Manual binding -->
     <string name="binding_title">Bind albums manually</string>
     <string name="binding_back">Back</string>
-    <string name="binding_description">When a local album name or artist differs from Apple Music, bind an Apple Music album to the local album name. Songs under that name then use the chosen album\'s motion cover directly, without per-track checks and without changing local files. Searching sends the terms you type to Apple. Recently requested album names stay inside this app and can be cleared at any time.</string>
+    <string name="binding_description">Bind a catalog album to the album name reported by your player. Songs under that name use the chosen source without changing local files. Search AM by album, or use the separate NetEase song field when enabled. Each source has its own search terms and results. NetEase song share text is supported. Recent album and song names stay inside this app.</string>
     <string name="binding_step_local">Local album</string>
-    <string name="binding_step_search">Find it on Apple Music</string>
+    <string name="binding_step_search">Search by source</string>
     <string name="binding_local_album">Album name</string>
     <string name="binding_local_album_hint">Exactly as the player shows it</string>
     <string name="binding_local_artist">Only for this artist (optional)</string>
     <string name="binding_local_artist_hint">Leave empty to apply to every artist</string>
-    <string name="binding_terms">Search terms, or paste an Apple Music album link</string>
-    <string name="binding_search">Search Apple Music</string>
     <string name="binding_searching">Searching…</string>
     <string name="binding_need_terms">Enter search terms or a local album name</string>
     <string name="binding_need_album">Enter the local album name first</string>
@@ -140,8 +138,8 @@
     <string name="binding_delete_message">Songs from local “%1$s” go back to automatic matching.</string>
     <string name="binding_deleted">Binding deleted</string>
     <string name="binding_recent">Recently requested albums</string>
-    <string name="binding_recent_hint">Tap an album to fill in its name</string>
+    <string name="binding_recent_hint">Tap a record to fill AM with the album and NetEase with the song</string>
     <string name="binding_recent_none">Nothing yet. Albums appear here once the source is on and music plays.</string>
-    <string name="binding_recent_picked">Local album name filled in. Check the search terms, then search.</string>
+    <string name="binding_recent_picked">Search terms filled in for each source. Search them separately.</string>
     <string name="binding_recent_clear">Clear</string>
 </resources>

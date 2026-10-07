@@ -11,6 +11,7 @@ public class AmEditionTest {
         String songs = resource("/showgirl-explicit-clean-public.json"), html = resource("/showgirl-explicit-public.html");
         var resolver = new AmCatalog((uri, limit) -> {
             if (uri.getHost().equals("itunes.apple.com")) return songs;
+            if (uri.getPath().endsWith("/search")) return AmCatalogTest.emptySearchPage("us");
             assertTrue(uri.getPath().endsWith("/1838810949")); return html;
         }, (stage, tracks) -> {});
         var album = resolver.resolve(query(), null, "us", null);

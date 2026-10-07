@@ -30,14 +30,87 @@ import java.util.concurrent.Executors;
 import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
 
 /**
- * Binds an Apple Music album to a local album name. Searching sends only the terms the user typed;
- * a binding is saved only after the album page confirms a square motion cover exists.
+ * Independent source searches: NetEase answers a song name, AM answers an album.
+ * A choice is bound only after its own source confirms a motion cover exists.
  */
 public final class AmBindingActivity extends Activity {
     private record Choice(String country, String id, String title, String artist, String detail, String artwork, boolean explicit,
-            AmPage.Album page) {}
+            AmPage.Album page, NcmSearch.Song song) {
+        Choice(String country, String id, String title, String artist, String detail, String artwork, boolean explicit, AmPage.Album page) {
+            this(country, id, title, artist, detail, artwork, explicit, page, null);
+        }
+        boolean netease() { return song != null; }
+    }
 
     private enum Tone { NEUTRAL, ERROR, SUCCESS }
+
+    /** One source owns its input, progress, results and request lifetime. */
+    private final class SearchSection {
+        final boolean netease;
+        final LinearLayout controls = new LinearLayout(AmBindingActivity.this);
+        final LinearLayout results = new LinearLayout(AmBindingActivity.this);
+        final EditText terms;
+        final LinearLayout statusRow = new LinearLayout(AmBindingActivity.this);
+        final ProgressBar busy = new ProgressBar(AmBindingActivity.this, null, android.R.attr.progressBarStyleSmall);
+        final TextView status = AmUi.text(AmBindingActivity.this, "", 13, color(R.color.am_text_secondary), false);
+        AmNetwork.Task lookup;
+        long sourceEpoch = NcmSession.epoch();
+
+        SearchSection(boolean netease) {
+            this.netease = netease;
+            controls.setOrientation(LinearLayout.VERTICAL);
+            results.setOrientation(LinearLayout.VERTICAL);
+            controls.addView(AmUi.text(AmBindingActivity.this,
+                    getString(netease ? R.string.binding_netease_heading : R.string.binding_am_heading),
+                    14, color(netease ? R.color.am_accent : R.color.am_purple), true));
+            terms = AmUi.field(AmBindingActivity.this, netease ? R.string.binding_netease_terms : R.string.binding_am_terms);
+            terms.setFilters(new InputFilter[] { new InputFilter.LengthFilter(512) });
+            Drawable icon = getDrawable(R.drawable.ic_am_search);
+            if (icon != null) {
+                icon = icon.mutate(); icon.setTint(color(R.color.am_text_tertiary));
+                icon.setBounds(0, 0, dp(20), dp(20));
+                terms.setCompoundDrawablesRelative(icon, null, null, null);
+                terms.setCompoundDrawablePadding(dp(10));
+            }
+            terms.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+            terms.setOnEditorActionListener((view, action, event) -> {
+                if (action != EditorInfo.IME_ACTION_SEARCH) return false;
+                search(this); return true;
+            });
+            controls.addView(terms, AmUi.marginTop(AmBindingActivity.this, 8));
+            TextView button = AmUi.primaryButton(AmBindingActivity.this,
+                    getString(netease ? R.string.binding_search_netease : R.string.binding_search_am));
+            button.setOnClickListener(view -> search(this));
+            controls.addView(button, AmUi.marginTop(AmBindingActivity.this, 10));
+            statusRow.setGravity(Gravity.CENTER_VERTICAL);
+            busy.setIndeterminateTintList(ColorStateList.valueOf(color(R.color.am_accent)));
+            LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+            progressParams.setMarginEnd(dp(8));
+            statusRow.addView(busy, progressParams);
+            statusRow.addView(status, new LinearLayout.LayoutParams(0, AmUi.WRAP, 1f));
+            controls.addView(statusRow, AmUi.marginTop(AmBindingActivity.this, 8));
+            setStatus("", Tone.NEUTRAL, false);
+        }
+
+        void cancel() { if (lookup != null) lookup.cancel(); lookup = null; }
+
+        void clear() { cancel(); results.removeAllViews(); setStatus("", Tone.NEUTRAL, false); }
+
+        void refreshVisibility() {
+            boolean enabled = !netease || NcmSession.enabled(AmBindingActivity.this);
+            if (netease && (!enabled || sourceEpoch != NcmSession.epoch())) clear();
+            sourceEpoch = NcmSession.epoch();
+            controls.setVisibility(enabled ? View.VISIBLE : View.GONE);
+            results.setVisibility(enabled ? View.VISIBLE : View.GONE);
+        }
+
+        void setStatus(String text, Tone tone, boolean working) {
+            statusRow.setVisibility(text.isEmpty() && !working ? View.GONE : View.VISIBLE);
+            busy.setVisibility(working ? View.VISIBLE : View.GONE);
+            status.setText(text);
+            status.setTextColor(color(tone == Tone.ERROR ? R.color.am_bad : R.color.am_text_secondary));
+        }
+    }
 
     /** The trailing control of one search result: bind button, progress, then a confirmation. */
     private final class Action {
@@ -74,7 +147,7 @@ public final class AmBindingActivity extends Activity {
         }
     }
 
-    private final ExecutorService io = Executors.newSingleThreadExecutor(runnable -> {
+    private final ExecutorService io = Executors.newFixedThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "artwork-am-binding");
         thread.setDaemon(true);
         return thread;
@@ -87,11 +160,11 @@ public final class AmBindingActivity extends Activity {
     private ScrollView scroll;
     private EditText album;
     private EditText artist;
-    private EditText terms;
+    private SearchSection appleSearch;
+    private SearchSection neteaseSearch;
     private View statusRow;
     private ProgressBar busy;
     private TextView status;
-    private LinearLayout results;
     private LinearLayout bindings;
     private LinearLayout recent;
     private TextView bindingCount;
@@ -133,26 +206,10 @@ public final class AmBindingActivity extends Activity {
 
         LinearLayout find = AmUi.card(this);
         find.addView(step(2, R.string.binding_step_search));
-        terms = AmUi.field(this, R.string.binding_terms);
-        terms.setFilters(new InputFilter[] { new InputFilter.LengthFilter(512) });
-        Drawable search = getDrawable(R.drawable.ic_am_search);
-        if (search != null) {
-            search = search.mutate();
-            search.setTint(color(R.color.am_text_tertiary));
-            search.setBounds(0, 0, dp(20), dp(20));
-            terms.setCompoundDrawablesRelative(search, null, null, null);
-            terms.setCompoundDrawablePadding(dp(10));
-        }
-        terms.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        terms.setOnEditorActionListener((view, action, event) -> {
-            if (action != EditorInfo.IME_ACTION_SEARCH) return false;
-            search();
-            return true;
-        });
-        find.addView(terms, AmUi.marginTop(this, 14));
-        TextView searchButton = AmUi.primaryButton(this, getString(R.string.binding_search));
-        searchButton.setOnClickListener(view -> search());
-        find.addView(searchButton, AmUi.marginTop(this, 12));
+        appleSearch = new SearchSection(false);
+        neteaseSearch = new SearchSection(true);
+        find.addView(appleSearch.controls, AmUi.marginTop(this, 14));
+        find.addView(neteaseSearch.controls, AmUi.marginTop(this, 18));
         LinearLayout statusLine = new LinearLayout(this);
         statusLine.setGravity(Gravity.CENTER_VERTICAL);
         busy = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
@@ -165,9 +222,8 @@ public final class AmBindingActivity extends Activity {
         statusRow = statusLine;
         statusRow.setVisibility(View.GONE);
         find.addView(statusLine, AmUi.marginTop(this, 12));
-        results = new LinearLayout(this);
-        results.setOrientation(LinearLayout.VERTICAL);
-        find.addView(results, AmUi.marginTop(this, 4));
+        find.addView(appleSearch.results, AmUi.marginTop(this, 4));
+        find.addView(neteaseSearch.results, AmUi.marginTop(this, 4));
         content.addView(find, AmUi.marginTop(this, 14));
 
         bindingCount = AmUi.chip(this, "0", color(R.color.am_good));
@@ -186,16 +242,35 @@ public final class AmBindingActivity extends Activity {
         content.addView(recent, AmUi.marginTop(this, 10));
 
         setContentView(root);
+        if (state != null) {
+            album.setText(state.getString("localAlbum", ""));
+            artist.setText(state.getString("localArtist", ""));
+            appleSearch.terms.setText(state.getString("appleTerms", ""));
+            neteaseSearch.terms.setText(state.getString("neteaseTerms", ""));
+        }
+        neteaseSearch.refreshVisibility();
         showBindings();
     }
 
     @Override protected void onResume() {
         super.onResume();
+        showBindings();
         showRecent();
+        neteaseSearch.refreshVisibility();
+    }
+
+    @Override protected void onSaveInstanceState(Bundle state) {
+        state.putString("localAlbum", album.getText().toString());
+        state.putString("localArtist", artist.getText().toString());
+        state.putString("appleTerms", appleSearch.terms.getText().toString());
+        state.putString("neteaseTerms", neteaseSearch.terms.getText().toString());
+        super.onSaveInstanceState(state);
     }
 
     @Override protected void onDestroy() {
         if (task != null) task.cancel();
+        appleSearch.cancel();
+        neteaseSearch.cancel();
         io.shutdownNow();
         super.onDestroy();
     }
@@ -278,34 +353,75 @@ public final class AmBindingActivity extends Activity {
         return card;
     }
 
-    private void search() {
-        String text = terms.getText().toString().trim();
-        if (text.isEmpty()) text = album.getText().toString().trim();
-        if (text.isEmpty()) { setStatus(getString(R.string.binding_need_terms), Tone.ERROR, false); return; }
+    private void search(SearchSection section) {
+        if (section.netease && !NcmSession.enabled(this)) { section.refreshVisibility(); return; }
+        String text = section.terms.getText().toString().trim();
+        if (text.isEmpty() && !section.netease) text = album.getText().toString().trim();
+        if (text.isEmpty()) {
+            section.setStatus(getString(section.netease ? R.string.binding_need_song : R.string.binding_need_terms), Tone.ERROR, false);
+            return;
+        }
+        cancelBinding();
+        setStatus("", Tone.NEUTRAL, false);
+        section.clear();
+        AmNetwork.Task current = new AmNetwork.Task();
+        section.lookup = current;
+        long sourceEpoch = section.sourceEpoch = NcmSession.epoch();
         String query = text, market = AmSettings.country(this);
-        AmNetwork.Task current = restart();
-        results.removeAllViews();
-        setStatus(getString(R.string.binding_searching), Tone.NEUTRAL, true);
+        section.setStatus(getString(R.string.binding_searching), Tone.NEUTRAL, true);
         if (getWindow().getInsetsController() != null) getWindow().getInsetsController().hide(WindowInsets.Type.ime());
         io.execute(() -> {
             try {
-                List<Choice> choices = new ArrayList<>();
-                if (query.regionMatches(true, 0, "https://", 0, 8)) {
-                    // A pasted album link names the album and its market exactly.
-                    AmIdentity.AppleLink link = AmIdentity.link(query);
-                    if (link.albumId().isEmpty()) throw new AmFailure(Status.UNSUPPORTED, "song_link");
-                    AmPage.Album page = AmPage.album(network.text(AmCatalog.pageUri(link.country(), link.albumId()), 3 * 1024 * 1024, current),
-                            link.albumId());
-                    choices.add(linked(link, page, current));
-                } else {
-                    for (AmPage.AlbumHit hit : AmCatalog.searchAlbums((uri, limit) -> network.text(uri, limit, current), query, market)) {
-                        choices.add(new Choice(market, hit.id(), hit.title(), hit.artist(), detail(hit), hit.artwork(), hit.explicit(), null));
-                    }
-                }
-                ui(current, () -> showResults(choices));
-            } catch (AmFailure failure) { ui(current, () -> setStatus(message(failure), Tone.ERROR, false)); }
-            catch (RuntimeException error) { ui(current, () -> setStatus(getString(R.string.binding_failed, "unexpected"), Tone.ERROR, false)); }
+                List<Choice> choices = section.netease ? searchNetease(query, current, sourceEpoch) : searchApple(query, market, current);
+                ui(section, current, sourceEpoch, () -> showResults(section, choices));
+            } catch (AmFailure failure) {
+                ui(section, current, sourceEpoch, () -> section.setStatus(message(failure), Tone.ERROR, false));
+            } catch (RuntimeException error) {
+                ui(section, current, sourceEpoch, () -> section.setStatus(getString(R.string.binding_failed, "unexpected"), Tone.ERROR, false));
+            }
         });
+    }
+
+    private List<Choice> searchApple(String query, String market, AmNetwork.Task current) throws AmFailure {
+        List<Choice> choices = new ArrayList<>();
+        if (query.regionMatches(true, 0, "https://", 0, 8)) {
+            AmIdentity.AppleLink link = AmIdentity.link(query);
+            if (link.albumId().isEmpty()) throw new AmFailure(Status.UNSUPPORTED, "song_link");
+            AmPage.Album page = AmPage.album(network.text(AmCatalog.pageUri(link.country(), link.albumId()), 3 * 1024 * 1024, current), link.albumId());
+            choices.add(linked(link, page, current));
+        } else {
+            for (AmPage.AlbumHit hit : AmCatalog.searchAlbums((uri, limit) -> network.text(uri, limit, current), query, market))
+                choices.add(new Choice(market, hit.id(), hit.title(), hit.artist(), detail(hit), hit.artwork(), hit.explicit(), null));
+            if (choices.isEmpty()) choices.addAll(appleSongAlbums(query, market, current));
+        }
+        return choices;
+    }
+
+    private List<Choice> searchNetease(String query, AmNetwork.Task current, long sourceEpoch) throws AmFailure {
+        NcmSearch.Input input = NcmSearch.input(query);
+        if (input.songId().isEmpty() && input.terms().matches("(?is)^https?://.*"))
+            throw new AmFailure(Status.UNSUPPORTED, "netease_invalid_link");
+        NcmApi api = new NcmApi(getApplicationContext(), () -> NcmSession.enabled(this)
+                && NcmSession.epoch() == sourceEpoch && AmSettings.connected(this));
+        List<NcmSearch.Song> songs = input.songId().isEmpty() ? api.search(input.terms(), current) : List.of(api.song(input.songId(), current));
+        List<Choice> choices = new ArrayList<>();
+        for (NcmSearch.Song song : songs) {
+            if (choices.stream().anyMatch(choice -> choice.id().equals(song.albumId()))) continue;
+            choices.add(new Choice("cn", song.albumId(), song.album(), song.artist(), song.title() + " · "
+                    + (song.durationMs() / 60000) + ":" + String.format(Locale.ROOT, "%02d", song.durationMs() / 1000 % 60), song.artwork(), false, null, song));
+        }
+        return choices;
+    }
+
+    private List<Choice> appleSongAlbums(String query, String market, AmNetwork.Task current) throws AmFailure {
+        java.net.URI uri = java.net.URI.create("https://itunes.apple.com/search?term=" + NcmProtocol.encode(query)
+                + "&media=music&entity=musicTrack&country=" + (market.equals("cn") ? "us" : market) + "&limit=50");
+        List<Choice> choices = new ArrayList<>();
+        for (AmIdentity.Track track : AmPage.itunes(network.text(uri, 2 * 1024 * 1024, current))) {
+            if (choices.stream().anyMatch(choice -> choice.id().equals(track.albumId()))) continue;
+            choices.add(new Choice(market, track.albumId(), track.album(), track.artist(), track.title(), "", false, null));
+        }
+        return choices;
     }
 
     /** Display details for a pasted link come from a catalog lookup when it answers; the page alone is enough. */
@@ -333,7 +449,8 @@ public final class AmBindingActivity extends Activity {
             album.requestFocus();
             return;
         }
-        AmBindings.Binding binding = new AmBindings.Binding(local, only, choice.country(), choice.id(), choice.title(), choice.artist());
+        AmBindings.Binding binding = new AmBindings.Binding(local, only, choice.country(), choice.id(), choice.title(), choice.artist(),
+                choice.netease() ? "netease" : "am", choice.netease() ? choice.song().id() : "");
         if (!AmBindings.valid(binding)) { setStatus(getString(R.string.binding_failed, "invalid_binding"), Tone.ERROR, false); return; }
         AmNetwork.Task current = restart();
         pending = action;
@@ -341,22 +458,33 @@ public final class AmBindingActivity extends Activity {
         setStatus(getString(R.string.binding_checking), Tone.NEUTRAL, true);
         io.execute(() -> {
             try {
+                if (choice.netease()) {
+                    NcmSession.Session session = NcmSession.read(this);
+                    if (!NcmSession.enabled(this) || session == null) throw new AmFailure(Status.NETWORK_BLOCKED, "netease_login_required");
+                    new NcmApi(getApplicationContext(), () -> NcmSession.enabled(this)
+                            && NcmSession.epoch() == session.epoch() && AmSettings.connected(this)).cover(session, choice.song().id(), current);
+                    ui(current, () -> {
+                        if (!NcmSession.enabled(this) || NcmSession.epoch() != session.epoch()) { fail(action, getString(R.string.netease_enable_first)); return; }
+                        saveChoice(choice, binding, action);
+                    });
+                    return;
+                }
                 AmPage.Album page = choice.page() != null ? choice.page()
                         : AmPage.album(network.text(AmCatalog.pageUri(choice.country(), choice.id()), 3 * 1024 * 1024, current), choice.id());
                 if (page.master() == null) throw new AmFailure(Status.NO_MOTION, "confirmed_album_no_motion");
-                ui(current, () -> {
-                    List<AmBindings.Binding> before = AmBindings.load(this), after = AmBindings.put(before, binding);
-                    AmBindings.save(this, after);
-                    AmThumbnails.keep(this, choice.artwork(), choice.country(), choice.id());
-                    forgetUnused(before, after);
-                    pending = null;
-                    action.bound();
-                    showBindings();
-                    setStatus(getString(R.string.binding_saved, local, choice.title()), Tone.SUCCESS, false);
-                });
+                ui(current, () -> saveChoice(choice, binding, action));
             } catch (AmFailure failure) { ui(current, () -> fail(action, message(failure))); }
             catch (RuntimeException error) { ui(current, () -> fail(action, getString(R.string.binding_failed, "unexpected"))); }
         });
+    }
+
+    private void saveChoice(Choice choice, AmBindings.Binding binding, Action action) {
+        List<AmBindings.Binding> before = AmBindings.load(this), after = AmBindings.put(before, binding);
+        AmBindings.save(this, after);
+        AmThumbnails.keep(this, choice.artwork(), binding.thumbnailScope(), choice.id());
+        forgetUnused(before, after);
+        pending = null; action.bound(); showBindings();
+        setStatus(getString(R.string.binding_saved, binding.localAlbum(), choice.title()), Tone.SUCCESS, false);
     }
 
     private void fail(Action action, String text) {
@@ -365,9 +493,13 @@ public final class AmBindingActivity extends Activity {
         setStatus(text, Tone.ERROR, false);
     }
 
-    private void showResults(List<Choice> choices) {
+    private void showResults(SearchSection section, List<Choice> choices) {
+        LinearLayout results = section.results;
         results.removeAllViews();
-        setStatus(getString(choices.isEmpty() ? R.string.binding_no_results : R.string.binding_pick), Tone.NEUTRAL, false);
+        section.setStatus(getString(choices.isEmpty() ? R.string.binding_no_results : R.string.binding_pick), Tone.NEUTRAL, false);
+        if (!choices.isEmpty()) results.addView(AmUi.text(this,
+                getString(section.netease ? R.string.binding_netease_heading : R.string.binding_am_heading),
+                14, color(R.color.am_text), true), AmUi.marginTop(this, 12));
         for (int i = 0; i < choices.size(); i++) {
             if (i > 0) results.addView(rowDivider(72));
             results.addView(resultRow(choices.get(i)));
@@ -392,6 +524,8 @@ public final class AmBindingActivity extends Activity {
         texts.addView(AmUi.single(AmUi.text(this, choice.artist(), 13, color(R.color.am_text_secondary), false)), AmUi.marginTop(this, 2));
         LinearLayout meta = new LinearLayout(this);
         meta.setGravity(Gravity.CENTER_VERTICAL);
+        meta.addView(AmUi.chip(this, getString(choice.netease() ? R.string.source_netease : R.string.source_am),
+                color(choice.netease() ? R.color.am_accent : R.color.am_purple)));
         if (choice.explicit()) {
             TextView explicit = AmUi.chip(this, getString(R.string.binding_explicit), color(R.color.am_text_secondary));
             LinearLayout.LayoutParams explicitParams = new LinearLayout.LayoutParams(AmUi.WRAP, AmUi.WRAP);
@@ -429,7 +563,7 @@ public final class AmBindingActivity extends Activity {
         row.setPadding(0, dp(10), 0, dp(10));
         CoverTile tile = new CoverTile(this, dp(12));
         tile.setPlaceholder(binding.albumId(), binding.title());
-        AmThumbnails.bound(this, tile, binding.country(), binding.albumId(), dp(52));
+        AmThumbnails.bound(this, tile, binding.thumbnailScope(), binding.albumId(), dp(52));
         row.addView(tile, new LinearLayout.LayoutParams(dp(52), dp(52)));
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
@@ -451,7 +585,8 @@ public final class AmBindingActivity extends Activity {
         target.addView(catalog, catalogParams);
         LinearLayout.LayoutParams marketParams = new LinearLayout.LayoutParams(AmUi.WRAP, AmUi.WRAP);
         marketParams.setMarginStart(dp(6));
-        target.addView(AmUi.chip(this, binding.country().toUpperCase(Locale.ROOT), color(R.color.am_purple)), marketParams);
+        target.addView(AmUi.chip(this, binding.netease() ? getString(R.string.source_netease)
+                : "AM · " + binding.country().toUpperCase(Locale.ROOT), color(binding.netease() ? R.color.am_accent : R.color.am_purple)), marketParams);
         texts.addView(target, AmUi.marginTop(this, 4));
         LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, AmUi.WRAP, 1f);
         textParams.setMarginStart(dp(12));
@@ -486,9 +621,9 @@ public final class AmBindingActivity extends Activity {
         for (AmBindings.Binding old : before) {
             boolean used = false;
             for (AmBindings.Binding kept : after) {
-                if (kept.country().equals(old.country()) && kept.albumId().equals(old.albumId())) { used = true; break; }
+                if (kept.thumbnailScope().equals(old.thumbnailScope()) && kept.albumId().equals(old.albumId())) { used = true; break; }
             }
-            if (!used) AmThumbnails.forget(this, old.country(), old.albumId());
+            if (!used) AmThumbnails.forget(this, old.thumbnailScope(), old.albumId());
         }
     }
 
@@ -523,11 +658,15 @@ public final class AmBindingActivity extends Activity {
         row.addView(AmUi.chip(this, getString(AmArtworkActivity.outcomeLabel(entry.outcome())),
                 color(AmArtworkActivity.outcomeColor(entry.outcome()))));
         row.setOnClickListener(view -> {
+            cancelBinding();
+            appleSearch.clear(); neteaseSearch.clear();
             album.setText(entry.album());
-            String lead = AmIdentity.leadCredit(entry.artist());
-            terms.setText(lead.isEmpty() ? entry.album() : lead + " " + entry.album());
-            terms.setSelection(terms.length());
-            setStatus(getString(R.string.binding_recent_picked), Tone.NEUTRAL, false);
+            appleSearch.terms.setText(entry.album());
+            neteaseSearch.terms.setText(entry.title());
+            appleSearch.terms.setSelection(appleSearch.terms.length());
+            neteaseSearch.terms.setSelection(neteaseSearch.terms.length());
+            setStatus(getString(entry.title().isEmpty() && NcmSession.enabled(this)
+                    ? R.string.binding_recent_no_song : R.string.binding_recent_picked), Tone.NEUTRAL, false);
             scroll.smoothScrollTo(0, 0);
         });
         return row;
@@ -572,23 +711,42 @@ public final class AmBindingActivity extends Activity {
             case "web_schema_changed" -> getString(R.string.binding_page_unreadable);
             case "song_link" -> getString(R.string.binding_song_link);
             case "invalid_apple_link" -> getString(R.string.binding_bad_link);
+            case "netease_login_required" -> getString(R.string.netease_not_logged_in);
+            case "netease_album_no_motion" -> getString(R.string.netease_no_motion);
+            case "netease_share_text_required" -> getString(R.string.netease_share_hint);
+            case "netease_invalid_link" -> getString(R.string.netease_bad_link);
             case "cancelled" -> "";
             default -> getString(R.string.binding_failed, failure.reason);
         };
     }
 
     private AmNetwork.Task restart() {
-        if (task != null) task.cancel();
-        if (pending != null) {
-            pending.idle();
-            pending = null;
-        }
+        cancelBinding();
         task = new AmNetwork.Task();
         return task;
     }
 
+    private void cancelBinding() {
+        if (task != null) task.cancel();
+        task = null;
+        if (pending != null) {
+            pending.idle();
+            pending = null;
+        }
+    }
+
     private void ui(AmNetwork.Task owner, Runnable action) {
-        runOnUiThread(() -> { if (!isDestroyed() && task == owner) action.run(); });
+        runOnUiThread(() -> { if (!isDestroyed() && task == owner && !owner.cancelled.get()) action.run(); });
+    }
+
+    private void ui(SearchSection section, AmNetwork.Task owner, long sourceEpoch, Runnable action) {
+        runOnUiThread(() -> {
+            if (isDestroyed() || section.lookup != owner || owner.cancelled.get()) return;
+            if (section.netease && (!NcmSession.enabled(this) || NcmSession.epoch() != sourceEpoch)) {
+                section.refreshVisibility(); return;
+            }
+            action.run();
+        });
     }
 
     private int dp(float value) { return AmUi.dp(this, value); }

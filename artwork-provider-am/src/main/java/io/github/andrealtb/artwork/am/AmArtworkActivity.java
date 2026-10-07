@@ -91,6 +91,11 @@ public final class AmArtworkActivity extends Activity {
     private TextView matchValue;
     private TextView bridgeState;
     private TextView bridgeAction;
+    private Switch netease;
+    private TextView neteaseState;
+    private TextView neteaseLogin;
+    private TextView neteaseLogout;
+    private int accountGeneration;
     private ConnectivityManager.NetworkCallback networkCallback;
     private List<File> videos = List.of();
     private boolean binding;
@@ -110,6 +115,7 @@ public final class AmArtworkActivity extends Activity {
         glow.setRunning(true);
         cover.setRunning(preview.current() == null);
         refreshSettings(!firstShow);
+        refreshNetease(true);
         refreshOutcomes(true);
         refreshCache(!firstShow);
         listenNetwork(true);
@@ -117,6 +123,7 @@ public final class AmArtworkActivity extends Activity {
     }
 
     @Override protected void onPause() {
+        accountGeneration++;
         resumed = false;
         listenNetwork(false);
         preview.stop();
@@ -361,6 +368,33 @@ public final class AmArtworkActivity extends Activity {
     private View sourceCard() {
         LinearLayout card = AmUi.card(this);
         card.addView(AmUi.heading(this, R.drawable.ic_am_tune, color(R.color.am_info), getString(R.string.section_source), null));
+        card.addView(AmUi.text(this, getString(R.string.source_priority), 13, color(R.color.am_text_secondary), false), AmUi.marginTop(this, 8));
+        netease = AmUi.toggle(this);
+        neteaseState = new TextView(this);
+        card.addView(AmUi.row(this, R.drawable.ic_am_motion, color(R.color.am_accent), getString(R.string.netease_source), neteaseState, netease));
+        netease.setOnCheckedChangeListener((view, checked) -> {
+            if (binding) return;
+            NcmSession.enable(this, checked);
+            refreshNetease(false);
+            if (checked && NcmSession.read(this) == null) openNeteaseLogin();
+        });
+        LinearLayout accountActions = new LinearLayout(this);
+        neteaseLogin = AmUi.tonalButton(this, getString(R.string.netease_login), color(R.color.am_accent));
+        neteaseLogin.setOnClickListener(view -> openNeteaseLogin());
+        accountActions.addView(neteaseLogin);
+        neteaseLogout = AmUi.text(this, getString(R.string.netease_logout), 12.5f, color(R.color.am_text_secondary), false);
+        neteaseLogout.setGravity(Gravity.CENTER_VERTICAL);
+        neteaseLogout.setPadding(0, dp(8), dp(12), dp(8));
+        neteaseLogout.setMinHeight(dp(40));
+        neteaseLogout.setBackground(AmUi.ripple(this, null, dp(8)));
+        neteaseLogout.setFocusable(true);
+        neteaseLogout.setOnClickListener(view -> { accountGeneration++; NcmSession.logout(this); refreshNetease(false); toast(getString(R.string.netease_logged_out)); });
+        LinearLayout.LayoutParams logoutParams = new LinearLayout.LayoutParams(AmUi.WRAP, AmUi.WRAP);
+        accountActions.addView(neteaseLogout, logoutParams);
+        LinearLayout.LayoutParams accountParams = AmUi.matchWrap();
+        accountParams.setMarginStart(dp(46));
+        card.addView(accountActions, accountParams);
+        card.addView(AmUi.divider(this));
         metered = AmUi.toggle(this);
         TextView meteredSummary = new TextView(this);
         meteredSummary.setText(R.string.metered_summary);
@@ -475,6 +509,7 @@ public final class AmArtworkActivity extends Activity {
         enabled.setChecked(on);
         metered.setChecked(prefs.getBoolean("metered", false));
         debug.setChecked(prefs.getBoolean("debug", false));
+        netease.setChecked(NcmSession.enabled(this));
         if (!animate) {
             enabled.jumpDrawablesToCurrentState();
             metered.jumpDrawablesToCurrentState();
@@ -839,19 +874,23 @@ public final class AmArtworkActivity extends Activity {
             io.execute(() -> {
                 List<File> files;
                 try { files = AmCache.get(app).videos(); } catch (RuntimeException unavailable) { files = List.of(); }
+                java.util.Map<String, AmVideoSources.Source> sources;
+                try { sources = AmCache.get(app).videoSources(files, NcmResolver.cachedAlbumKeys(app)); }
+                catch (RuntimeException unavailable) { sources = java.util.Map.of(); }
                 long bytes = 0;
                 for (File file : files) bytes += file.length();
                 long budget = AmSettings.cacheLimitBytes(app);
                 List<File> found = files;
+                java.util.Map<String, AmVideoSources.Source> foundSources = sources;
                 long total = bytes;
-                runOnUiThread(() -> { if (!isDestroyed() && generation == cacheGeneration) showCache(found, total, budget, animate); });
+                runOnUiThread(() -> { if (!isDestroyed() && generation == cacheGeneration) showCache(found, foundSources, total, budget, animate); });
             });
         } catch (RejectedExecutionException closing) {
             // Page is closing.
         }
     }
 
-    private void showCache(List<File> files, long bytes, long budget, boolean animate) {
+    private void showCache(List<File> files, java.util.Map<String, AmVideoSources.Source> sources, long bytes, long budget, boolean animate) {
         videos = files;
         String used = Formatter.formatShortFileSize(this, bytes);
         cache.value().setText(used);
@@ -869,7 +908,14 @@ public final class AmArtworkActivity extends Activity {
             CoverTile tile = new CoverTile(this, dp(16));
             tile.setPlaceholder(file.getName(), "");
             tile.setPlayBadge(true);
-            tile.setContentDescription(getString(R.string.hero_cover_description));
+            String source = getString(switch (sources.getOrDefault(file.getName(), AmVideoSources.Source.UNKNOWN)) {
+                case AM -> R.string.source_am;
+                case NETEASE -> R.string.source_netease;
+                case BOTH -> R.string.source_both;
+                case UNKNOWN -> R.string.source_unknown;
+            });
+            tile.setSourceBadge(source);
+            tile.setContentDescription(source + " · " + getString(R.string.hero_cover_description));
             AmThumbnails.video(tile, file, size);
             tile.setOnClickListener(view -> {
                 play(file);
@@ -920,6 +966,50 @@ public final class AmArtworkActivity extends Activity {
     }
 
     private void openBindings() { startActivity(new Intent(this, AmBindingActivity.class)); }
+
+    private void openNeteaseLogin() {
+        if (NcmSession.enabled(this)) startActivity(new Intent(this, NcmLoginActivity.class));
+    }
+
+    private void refreshNetease(boolean verify) {
+        int generation = ++accountGeneration;
+        NcmSession.Session saved = NcmSession.read(this);
+        boolean on = NcmSession.enabled(this);
+        neteaseLogin.setVisibility(on && saved == null ? View.VISIBLE : View.GONE);
+        neteaseLogout.setVisibility(saved != null ? View.VISIBLE : View.GONE);
+        if (!on) { neteaseState.setText(R.string.netease_off); return; }
+        if (saved == null) {
+            neteaseState.setText(AmSettings.prefs(this).getBoolean("neteaseExpired", false) ? R.string.netease_expired : R.string.netease_not_logged_in);
+            return;
+        }
+        String name = saved.nickname().isEmpty() ? getString(R.string.netease_account) : saved.nickname();
+        neteaseState.setText(getString(R.string.netease_session_saved, name));
+        if (!verify || !AmSettings.connected(this)) return;
+        Context app = getApplicationContext();
+        io.execute(() -> {
+            try {
+                NcmApi api = new NcmApi(app, () -> NcmSession.enabled(app) && NcmSession.epoch() == saved.epoch() && AmSettings.connected(app));
+                AmNetwork.Task task = new AmNetwork.Task();
+                NcmSession.Session current = saved;
+                if (System.currentTimeMillis() - current.refreshedAt() >= 86_400_000) current = api.refresh(current, task);
+                current = api.account(current, task);
+                if (!NcmSession.save(app, current, saved.epoch())) return;
+                String account = current.nickname().isEmpty() ? getString(R.string.netease_account) : current.nickname();
+                runOnUiThread(() -> {
+                    if (!isDestroyed() && resumed && generation == accountGeneration) neteaseState.setText(getString(R.string.netease_logged_in, account));
+                });
+            } catch (AmFailure failure) {
+                runOnUiThread(() -> {
+                    if (isDestroyed() || !resumed || generation != accountGeneration) return;
+                    if (NcmSession.read(this) == null) refreshNetease(false);
+                    else neteaseState.setText(getString(R.string.netease_verify_unavailable, name));
+                });
+            } catch (Exception failure) {
+                runOnUiThread(() -> { if (!isDestroyed() && resumed && generation == accountGeneration)
+                    neteaseState.setText(getString(R.string.netease_verify_unavailable, name)); });
+            }
+        });
+    }
 
     private void openNetworkPanel() {
         try {

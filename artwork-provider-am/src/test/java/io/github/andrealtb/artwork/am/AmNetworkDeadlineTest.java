@@ -22,6 +22,21 @@ public class AmNetworkDeadlineTest {
     private static final AmHls.FilePlan PLAN = new AmHls.FilePlan(URI_VALUE, 4, 1);
     private static final URI ALBUM = URI.create("https://music.apple.com/us/album/test/1");
 
+    @Test public void remainingRequestBudgetCapsAnUninterruptibleNetworkPhase() throws Exception {
+        var release = new CountDownLatch(1); var lookups = new AtomicInteger();
+        AmNetwork network = new AmNetwork(() -> true, reason -> {}, new AmNetwork.Connections() {
+            @Override public HttpURLConnection open(URI uri) throws IOException { return new FakeConnection("none"); }
+            @Override public void resolve(String host) { lookups.incrementAndGet(); awaitIgnoringInterrupts(release); }
+        }, stage -> 10_000);
+        var task = new AmNetwork.Task(250);
+        long started = System.nanoTime();
+        try { network.text(ALBUM, 1024, task); fail(); }
+        catch (AmFailure expected) { assertEquals("network_deadline", expected.reason); }
+        finally { release.countDown(); }
+        assertEquals(1, lookups.get());
+        assertTrue("request deadline must cap the longer phase budget", TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 2_000);
+    }
+
     @Test public void headersAreAbortedByStageDeadlineWithoutRepeatingTheSameRendition() throws Exception {
         AtomicInteger opened = new AtomicInteger();
         FakeConnection stalled = new FakeConnection("headers");

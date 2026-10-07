@@ -47,7 +47,7 @@ final class AmCache {
     }
     static String key(ArtworkQuery query, String country, AmIdentity.MatchProfile profile) {
         // Include raw URL, limits and completed query fields: no success or negative reuse across edition changes.
-        return hash("match-v6-1080\n" + profile.exactDeltaMs + "/" + profile.albumDeltaMs + "/" + profile.prefixRatioPct
+        return hash("match-v8-1080\n" + profile.exactDeltaMs + "/" + profile.albumDeltaMs + "/" + profile.prefixRatioPct
                 + "\n" + country + "\n" + AmIdentity.normalize(query.title) + "\n" + AmIdentity.normalizeArtist(query.artist)
                 + "\n" + AmIdentity.normalize(query.album) + "\n" + query.durationMs + "\n" + query.appleMusicUrl
                 + "\ntruncated=" + AmIdentity.truncated(query.album)
@@ -57,6 +57,9 @@ final class AmCache {
         return lookup(key, "");
     }
     Hit lookup(String key, String networkEpoch) {
+        return lookup(key, networkEpoch, false);
+    }
+    Hit lookup(String key, String networkEpoch, boolean recoveringTransport) {
         File map = new File(root, key + ".json");
         try {
             if (!map.isFile() || map.length() > 4096) return null;
@@ -73,6 +76,9 @@ final class AmCache {
                 return new Hit(file, null);
             }
             ArtworkResult.Status status = ArtworkResult.Status.valueOf(value.getString("status"));
+            // This request is deliberately retrying a transient failure. Do not delete another
+            // request's entry or bypass a rate limit, identity decision, or completed video.
+            if (recoveringTransport && AmTransportRetry.retryable(status, value.optString("reason"))) return null;
             if (status == ArtworkResult.Status.RETRY_LATER && AmConnectivity.transport(value.optString("reason"))
                     && !networkEpoch.isEmpty() && !networkEpoch.equals(value.optString("networkEpoch"))) {
                 map.delete(); return null;
@@ -158,7 +164,12 @@ final class AmCache {
         } catch (Exception ignored) { /* cache failure does not invalidate a verified pinned asset */ }
     }
     private static String inventoryKey(String country, String albumId) { return hash("album-videos-v1\n" + country + "\n" + albumId); }
+    void rememberSource(File file, AmVideoSources.Source source) { AmVideoSources.remember(root, file, source); }
+    Map<String, AmVideoSources.Source> videoSources(java.util.List<File> videos, java.util.Set<String> neteaseKeys) {
+        return AmVideoSources.snapshot(root, videos, neteaseKeys);
+    }
     void rememberVideo(String country, String albumId, File file, io.github.andrealtb.artwork.contract.ArtworkAsset asset) {
+        rememberSource(file, AmVideoSources.Source.AM);
         File index = new File(root, inventoryKey(country, albumId) + ".json");
         File temp = null;
         try {
@@ -214,6 +225,7 @@ final class AmCache {
         File[] files = root.listFiles();
         if (files != null) for (File file : files) {
             if (!pinned(file.getName()) && (file.getName().endsWith(".mp4") || file.getName().endsWith(".json"))) file.delete();
+            else if (AmVideoSources.markerName(file.getName()) && !pinned(AmVideoSources.videoForMarker(file.getName()))) file.delete();
         }
     }
     /** Cached motion covers for the settings page, most recently used first. */
@@ -237,8 +249,9 @@ final class AmCache {
         for (File file : files) {
             String name = file.getName();
             if (name.endsWith(".mp4") && bytes > budgetBytes && !pinned(name)) {
-                long size = file.length(); if (file.delete()) bytes -= size;
+                long size = file.length(); if (file.delete()) { bytes -= size; AmVideoSources.forget(root, file); }
             } else if (name.endsWith(".json") && maps > 128) { if (file.delete()) maps--; }
+            else if (AmVideoSources.markerName(name) && !new File(root, AmVideoSources.videoForMarker(name)).isFile()) file.delete();
             else if (name.endsWith(".part") && System.currentTimeMillis() - file.lastModified() > 3_600_000) file.delete();
         }
     }

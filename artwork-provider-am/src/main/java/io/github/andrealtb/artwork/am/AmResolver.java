@@ -11,11 +11,18 @@ import io.github.andrealtb.artwork.contract.ArtworkQuery;
 import io.github.andrealtb.artwork.contract.ArtworkResult;
 import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
 
-/** Public Web adapter. No JS token scraping, account credentials or third-party backend. */
+/** Source routing and the public Apple Music adapter. NetEase credentials stay in its own adapter. */
 final class AmResolver {
-    record Resolved(File file, ArtworkAsset asset) {}
+    record Resolved(File file, ArtworkAsset asset, String source, long sessionEpoch) {
+        Resolved(File file, ArtworkAsset asset) { this(file, asset, "am", -1); }
+        boolean available(Context context) {
+            return AmSettings.enabled(context) && (!"netease".equals(source)
+                    || NcmSession.enabled(context) && NcmSession.epoch() == sessionEpoch && NcmSession.read(context) != null);
+        }
+    }
     private final Context context;
     private static final AmSharedDownload DOWNLOADS = new AmSharedDownload();
+    private static final AmSharedDownload AUTOMATIC_LOOKUPS = new AmSharedDownload();
     private final AmCache cache;
     private final AmNetwork network;
     AmResolver(Context context) {
@@ -25,6 +32,62 @@ final class AmResolver {
                 reason.contains("_stalled_in_") ? reason + " importance=" + AmSettings.importance() : reason));
     }
     Resolved resolve(ArtworkQuery query, AmNetwork.Task task) throws AmFailure {
+        if (!AmSettings.enabled(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "provider_disabled");
+        AmBindings.Binding binding = query.appleMusicUrl.isEmpty() ? AmBindings.find(AmBindings.load(context), query) : null;
+        boolean fallback = binding == null && query.appleMusicUrl.isEmpty()
+                && NcmSession.enabled(context) && NcmSession.read(context) != null;
+        return ArtworkSources.resolve(binding != null, () -> {
+            if (binding != null && binding.netease())
+                return recover(task, () -> new NcmResolver(context).resolve(query, binding, task));
+            if (!fallback) return recover(task, () -> automatic(query, task, false));
+            String key = AmCache.key(query, AmSettings.country(context),
+                    AmIdentity.MatchProfile.forLevel(AmSettings.matchLevel(context))) + ":" + NcmSession.epoch()
+                    + ":" + AmConnectivity.get(context).token();
+            return AUTOMATIC_LOOKUPS.run(key, task,
+                    () -> AmSettings.trace(context, "ARTWORK_SOURCE_JOIN", "same_query"),
+                    () -> recover(task, () -> automatic(query, task, true)));
+        }, outcome -> AmRecentAlbums.note(context, query, outcome));
+    }
+    private <T> T recover(AmNetwork.Task task, ArtworkSources.Resolve<T> operation) throws AmFailure {
+        return AmTransportRetry.run(task, operation, (retry, delayMs, reason) ->
+                AmSettings.trace(context, "ARTWORK_TRANSPORT_RETRY", "retry=" + retry + " delayMs=" + delayMs
+                        + " reason=" + reason + " remainingMs=" + task.remainingMs()));
+    }
+    private Resolved automatic(ArtworkQuery query, AmNetwork.Task task, boolean fallback) throws AmFailure {
+        ArtworkSources.Resolve<Resolved> apple = () -> {
+            long deadline = task.limit(38_000);
+            try { return timed("am", () -> resolveApple(query, task)); }
+            finally { task.restore(deadline); }
+        };
+        if (!fallback) return apple.run();
+        NcmResolver netease = new NcmResolver(context);
+        String diagnosticRequest = AmDiagnostics.requestId();
+        return ArtworkSources.cachedFirst(() -> {
+            Resolved cached = matched(query, null, task, true);
+            if (cached != null) AmSettings.trace(context, "ARTWORK_SOURCE_CACHE", "am_verified_file");
+            return cached;
+        }, () -> {
+            Resolved cached = netease.cachedAutomatic(query, task);
+            if (cached != null) AmSettings.trace(context, "ARTWORK_SOURCE_CACHE", "netease_verified_file");
+            return cached;
+        }, () -> {
+            AmSettings.trace(context, "ARTWORK_SOURCE_LOOKUP", "parallel_am_netease");
+            return ArtworkSources.parallel(task, apple,
+                    child -> AmDiagnostics.withRequest(diagnosticRequest,
+                            () -> timed("netease_lookup", () -> netease.prepare(query, null, child))),
+                    (prepared, child) -> {
+                        AmSettings.trace(context, "ARTWORK_SOURCE_FALLBACK", "am_to_netease_prepared");
+                        return timed("netease_download", () -> netease.complete(query, prepared, child));
+                    });
+            });
+    }
+    private <T> T timed(String source, ArtworkSources.Resolve<T> operation) throws AmFailure {
+        long started = System.nanoTime();
+        try { return operation.run(); }
+        finally { AmSettings.trace(context, "ARTWORK_SOURCE_TIMING", "source=" + source
+                + " elapsedMs=" + java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)); }
+    }
+    private Resolved resolveApple(ArtworkQuery query, AmNetwork.Task task) throws AmFailure {
         if (!AmSettings.enabled(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "provider_disabled");
         AmIdentity.AppleLink link = query.appleMusicUrl.isEmpty() ? null : AmIdentity.link(query.appleMusicUrl);
         // An exact catalog link outranks the user's album choice, which is meant for local files without one.
@@ -36,19 +99,10 @@ final class AmResolver {
                 + " width=" + query.displayWidthPx + " height=" + query.displayHeightPx
                 + " maxWidth=" + query.maxWidth + " maxHeight=" + query.maxHeight + " maxBytes=" + query.maxFileBytes);
         if (binding != null) {
-            AmRecentAlbums.note(context, query, AmRecentAlbums.Outcome.BOUND);
             AmSettings.trace(context, "ARTWORK_AM_BINDING", "user_album");
             return bound(query, binding, task);
         }
-        try {
-            Resolved resolved = matched(query, link, task);
-            AmRecentAlbums.note(context, query, AmRecentAlbums.Outcome.MATCHED);
-            return resolved;
-        } catch (AmFailure failure) {
-            AmRecentAlbums.Outcome outcome = AmRecentAlbums.outcome(failure);
-            if (outcome != null) AmRecentAlbums.note(context, query, outcome);
-            throw failure;
-        }
+        return matched(query, link, task);
     }
 
     /** The user named this album for the local album name: no track check, the album's own motion cover. */
@@ -57,7 +111,7 @@ final class AmResolver {
         String key = AmCache.boundKey(query, country, albumId);
         String networkEpoch = AmConnectivity.get(context).token();
         task.check();
-        AmCache.Hit hit = cache.lookup(key, networkEpoch);
+        AmCache.Hit hit = cache.lookup(key, networkEpoch, task.recoveringTransport());
         if (hit != null && hit.file() != null) {
             try {
                 Resolved ready = inspect(hit.file(), query);
@@ -84,14 +138,22 @@ final class AmResolver {
     }
 
     private Resolved matched(ArtworkQuery query, AmIdentity.AppleLink link, AmNetwork.Task task) throws AmFailure {
-        if (query.artist.isEmpty() || query.durationMs == 0) throw new AmFailure(Status.AMBIGUOUS, "identity_fields_missing");
+        return matched(query, link, task, false);
+    }
+    /** Cache probes never start I/O against a remote source or return a cached negative decision. */
+    private Resolved matched(ArtworkQuery query, AmIdentity.AppleLink link, AmNetwork.Task task, boolean cacheOnly) throws AmFailure {
+        task.check();
+        if (query.artist.isEmpty() || query.durationMs == 0) {
+            if (cacheOnly) return null;
+            throw new AmFailure(Status.AMBIGUOUS, "identity_fields_missing");
+        }
         String country = link == null ? AmSettings.country(context) : link.country();
         AmIdentity.MatchProfile profile = AmIdentity.MatchProfile.forLevel(AmSettings.matchLevel(context));
         String key = AmCache.key(query, country, profile);
         AmConnectivity connectivity = AmConnectivity.get(context);
         String networkEpoch = connectivity.token();
         task.check();
-        AmCache.Hit hit = cache.lookup(key, networkEpoch);
+        AmCache.Hit hit = cache.lookup(key, networkEpoch, task.recoveringTransport());
         if (hit != null) {
             AmSettings.trace(context, "ARTWORK_AM_CACHE", hit.file() == null ? "cached_status" : "validated_file_hit");
             if (hit.file() != null) {
@@ -107,7 +169,10 @@ final class AmResolver {
                     }
                     return ready;
                 }
-                catch (Exception error) { cache.unpin(hit.file()); throw new AmFailure(Status.UNSUPPORTED, "cached_media_invalid"); }
+                catch (Exception error) {
+                    cache.unpin(hit.file());
+                    if (!cacheOnly) throw new AmFailure(Status.UNSUPPORTED, "cached_media_invalid");
+                }
             }
         }
         long pausesAtStart = AmPauseDetector.pauses();
@@ -115,9 +180,14 @@ final class AmResolver {
         String albumId = known == null ? null : known.id();
         if (known != null) {
             AmSettings.matching(context, "catalog_cache", known.tracks(), query, profile);
-            Resolved cached = albumVideo(query, country, known.id(), key, task);
-            if (cached != null) return cached;
+            try {
+                Resolved cached = albumVideo(query, country, known.id(), key, task);
+                if (cached != null) return cached;
+            } catch (AmFailure failure) {
+                if (!cacheOnly || failure.status != Status.UNSUPPORTED) throw failure;
+            }
         }
+        if (cacheOnly) return null;
         if (hit != null && hit.failure() != null && !(known != null && hit.failure().reason.equals("catalog_match_unconfirmed"))) {
             throw new AmFailure(hit.failure().status, hit.failure().reason, hit.failure().retryAfterMs);
         }
@@ -300,6 +370,7 @@ final class AmResolver {
             if (!asset.fits(query) || asset.width != AmHls.ARTWORK_SIZE || asset.height != AmHls.ARTWORK_SIZE) {
                 throw new AmFailure(Status.UNSUPPORTED, "resource_limits");
             }
+            cache.rememberSource(file, AmVideoSources.Source.AM);
             return new Resolved(file, asset);
         }
     }

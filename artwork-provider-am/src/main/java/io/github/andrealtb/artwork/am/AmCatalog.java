@@ -7,7 +7,7 @@ import java.util.function.BiConsumer;
 import io.github.andrealtb.artwork.contract.ArtworkQuery;
 import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
 
-/** Candidate discovery may fall back to an exact album search; every path verifies the actual track table. */
+/** Search the named album first, with one song lookup as a bounded discovery fallback. */
 final class AmCatalog {
     private static final int MAX_ALBUM_PAGES = 6;
     interface Fetch { String text(URI uri, int limit) throws AmFailure; }
@@ -43,24 +43,32 @@ final class AmCatalog {
             }
             return verified(selected.albumId(), country, query, selected.songId(), "web_song_album", selected.edition());
         }
-        // No exact link: search the store with progressively broader terms. Every round still
-        // verifies the track table, so broader terms can never attach a foreign album.
-        AmIdentity.Track selected = null;
-        java.util.Map<String, AmPage.AlbumCandidate> discoveredAlbums = new java.util.TreeMap<>();
-        int round = 0;
-        for (String term : searchTerms(query)) {
-            round++;
-            String uri = "https://itunes.apple.com/search?term=" + encode(term) + "&media=music&entity=musicTrack&country=" + searchMarket(country) + "&limit=100";
-            List<AmIdentity.Track> tracks = AmPage.itunes(fetch.text(URI.create(uri), 2 * 1024 * 1024));
-            rememberAlbums(tracks, query, discoveredAlbums);
-            diagnostic.accept(round == 1 ? "itunes_song" : "itunes_song_fallback", tracks);
-            try { selected = AmIdentity.unique(tracks, query, "", "", profile); break; }
+        if (!query.album.isEmpty()) {
+            try { return albumFallback(query, country, ""); }
             catch (AmFailure failure) {
-                discovery.accept("song_match=" + failure.reason + " candidates=" + tracks.size() + " round=" + round);
-                if (failure.status != Status.RETRY_LATER) throw failure; // ambiguity or schema: broader terms add nothing
+                // Only missing identity evidence merits a song lookup. No motion, transport errors,
+                // incomplete pages and ambiguity go straight back to the source router.
+                if (!failure.reason.equals("catalog_album_unconfirmed")
+                        && !failure.reason.equals("catalog_match_unconfirmed")) throw failure;
+                discovery.accept("stage=album_to_song reason=" + failure.reason);
             }
         }
-        if (selected == null) return albumFallback(query, country, "", discoveredAlbums);
+        String term = songSearchTerm(query);
+        String uri = "https://itunes.apple.com/search?term=" + encode(term)
+                + "&media=music&entity=musicTrack&country=" + searchMarket(country) + "&limit=100";
+        List<AmIdentity.Track> tracks = AmPage.itunes(fetch.text(URI.create(uri), 2 * 1024 * 1024));
+        diagnostic.accept("itunes_song_fallback", tracks);
+        discovery.accept("stage=song_fallback candidates=" + tracks.size() + " round=1");
+        java.util.Map<String, AmPage.AlbumCandidate> discovered = new java.util.TreeMap<>();
+        rememberAlbums(tracks, query, discovered);
+        AmIdentity.Track selected;
+        try { selected = AmIdentity.unique(tracks, query, "", "", profile); }
+        catch (AmFailure failure) {
+            // Other tracks may reveal an album hidden from the album search (e.g. an Explicit
+            // release). Reuse that evidence once; do not repeat either catalog search.
+            if (!failure.reason.equals("catalog_match_unconfirmed") || discovered.isEmpty()) throw failure;
+            return verifyAlbums(List.copyOf(discovered.values()), query, country, "");
+        }
         return verified(selected.albumId(), country, query, selected.songId(), "web_song_album", selected.edition());
     }
     /**
@@ -69,44 +77,21 @@ final class AmCatalog {
      * is still verified in the user's own storefront, where the artwork must actually exist.
      */
     private static String searchMarket(String country) { return "cn".equals(country) ? "us" : country; }
-    /** Search terms from the most specific to the broadest; each round still verifies the track table. */
-    private static List<String> searchTerms(ArtworkQuery query) {
-        java.util.LinkedHashSet<String> terms = new java.util.LinkedHashSet<>();
-        String raw = (query.artist + " " + query.title + (query.album.isEmpty() ? "" : " " + query.album)).trim();
-        if (!raw.isEmpty()) terms.add(raw);
-        // The normalized form drops "(Explicit)" and stray punctuation that pollutes the search.
-        String clean = (AmIdentity.normalizeArtist(query.artist) + " " + AmIdentity.ratingBase(query.title)
-                + (query.album.isEmpty() ? "" : " " + AmIdentity.editionBase(query.album))).trim();
-        if (!clean.isEmpty()) terms.add(clean);
-        String artistTitle = (query.artist + " " + query.title).trim();
-        if (!artistTitle.isEmpty()) terms.add(artistTitle);
-        String titleArtist = (query.title + " " + query.artist).trim();
-        if (!titleArtist.isEmpty()) terms.add(titleArtist);
-        String core = AmIdentity.coreTitle(query.title);
-        String lead = AmIdentity.primaryArtist(query.artist);
-        String coreLead = (core + (lead.isEmpty() ? "" : " " + lead)).trim();
-        if (!coreLead.isEmpty()) terms.add(coreLead);
-        String title = query.title.trim();
-        if (!title.isEmpty()) terms.add(title);
-        return new java.util.ArrayList<>(terms);
+    /** Discovery only: aliases and rating annotations must still pass the actual table check. */
+    private static String songSearchTerm(ArtworkQuery query) {
+        return (AmIdentity.primaryArtist(query.artist) + " "
+                + AmIdentity.ratingBase(AmIdentity.aliasBase(query.title))).trim();
     }
-    /** Track search exhausted: the named album itself is verified; its track table still gates the result. */
+    /** Discover the named album, then verify its actual track table before using its motion cover. */
     private AmPage.Album albumFallback(ArtworkQuery query, String country, String songId) throws AmFailure {
-        return albumFallback(query, country, songId, java.util.Map.of());
+        return verifyAlbums(albumSearch(query, country), query, country, songId);
     }
-    private AmPage.Album albumFallback(ArtworkQuery query, String country, String songId,
-            java.util.Map<String, AmPage.AlbumCandidate> discovered) throws AmFailure {
-        List<AmPage.AlbumCandidate> albums = albumSearch(query.artist, query, country);
-        // An album is credited to its lead artist; a full guest list can keep the album out of the results.
-        String lead = AmIdentity.primaryArtist(query.artist);
-        if (albums.isEmpty() && !lead.isEmpty() && !lead.equals(AmIdentity.normalizeArtist(query.artist))) {
-            albums = albumSearch(lead, query, country);
-        }
-        java.util.Map<String, AmPage.AlbumCandidate> combined = new java.util.TreeMap<>(discovered);
-        for (AmPage.AlbumCandidate candidate : albums) mergeAlbum(combined, candidate);
-        albums = combined.values().stream().filter(candidate -> AmIdentity.ratingCompatible(query, candidate.edition()))
+    private AmPage.Album verifyAlbums(List<AmPage.AlbumCandidate> candidates, ArtworkQuery query,
+            String country, String songId) throws AmFailure {
+        List<AmPage.AlbumCandidate> albums = candidates.stream()
+                .filter(candidate -> AmIdentity.ratingCompatible(query, candidate.edition()))
                 .collect(java.util.stream.Collectors.toList());
-        discovery.accept("stage=album_evidence discovered=" + discovered.size() + " merged=" + combined.size() + " eligible=" + albums.size());
+        discovery.accept("stage=album_evidence eligible=" + albums.size());
         if (albums.size() > MAX_ALBUM_PAGES) throw new AmFailure(Status.AMBIGUOUS, "multiple_album_matches");
         if (albums.isEmpty()) throw new AmFailure(Status.RETRY_LATER,
                 query.album.isEmpty() ? "catalog_match_unconfirmed" : "catalog_album_unconfirmed",
@@ -135,22 +120,20 @@ final class AmCatalog {
                     || !(AmIdentity.sameArtists(query.artist, query.title, track.artist(), track.title())
                         || AmIdentity.sharesLeadArtist(query.artist, query.title, track.artist(), track.title())
                         || AmIdentity.namesOverlap(query.artist, query.title, track.artist(), track.title()))) continue;
-            // Another song proves only an album ID/rating. Its song release day is not the album's
-            // release day and must not manufacture an Explicit/Clean equivalence pair.
-            mergeAlbum(albums, new AmPage.AlbumCandidate(track.albumId(), new AmEdition.Info(track.edition().rating(), "", 0)));
+            // A song's release day is not the album's day and cannot prove edition equivalence.
+            AmPage.AlbumCandidate candidate = new AmPage.AlbumCandidate(track.albumId(),
+                    new AmEdition.Info(track.edition().rating(), "", 0));
+            AmPage.AlbumCandidate old = albums.get(candidate.id());
+            if (old != null && !old.edition().rating().isEmpty() && !candidate.edition().rating().isEmpty()
+                    && !old.edition().rating().equals(candidate.edition().rating()))
+                throw new AmFailure(Status.RETRY_LATER, "catalog_album_metadata_unconfirmed", 60_000);
+            if (old == null || old.edition().rating().isEmpty()) albums.put(candidate.id(), candidate);
         }
     }
-    private static void mergeAlbum(java.util.Map<String, AmPage.AlbumCandidate> albums, AmPage.AlbumCandidate candidate) throws AmFailure {
-        AmPage.AlbumCandidate old = albums.get(candidate.id());
-        if (old != null && !old.edition().rating().isEmpty() && !candidate.edition().rating().isEmpty()
-                && !old.edition().rating().equals(candidate.edition().rating()))
-            throw new AmFailure(Status.RETRY_LATER, "catalog_album_metadata_unconfirmed", 60_000);
-        if (old == null || old.edition().rating().isEmpty() || !candidate.edition().releaseDay().isEmpty()) albums.put(candidate.id(), candidate);
-    }
-    private List<AmPage.AlbumCandidate> albumSearch(String artist, ArtworkQuery query, String country) throws AmFailure {
+    private List<AmPage.AlbumCandidate> albumSearch(ArtworkQuery query, String country) throws AmFailure {
         // Without an album name the track title stands in: the single/EP it belongs to is still
         // verified by the album page's track table, so a foreign album can never attach.
-        String term = artist + " " + (query.album.isEmpty() ? query.title : query.album);
+        String term = query.album.isEmpty() ? songSearchTerm(query) : query.album;
         List<AmPage.AlbumCandidate> matches = AmPage.albumCandidates(fetch.text(albumSearchUri(term, searchMarket(country)), 2 * 1024 * 1024),
                 query.album, query.artist, profile);
         discovery.accept("stage=itunes_album matched=" + matches.size() + " market=" + searchMarket(country));

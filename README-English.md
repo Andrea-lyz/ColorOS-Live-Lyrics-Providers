@@ -143,8 +143,8 @@ device-validation limits.
 ## Dynamic Artwork Provider (optional)
 
 `:artwork-provider-am` (`io.github.andrealtb.artwork.am`) is an optional standalone app that gives
-the lock screen a square motion cover: it matches the song against Apple Music's public catalog,
-downloads and verifies the square video, and hands it to an authorized Bridge over
+the lock screen a square motion cover: it queries Apple Music and optional NetEase concurrently,
+prefers the AM download, verifies the square video, and hands it to an authorized Bridge over
 `artwork-contract` v1. It is not an Xposed module, it never injects into a player, and it is not
 part of the v5 lyric matrix above. Without it the lock screen keeps the official static cover.
 
@@ -152,8 +152,9 @@ part of the v5 lyric matrix above. Without it the lock screen keeps the official
   then pick and authorize it in the Bridge under "Settings → Dynamic artwork".
 - Fully independent of the lyric Providers: install, update, or remove it on its own; the lyric
   path is unaffected.
-- Source version 1.0.3 (versionCode 7), signed with the same release key as the lyric Providers. It is
+- Source version 1.0.4 (versionCode 8), signed with the same release key as the lyric Providers. It is
   published as its own asset and does not enter the Provider bundle.
+- NetEase requires opt-in and QR sign-in, with a separate search field and cover thumbnails. Native 1280 video needs the paired C17 Artwork Preview2 Bridge.
 - Source chain and development entry point: [artwork-provider-am/README.md](artwork-provider-am/README.md).
 
 `artwork-contract/` mirrors the protocol module of the same name in the Bridge repository; files

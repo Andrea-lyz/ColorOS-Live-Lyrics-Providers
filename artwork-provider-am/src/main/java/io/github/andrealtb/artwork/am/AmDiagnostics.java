@@ -25,6 +25,12 @@ final class AmDiagnostics {
     private AmDiagnostics() {}
 
     static void begin() { REQUEST.set(SESSION + "-" + SEQUENCE.incrementAndGet()); }
+    static <T> T withRequest(String request, ArtworkSources.Resolve<T> operation) throws AmFailure {
+        String previous = REQUEST.get();
+        REQUEST.set(request);
+        try { return operation.run(); }
+        finally { if (previous == null) REQUEST.remove(); else REQUEST.set(previous); }
+    }
     static void end() { REQUEST.remove(); }
     static String requestId() { String request = REQUEST.get(); return request == null ? SESSION + "-none" : request; }
 

@@ -43,6 +43,17 @@ public class AmIdentityTest {
         assertFalse(AmIdentity.agrees(new AmIdentity.Track("1", "10", "Style", "Taylor Swift", "1989", 231000),
                 query("Style (Taylor's Version)", "1989 (Taylor's Version)", 288)));
     }
+
+    @Test public void translatedAliasAnnotationIsNotAVersionLabel() {
+        assertEquals(AmIdentity.normalize("特别的人"), AmIdentity.normalize(AmIdentity.aliasBase("特别的人 (Special Person)")));
+        assertEquals(AmIdentity.normalize("Song"), AmIdentity.normalize(AmIdentity.aliasBase("Song (中文名)")));
+        for (String kept : new String[] { "特别的人 (Live)", "Style (Radio Edit)", "危险世界 (iTunes Session)",
+                "特别的人 (现场)", "Song (Deluxe)" }) {
+            assertEquals(kept, AmIdentity.aliasBase(kept));
+        }
+        assertEquals("", AmIdentity.aliasBase(""));
+        assertEquals("Song", AmIdentity.aliasBase("Song"));
+    }
     @Test public void playerListingBothArtistsMatchesStoreGuestCreditInTitle() {
         // Device log: "Fortnight" matched title, album and duration but never the artist.
         var store = new AmIdentity.Track("1", "10", "Fortnight (feat. Post Malone)", "Taylor Swift",

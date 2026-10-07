@@ -55,7 +55,8 @@ public class AmCatalogDiscoveryTest {
         String row="{\"wrapperType\":\"track\",\"kind\":\"song\",\"trackId\":%s,\"collectionId\":10,\"trackName\":\"Other\","
                 + "\"artistName\":\"Taylor Swift\",\"collectionName\":\"1989\",\"trackTimeMillis\":200000,\"collectionExplicitness\":\"%s\"}";
         String response="{\"results\":["+String.format(row,"11","explicit")+","+String.format(row,"12","cleaned")+"]}";
-        var resolver=new AmCatalog((uri,limit)->response,(stage,tracks)->{});
+        var resolver=new AmCatalog((uri,limit)->uri.getHost().equals("music.apple.com")
+                ? AmCatalogTest.emptySearchPage("us") : response,(stage,tracks)->{});
         try { resolver.resolve(AmIdentityTest.query("Style","1989",288),null,"us",null); fail(); }
         catch(AmFailure failure) { assertEquals("catalog_album_metadata_unconfirmed",failure.reason); assertEquals(Status.RETRY_LATER,failure.status); }
     }

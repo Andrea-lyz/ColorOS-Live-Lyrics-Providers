@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Pictures for the provider pages only; never used by the lock-screen service.
- * Album art comes from Apple's image CDN for albums the user just searched; a bound album keeps a
+ * Album art comes from the source's official image CDN for albums the user just searched; a bound album keeps a
  * local copy so the bindings list never goes online. Video frames come from the motion cover cache.
  */
 final class AmThumbnails {
@@ -41,27 +41,29 @@ final class AmThumbnails {
 
     private AmThumbnails() {}
 
-    /** Search result art; {@code url} was already checked by {@link AmPage#artworkUrl}. */
+    /** Search result art; URLs are checked by the matching source's picture policy. */
     static void album(Context context, CoverTile tile, String url, int px) {
         Context app = context.getApplicationContext();
-        load(tile, url.isEmpty() ? null : "album:" + url, () -> AmSettings.connected(app) ? download(url, px) : null);
+        boolean netease = !url.isEmpty() && NcmArtwork.imageHost(URI.create(url));
+        load(tile, url.isEmpty() ? null : "album:" + url,
+                () -> AmSettings.connected(app) && (!netease || NcmSession.enabled(app)) ? download(url, px) : null);
     }
 
     static void video(CoverTile tile, File file, int px) {
         load(tile, "video:" + file.getName(), () -> frame(file, px));
     }
 
-    static void bound(Context context, CoverTile tile, String country, String albumId, int px) {
-        File file = boundFile(context, country, albumId);
-        load(tile, boundKey(country, albumId), () -> file.isFile() ? decodeFile(file, px) : null);
+    static void bound(Context context, CoverTile tile, String scope, String albumId, int px) {
+        File file = boundFile(context, scope, albumId);
+        load(tile, boundKey(scope, albumId), () -> file.isFile() ? decodeFile(file, px) : null);
     }
 
     /** Keeps the search art of a newly bound album, if it was shown. */
-    static void keep(Context context, String url, String country, String albumId) {
+    static void keep(Context context, String url, String scope, String albumId) {
         Bitmap bitmap = url.isEmpty() ? null : MEMORY.get("album:" + url);
         if (bitmap == null) return;
-        MEMORY.put(boundKey(country, albumId), bitmap);
-        File target = boundFile(context, country, albumId);
+        MEMORY.put(boundKey(scope, albumId), bitmap);
+        File target = boundFile(context, scope, albumId);
         submit(() -> {
             File folder = target.getParentFile();
             if (folder == null || !folder.isDirectory() && !folder.mkdirs()) return null;
@@ -76,17 +78,17 @@ final class AmThumbnails {
         });
     }
 
-    static void forget(Context context, String country, String albumId) {
-        MEMORY.remove(boundKey(country, albumId));
-        File file = boundFile(context, country, albumId);
+    static void forget(Context context, String scope, String albumId) {
+        MEMORY.remove(boundKey(scope, albumId));
+        File file = boundFile(context, scope, albumId);
         submit(() -> file.delete());
     }
 
-    private static String boundKey(String country, String albumId) { return "bound:" + country + "-" + albumId; }
+    private static String boundKey(String scope, String albumId) { return "bound:" + scope + "-" + albumId; }
 
-    /** Country and album ID come from a validated binding: two letters and digits only. */
-    private static File boundFile(Context context, String country, String albumId) {
-        return new File(new File(context.getCacheDir(), "am-thumbs"), country.toLowerCase(Locale.ROOT) + "-" + albumId + ".jpg");
+    /** Scope is a validated AM country or the fixed NetEase namespace; the album ID is digits only. */
+    private static File boundFile(Context context, String scope, String albumId) {
+        return new File(new File(context.getCacheDir(), "am-thumbs"), scope.toLowerCase(Locale.ROOT) + "-" + albumId + ".jpg");
     }
 
     private static void load(CoverTile tile, String key, Callable<Bitmap> source) {
@@ -113,13 +115,19 @@ final class AmThumbnails {
 
     private static Bitmap download(String url, int px) throws IOException {
         URI uri = URI.create(url);
-        if (!AmPage.artworkHost(uri)) return null;
+        boolean netease = NcmArtwork.imageHost(uri);
+        if (!AmPage.artworkHost(uri) && !netease) return null;
         HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection();
         try {
             connection.setConnectTimeout(8_000);
             connection.setReadTimeout(8_000);
             connection.setInstanceFollowRedirects(false);
             connection.setUseCaches(false);
+            if (netease) {
+                connection.setRequestProperty("Referer", "https://music.163.com/");
+                connection.setRequestProperty("Cookie", "");
+                connection.setRequestProperty("Authorization", "");
+            }
             if (connection.getResponseCode() != HttpURLConnection.HTTP_OK || connection.getContentLengthLong() > MAX_BYTES) return null;
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             try (InputStream stream = connection.getInputStream()) {

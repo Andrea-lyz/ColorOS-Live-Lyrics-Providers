@@ -9,6 +9,9 @@ import io.github.andrealtb.artwork.contract.ArtworkQuery;
 import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
 
 public class AmCatalogTest {
+    static String emptySearchPage(String country) {
+        return AmSearchTest.page("").replace("\"storefront\":\"cn\"", "\"storefront\":\"" + country + "\"");
+    }
     static String albumPage(String id,String title) {
         return AmPageTest.page("null").replace("track-list - 10","track-list - " + id)
                 .replace("album-detail-header-section - 10","album-detail-header-section - " + id)
@@ -23,7 +26,8 @@ public class AmCatalogTest {
         var first = new AtomicBoolean(true);
         var resolver = new AmCatalog((uri, limit) -> {
             if (first.getAndSet(false)) {
-                assertTrue("cn song search must use the us catalog: " + uri, uri.getQuery().contains("country=us"));
+                assertTrue("cn album search must use the us catalog: " + uri, uri.getQuery().contains("country=us"));
+                assertTrue(uri.getQuery().contains("entity=album"));
                 return "{\"results\":[]}";
             }
             if (uri.getHost().equals("music.apple.com")) return AmPageTest.page("null");
@@ -33,22 +37,50 @@ public class AmCatalogTest {
         try { resolver.resolve(AmIdentityTest.query("Style", "1989", 288), null, "cn", null); fail(); }
         catch (AmFailure failure) { assertEquals(Status.RETRY_LATER, failure.status); }
     }
-    @Test public void emptySongSearchFallsBackToExactAlbumAndStillVerifiesSongTable() throws Exception {
+    @Test public void namedAlbumSearchDoesNotSpendAnySongSearchRound() throws Exception {
         var calls = new AtomicInteger();
         var resolver = new AmCatalog((uri, limit) -> {
             calls.incrementAndGet();
             if (uri.getHost().equals("music.apple.com")) return AmPageTest.page("null");
-            if (uri.getQuery().contains("entity=album")) return "{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":10,\"collectionName\":\"1989\",\"artistName\":\"Taylor Swift\"}]}";
-            return "{\"results\":[]}";
+            assertTrue(uri.getQuery().contains("entity=album"));
+            assertTrue(uri.getQuery().contains("term=1989&"));
+            return "{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":10,\"collectionName\":\"1989\",\"artistName\":\"Taylor Swift\"}]}";
         }, (stage, tracks) -> {});
         assertEquals("10", resolver.resolve(AmIdentityTest.query("Style", "1989", 288), null, "us", null).id());
-        // Broadening song-search rounds run first, then the exact-album fallback and its page verification.
-        assertTrue("expected at least the search, album and page calls, was " + calls.get(), calls.get() >= 3);
+        assertEquals("one album search and its owned page", 2, calls.get());
     }
     @Test public void confirmedAlbumTableMatchesNewSongWithoutAnyNetworkSearch() throws Exception {
         var album = AmPage.album(AmPageTest.page("null"), "10");
         var resolver = new AmCatalog((uri, limit) -> { fail("cached album should not fetch"); return ""; }, (stage, tracks) -> {});
         assertSame(album, resolver.resolve(AmIdentityTest.query("Style", "1989", 288), null, "us", album));
+    }
+    @Test public void albumWithoutMotionGoesToNeteaseWithoutSupplementalSongSearch() throws Exception {
+        var calls = new java.util.ArrayList<java.net.URI>();
+        var catalog = new AmCatalog((uri, limit) -> {
+            calls.add(uri);
+            if (uri.getHost().equals("music.apple.com")) return AmPageTest.page("null");
+            assertTrue(uri.getQuery().contains("entity=album"));
+            return "{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":10,\"collectionName\":\"1989\",\"artistName\":\"Taylor Swift\"}]}";
+        }, (stage, tracks) -> {});
+        assertEquals("netease", ArtworkSources.automatic(true, () -> {
+            var album = catalog.resolve(AmIdentityTest.query("Style", "1989", 288), null, "us", null);
+            assertNull(album.master());
+            throw new AmFailure(Status.NO_MOTION, "confirmed_album_no_motion");
+        }, () -> "netease"));
+        assertEquals(2, calls.size());
+    }
+    @Test public void automaticAlbumTransportFailureDoesNotStartSongSearch() throws Exception {
+        var calls = new AtomicInteger();
+        var catalog = new AmCatalog((uri, limit) -> {
+            calls.incrementAndGet();
+            assertTrue(uri.getQuery().contains("entity=album"));
+            throw new AmFailure(Status.RETRY_LATER, "network_io");
+        }, (stage, tracks) -> {});
+        assertEquals("netease", ArtworkSources.automatic(true, () -> {
+            catalog.resolve(AmIdentityTest.query("Style", "1989", 288), null, "us", null);
+            fail(); return "apple";
+        }, () -> "netease"));
+        assertEquals(1, calls.get());
     }
     @Test public void albumFallbackCannotAcceptOriginalForRerecordOrUnrelatedSong() throws Exception {
         var resolver = new AmCatalog((uri, limit) -> {
@@ -66,19 +98,26 @@ public class AmCatalogTest {
         try { resolver.resolve(AmIdentityTest.query("Style", "1989", 288), null, "us", null); fail(); }
         catch (AmFailure failure) { assertEquals(Status.AMBIGUOUS, failure.status); }
     }
-    @Test public void noAlbumSongStillFallsBackToAlbumSearchAndVerifiesItsTrackTable() throws Exception {
+    @Test public void missingAlbumUsesOneSongSearchAndVerifiesItsOwnedPage() throws Exception {
+        var searches = new AtomicInteger();
         var resolver = new AmCatalog((uri, limit) -> {
             if (uri.getHost().equals("music.apple.com")) return AmPageTest.page("null");
-            if (uri.getQuery().contains("entity=album")) return "{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":10,\"collectionName\":\"1989\",\"artistName\":\"Taylor Swift\"}]}";
-            return "{\"results\":[]}";
+            searches.incrementAndGet();
+            assertTrue(uri.getQuery().contains("entity=musicTrack"));
+            return "{\"results\":[{\"wrapperType\":\"track\",\"kind\":\"song\",\"trackId\":1,\"trackName\":\"Style\",\"artistName\":\"Taylor Swift\","
+                    + "\"collectionId\":10,\"collectionName\":\"1989\",\"trackTimeMillis\":231000}]}";
         }, (stage, tracks) -> {});
         var query = new ArtworkQuery("Style", "Taylor Swift", "", 231000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024);
         assertEquals("10", resolver.resolve(query, null, "us", null).id());
+        assertEquals(1, searches.get());
     }
     @Test public void noAlbumSongWithSeveralAlbumCandidatesStaysAmbiguous() throws Exception {
-        String row = "{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":%s,\"collectionName\":\"1989\",\"artistName\":\"Taylor Swift\"}";
-        var resolver = new AmCatalog((uri, limit) -> uri.getHost().equals("music.apple.com") ? albumPage(uri.getPath().endsWith("/20") ? "20" : "10","Style")
-                : uri.getQuery().contains("entity=album") ? "{\"results\":[" + String.format(row, "10") + "," + String.format(row, "20") + "]}" : "{\"results\":[]}", (stage, tracks) -> {});
+        String row = "{\"wrapperType\":\"track\",\"kind\":\"song\",\"trackId\":%s,\"trackName\":\"Style\",\"artistName\":\"Taylor Swift\","
+                + "\"collectionId\":%s,\"collectionName\":\"1989\",\"trackTimeMillis\":231000}";
+        var resolver = new AmCatalog((uri, limit) -> {
+            assertTrue(uri.getQuery().contains("entity=musicTrack"));
+            return "{\"results\":[" + String.format(row, "1", "10") + "," + String.format(row, "2", "20") + "]}";
+        }, (stage, tracks) -> {});
         var query = new ArtworkQuery("Style", "Taylor Swift", "", 231000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024);
         try { resolver.resolve(query, null, "us", null); fail(); }
         catch (AmFailure failure) { assertEquals(Status.AMBIGUOUS, failure.status); }
@@ -99,6 +138,7 @@ public class AmCatalogTest {
     @Test public void cnPageMissingFallsBackToUsCatalogPageAndStillVerifies() throws Exception {
         var resolver = new AmCatalog((uri, limit) -> {
             if (uri.getHost().equals("music.apple.com")) {
+                if (uri.getPath().endsWith("/search")) return emptySearchPage("cn");
                 // The CN storefront cannot serve the album at all; the US page can.
                 return uri.getPath().startsWith("/cn/album/") ? "<html>unavailable</html>" : AmPageTest.page("null");
             }
@@ -194,7 +234,7 @@ public class AmCatalogTest {
     }
     @Test public void discoveryLogOmitsFullSearchTermsAndQueryFields() throws Exception {
         var messages=new java.util.ArrayList<String>();
-        var resolver=new AmCatalog((uri,limit)->uri.getHost().equals("music.apple.com") ? AmPageTest.page("null") : "{\"results\":[]}",
+        var resolver=new AmCatalog((uri,limit)->uri.getHost().equals("music.apple.com") ? emptySearchPage("us") : "{\"results\":[]}",
                 (stage,tracks)->{},messages::add);
         var q=AmMatchingBoundaryTest.query("private-title-secret","private-artist-secret","private-album-secret",231000);
         try { resolver.resolve(q,null,"us",null); fail(); }
@@ -221,7 +261,8 @@ public class AmCatalogTest {
         String response="{\"results\":[{\"wrapperType\":\"track\",\"kind\":\"song\",\"trackId\":1,\"trackName\":\"Style\","
                 + "\"artistName\":\"Taylor Swift\",\"collectionId\":10,\"collectionName\":\"1989\",\"trackTimeMillis\":231000,"
                 + "\"collectionExplicitness\":\"explicit\",\"releaseDate\":\"2014-10-27\",\"trackCount\":13}]}";
-        var resolver=new AmCatalog((uri,limit)->uri.getHost().equals("music.apple.com") ? AmPageTest.page("null") : response,(stage,tracks)->{});
+        var resolver=new AmCatalog((uri,limit)->uri.getHost().equals("music.apple.com")
+                ? uri.getPath().endsWith("/search") ? emptySearchPage("us") : AmPageTest.page("null") : response,(stage,tracks)->{});
         var album=resolver.resolve(AmIdentityTest.query("Style (Explicit)","1989",288),null,"us",null);
         assertEquals("10",album.id()); assertEquals("explicit",album.tracks().get(0).edition().rating());
         assertEquals("explicit",AmPage.snapshot(AmPage.snapshot(album)).tracks().get(0).edition().rating());

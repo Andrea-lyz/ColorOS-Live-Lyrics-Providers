@@ -93,6 +93,32 @@ final class AmIdentity {
     /** Only a guest credit, bracketed or trailing; version words such as "Taylor's Version" stay in the title. */
     private static final Pattern GUEST_CLAUSE = FEATURED;
 
+    /** Trailing script-foreign annotation only, e.g. "特别的人 (Special Person)". */
+    private static final Pattern TRAILING_ANNOTATION = Pattern.compile("\\s*[(\\[【]([^()\\[\\]【】]*)[)\\]】]\\s*$");
+    /** Labels that stand for another recording or edition and are never dropped. */
+    private static final Pattern VERSION_WORD = Pattern.compile(
+            "\\b(live|remix|mix|version|edit|session|acoustic|demo|instrumental|karaoke|re-?master(ed)?|reprise|radio|extended|club|deluxe|bonus)\\b"
+                    + "|版|现场|現場|翻唱|伴奏|纯音乐|純音樂|混音|重制|重製|重录|重錄|母带|母帶|试听|試聽|演唱会|演唱會|电台|電台",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern LATIN = Pattern.compile("[a-zA-Z]");
+
+    /**
+     * A script-foreign trailing annotation only translates the title: "特别的人 (Special Person)" names the
+     * same recording as "特别的人". Version labels ("(Live)", "(iTunes Session)") and same-script notes stay,
+     * so another take is never accepted.
+     */
+    static String aliasBase(String title) {
+        String value = Normalizer.normalize(title == null ? "" : title, Normalizer.Form.NFKC).trim();
+        Matcher matcher = TRAILING_ANNOTATION.matcher(value);
+        if (!matcher.find()) return value;
+        String note = matcher.group(1).trim();
+        String base = value.substring(0, matcher.start()).trim();
+        if (note.isEmpty() || base.isEmpty()) return value;
+        if (VERSION_WORD.matcher(note).find()) return value;
+        if (LATIN.matcher(note).find() == LATIN.matcher(base).find()) return value;
+        return base;
+    }
+
     /** Delimited release-type suffixes only; editions, remasters, regions and volumes stay distinct. */
     private static final Pattern EDITION_TRAILER = Pattern.compile(
             "(?:\\s+[-–—]\\s+|\\s*\\()(?:(?:the\\s+)?\\d{1,2}(?:st|nd|rd|th)?\\s+)?"
@@ -299,6 +325,8 @@ final class AmIdentity {
         if (rated && !albumRating.isEmpty() && !albumRating.equals(evidence)) return false;
         if (rated && (!wanted.isEmpty() && !wanted.equals(evidence) || !supplied.isEmpty() && !supplied.equals(evidence))) return false;
         if (coreTitle(query.title).equals(coreTitle(track.title()))) return true;
+        // A translated alias annotation is not a label: "特别的人 (Special Person)" is the album version.
+        if (normalize(aliasBase(query.title)).equals(normalize(aliasBase(track.title())))) return true;
         // Only a corroborated content-rating annotation can disappear. Recording/language labels survive.
         return !query.album.isEmpty() && rated && (!wanted.isEmpty() || !supplied.isEmpty())
                 && ratingTitleBody(query.title).equals(ratingTitleBody(track.title()));

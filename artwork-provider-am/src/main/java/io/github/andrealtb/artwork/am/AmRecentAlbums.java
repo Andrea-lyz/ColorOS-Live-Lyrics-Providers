@@ -9,12 +9,12 @@ import io.github.andrealtb.artwork.contract.ArtworkQuery;
 import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
 
 /**
- * Local album names the plugin was recently asked for, kept only in its private storage and never
- * logged, so the binding page can offer the exact name the player reports.
+ * Recent player album/song names, kept only in private storage and never logged, for source-specific search.
  */
 final class AmRecentAlbums {
     enum Outcome { MATCHED, BOUND, NO_MOTION, UNMATCHED, FAILED }
-    record Entry(String album, String artist, Outcome outcome) {
+    record Entry(String album, String artist, Outcome outcome, String title) {
+        Entry(String album, String artist, Outcome outcome) { this(album, artist, outcome, ""); }
         boolean sameAlbum(Entry other) {
             return AmIdentity.normalize(album).equals(AmIdentity.normalize(other.album))
                     && AmIdentity.normalizeArtist(artist).equals(AmIdentity.normalizeArtist(other.artist));
@@ -54,7 +54,7 @@ final class AmRecentAlbums {
     }
 
     static void note(Context context, ArtworkQuery query, Outcome outcome) {
-        Entry entry = new Entry(clip(query.album), clip(query.artist), outcome);
+        Entry entry = new Entry(clip(query.album), clip(query.artist), outcome, clip(query.title));
         synchronized (LOCK) {
             List<Entry> entries = load(context), next = note(entries, entry);
             if (next != entries) prefs(context).edit().putString(KEY, encode(next)).apply();
@@ -69,7 +69,7 @@ final class AmRecentAlbums {
         try {
             JSONArray items = new JSONArray();
             for (Entry entry : entries) items.put(new JSONObject().put("album", entry.album()).put("artist", entry.artist())
-                    .put("outcome", entry.outcome().name()));
+                    .put("outcome", entry.outcome().name()).put("title", entry.title()));
             return items.toString();
         } catch (Exception impossible) { throw new IllegalStateException(impossible); }
     }
@@ -83,7 +83,7 @@ final class AmRecentAlbums {
                 if (item == null) continue;
                 try {
                     Entry entry = new Entry(clip(item.optString("album")), clip(item.optString("artist")),
-                            Outcome.valueOf(item.optString("outcome")));
+                            Outcome.valueOf(item.optString("outcome")), clip(item.optString("title")));
                     if (!AmIdentity.normalize(entry.album()).isEmpty()) entries.add(entry);
                 } catch (IllegalArgumentException ignored) { /* unknown outcome from another version */ }
             }

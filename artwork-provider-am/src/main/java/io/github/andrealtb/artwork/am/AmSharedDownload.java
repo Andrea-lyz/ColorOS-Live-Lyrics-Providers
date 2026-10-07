@@ -13,10 +13,15 @@ final class AmSharedDownload {
         final ReentrantLock lock = new ReentrantLock();
         int users;
         AmFailure failure;
+        String failureScope;
     }
     private final Map<String, Entry> entries = new HashMap<>();
 
     <T> T run(String key, AmNetwork.Task task, Runnable waiting, Work<T> work) throws AmFailure {
+        return run(key, key, task, waiting, work);
+    }
+    /** Album files can be shared, while a song-specific source failure belongs only to that song. */
+    <T> T run(String key, String failureScope, AmNetwork.Task task, Runnable waiting, Work<T> work) throws AmFailure {
         Entry entry;
         synchronized (entries) {
             entry = entries.computeIfAbsent(key, ignored -> new Entry());
@@ -31,6 +36,10 @@ final class AmSharedDownload {
                 do { task.check(); locked = entry.lock.tryLock(100, TimeUnit.MILLISECONDS); } while (!locked);
             }
             task.check();
+            if (entry.failure != null && !failureScope.equals(entry.failureScope)
+                    && !entry.failure.reason.equals("upstream_rate_limit")) entry.failure = null;
+            if (entry.failure != null && task.recoveringTransport()
+                    && AmTransportRetry.retryable(entry.failure.status, entry.failure.reason)) entry.failure = null;
             if (entry.failure != null) {
                 AmFailure failure = entry.failure;
                 throw new AmFailure(failure.status, failure.reason, failure.retryMs, failure.detail);
@@ -38,7 +47,10 @@ final class AmSharedDownload {
             try { return work.run(); }
             catch (AmFailure failure) {
                 // A cancelled/expired owner does not prevent a live waiter from doing its own work.
-                if (failure.status != Status.ERROR && !failure.reason.equals("network_deadline")) entry.failure = failure;
+                if (failure.status != Status.ERROR && !failure.reason.equals("network_deadline")) {
+                    entry.failure = failure;
+                    entry.failureScope = failureScope;
+                }
                 throw failure;
             }
         } catch (InterruptedException interrupted) {
