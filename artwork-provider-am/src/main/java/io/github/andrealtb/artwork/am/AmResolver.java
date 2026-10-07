@@ -86,7 +86,8 @@ final class AmResolver {
     private Resolved matched(ArtworkQuery query, AmIdentity.AppleLink link, AmNetwork.Task task) throws AmFailure {
         if (query.artist.isEmpty() || query.durationMs == 0) throw new AmFailure(Status.AMBIGUOUS, "identity_fields_missing");
         String country = link == null ? AmSettings.country(context) : link.country();
-        String key = AmCache.key(query, country);
+        AmIdentity.MatchProfile profile = AmIdentity.MatchProfile.forLevel(AmSettings.matchLevel(context));
+        String key = AmCache.key(query, country, profile);
         AmConnectivity connectivity = AmConnectivity.get(context);
         String networkEpoch = connectivity.token();
         task.check();
@@ -96,7 +97,7 @@ final class AmResolver {
             if (hit.file() != null) {
                 try {
                     Resolved ready = inspect(hit.file(), query);
-                    AmPage.Album owner = verifiedAlbum(query, country, link);
+                    AmPage.Album owner = verifiedAlbum(query, country, link, profile);
                     if (owner != null) {
                         AmCache.Hit association = cache.lookup(AmCache.albumAssetKey(query, country, owner.id()));
                         if (association != null && association.file() != null) {
@@ -110,10 +111,10 @@ final class AmResolver {
             }
         }
         long pausesAtStart = AmPauseDetector.pauses();
-        AmPage.Album known = verifiedAlbum(query, country, link);
+        AmPage.Album known = verifiedAlbum(query, country, link, profile);
         String albumId = known == null ? null : known.id();
         if (known != null) {
-            AmSettings.matching(context, "catalog_cache", known.tracks(), query);
+            AmSettings.matching(context, "catalog_cache", known.tracks(), query, profile);
             Resolved cached = albumVideo(query, country, known.id(), key, task);
             if (cached != null) return cached;
         }
@@ -124,11 +125,12 @@ final class AmResolver {
             AmSettings.trace(context, "ARTWORK_AM_CACHE", "miss");
             if (!AmSettings.online(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "network_policy");
             AmPage.Album album = new AmCatalog((uri, limit) -> network.text(uri, limit, task),
-                    (stage, tracks) -> AmSettings.matching(context, stage, tracks, query),
-                    detail -> AmSettings.trace(context, "ARTWORK_AM_CATALOG", detail)).resolve(query, link, country, known);
+                    (stage, tracks) -> AmSettings.matching(context, stage, tracks, query, profile),
+                    detail -> AmSettings.trace(context, "ARTWORK_AM_CATALOG", detail),
+                    profile).resolve(query, link, country, known);
             task.check();
             albumId = album.id();
-            cache.rememberAlbum(query, country, album);
+            cache.rememberAlbum(query, country, album, profile);
             AmSettings.trace(context, "ARTWORK_AM_MATCH", "unique_track_album_confirmed");
             return download(query, country, album, key, task);
         } catch (AmFailure failure) {
@@ -301,12 +303,12 @@ final class AmResolver {
             return new Resolved(file, asset);
         }
     }
-    private AmPage.Album verifiedAlbum(ArtworkQuery query, String country, AmIdentity.AppleLink link) {
+    private AmPage.Album verifiedAlbum(ArtworkQuery query, String country, AmIdentity.AppleLink link, AmIdentity.MatchProfile profile) {
         AmPage.Album known = cache.album(query, country);
         if (known == null) return null;
         try {
             if (link != null && !link.albumId().isEmpty() && !link.albumId().equals(known.id())) return null;
-            AmIdentity.unique(known.tracks(), query, link == null ? "" : link.songId(), known.id());
+            AmIdentity.unique(known.tracks(), query, link == null ? "" : link.songId(), known.id(), profile);
             return known;
         } catch (AmFailure failure) { return null; }
     }

@@ -18,6 +18,7 @@ final class AmPage {
      * {@code artwork} is an Apple image CDN address for the page's thumbnail, or empty.
      */
     record AlbumHit(String id, String title, String artist, String releaseDay, int trackCount, boolean explicit, String artwork) {}
+    record AlbumCandidate(String id, AmEdition.Info edition) {}
     static final int ARTWORK_PX = 300;
     private static final Pattern ARTWORK_HOST = Pattern.compile("is[0-9]{1,2}-ssl\\.mzstatic\\.com");
     private static final Pattern ARTWORK_SIZE = Pattern.compile("/[0-9]{2,4}x[0-9]{2,4}bb\\.(jpg|png|webp)$");
@@ -129,25 +130,34 @@ final class AmPage {
         return id;
     }
     static List<String> albumIds(String json, String album, String artist) throws AmFailure {
+        return albumCandidates(json, album, artist, AmIdentity.MatchProfile.STANDARD).stream().map(AlbumCandidate::id)
+                .collect(java.util.stream.Collectors.toList());
+    }
+    static List<AlbumCandidate> albumCandidates(String json, String album, String artist, AmIdentity.MatchProfile profile) throws AmFailure {
         try {
             JSONArray results = new JSONObject(json).getJSONArray("results");
             if (results.length() > 250) throw new IllegalArgumentException();
-            java.util.Set<String> matches = new java.util.TreeSet<>();
+            java.util.Map<String, AlbumCandidate> matches = new java.util.TreeMap<>();
             List<AmEdition.Candidate> editions = new ArrayList<>();
             for (int i = 0; i < results.length(); i++) {
                 JSONObject item = results.getJSONObject(i);
+                String want = AmIdentity.normalize(album);
+                AmEdition.Info info = edition(item);
+                boolean sameAlbum = want.isEmpty() || AmIdentity.albumAgrees(album, item.optString("collectionName"), info, profile);
                 if ("collection".equals(item.optString("wrapperType")) && "Album".equals(item.optString("collectionType"))
-                        && !AmIdentity.normalize(album).isEmpty() && AmIdentity.normalize(album).equals(AmIdentity.normalize(item.optString("collectionName")))
+                        && sameAlbum
                         && (AmIdentity.sameArtists(artist, "", item.optString("artistName"), "")
                             || !AmIdentity.primaryArtist(artist).isEmpty()
-                                && AmIdentity.primaryArtist(artist).equals(AmIdentity.primaryArtist(item.optString("artistName"))))) {
+                                && AmIdentity.primaryArtist(artist).equals(AmIdentity.primaryArtist(item.optString("artistName")))
+                            || !want.isEmpty() && AmIdentity.namesOverlap(artist, "", item.optString("artistName"), ""))) {
                     String albumId = id(item, "collectionId");
-                    matches.add(albumId);
-                    editions.add(new AmEdition.Candidate(albumId, item.getString("artistName"), item.getString("collectionName"), edition(item)));
+                    AlbumCandidate old = matches.putIfAbsent(albumId, new AlbumCandidate(albumId, info));
+                    if (old != null && !old.edition().equals(info)) matches.put(albumId, new AlbumCandidate(albumId, AmEdition.Info.UNKNOWN));
+                    editions.add(new AmEdition.Candidate(albumId, item.getString("artistName"), item.getString("collectionName"), info));
                 }
             }
             String preferred = AmEdition.explicitCleanChoice(editions);
-            return preferred == null ? List.copyOf(matches) : List.of(preferred);
+            return preferred == null ? List.copyOf(matches.values()) : List.of(matches.get(preferred));
         } catch (Exception error) { throw new AmFailure(Status.RETRY_LATER, "catalog_schema_changed", 300_000); }
     }
     static List<AlbumHit> albumHits(String json) throws AmFailure {
@@ -230,11 +240,13 @@ final class AmPage {
     static JSONObject snapshot(Album album) throws Exception {
         JSONArray tracks = new JSONArray();
         for (AmIdentity.Track track : album.tracks()) tracks.put(new JSONObject().put("song", track.songId())
-                .put("title", track.title()).put("artist", track.artist()).put("album", track.album()).put("duration", track.durationMs()));
-        return new JSONObject().put("schema", 2).put("id", album.id()).put("master", album.master() == null ? JSONObject.NULL : album.master().toString()).put("tracks", tracks);
+                .put("title", track.title()).put("artist", track.artist()).put("album", track.album()).put("duration", track.durationMs())
+                .put("rating", track.edition().rating()).put("releaseDay", track.edition().releaseDay()).put("trackCount", track.edition().trackCount()));
+        return new JSONObject().put("schema", 3).put("id", album.id()).put("master", album.master() == null ? JSONObject.NULL : album.master().toString())
+                .put("skippedTracks", album.skippedTracks()).put("tracks", tracks);
     }
     static Album snapshot(JSONObject value) throws Exception {
-        if (value.getInt("schema") != 2) throw new IllegalArgumentException();
+        if (value.getInt("schema") != 3) throw new IllegalArgumentException();
         String albumId = id(value, "id");
         URI master = value.isNull("master") ? null : AmHls.mediaUri(URI.create(value.getString("master")));
         JSONArray items = value.getJSONArray("tracks");
@@ -246,8 +258,13 @@ final class AmPage {
             long duration = item.getLong("duration");
             if (title.isEmpty() || artist.isEmpty() || album.isEmpty() || title.length() > 512 || artist.length() > 512
                     || album.length() > 512 || duration <= 0 || duration > 7L * 86400 * 1000) throw new IllegalArgumentException();
-            tracks.add(new AmIdentity.Track(id(item, "song"), albumId, title, artist, album, duration));
+            String rating = item.optString("rating"), releaseDay = item.optString("releaseDay");
+            int trackCount = item.optInt("trackCount");
+            if (rating.length() > 32 || releaseDay.length() > 32 || trackCount < 0 || trackCount > 250) throw new IllegalArgumentException();
+            tracks.add(new AmIdentity.Track(id(item, "song"), albumId, title, artist, album, duration, new AmEdition.Info(rating, releaseDay, trackCount)));
         }
-        return new Album(albumId, List.copyOf(tracks), master);
+        int skipped = value.optInt("skippedTracks");
+        if (skipped < 0 || skipped > 250) throw new IllegalArgumentException();
+        return new Album(albumId, List.copyOf(tracks), master, skipped);
     }
 }

@@ -1,11 +1,14 @@
 # 动态封面 Provider（Dynamic Artwork Provider）
 
-v1.0.2。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
+v1.0.3（versionCode 7）。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
 不注入 Apple Music 或 SystemUI，不进入任何播放器进程。通过 `artwork-contract` v1 向已授权的
 Bridge 返回 `localTestOnly=false` 与完整本地 MP4 的只读 FD。
 
 它是**可选**的独立应用：不安装它时，锁屏仍然是官方静态封面；安装并启用后才会联网匹配动态封面。
 界面默认英文，中文系统显示中文，语言跟随系统。
+
+1.0.3 改善跨平台自动匹配、分档缓存与候选复核，修复 `betty (Explicit)` 的目录候选遗漏和
+CN 手动绑定搜索错用 US 结果。更新说明见 [CHANGELOG.md](CHANGELOG.md)。
 
 1.0.2 随 C17 Artwork Preview1 交付：大小卡共用原生 1080×1080 视频和下载，
 提供默认关闭的本地 TXT 诊断，并区分没有可读样本、读取异常、超限与重封装失败。
@@ -25,11 +28,14 @@ iTunes 候选/精确 lookup（专辑搜索为空时回退同市场 Apple Music �
 
 ## 匹配
 
+严格度、发行类型/版本边界、简繁与合作艺人处理，以及分档缓存和目录回退规则见
+[自动匹配规则与验证边界](../docs/ARTWORK-MATCHING.zh-CN.md)。
+
 - 保留 Unicode/版本信息，用歌曲/艺人/专辑/毫秒时长核对；精确 URL 与查询冲突拒绝。
 - 同名同艺人 Explicit/Clean 发行版按封面等价策略合并，冷查询稳定优先 Explicit，精确 URL 仍优先；其他版本歧义继续拒绝。
-- 多个候选返回 AMBIGUOUS；有界搜索空结果、HTTP 与结构变化不当成永久 NO_MATCH。
+- 合格候选按精确专辑、标题、艺人及当前档位的时长依次排序；仍无法区分的多个发行 ID 返回 AMBIGUOUS，不按动画资源猜选。有界搜索空结果、HTTP 与结构变化不当成永久 NO_MATCH。
 - 缺艺人或时长拒绝；纯歌曲 URL 在地区 lookup 无结果时暂不可用，带 albumId 的链接可直接核对 Web 曲目表。
-- 手动搜索在 iTunes 无专辑结果时读取同市场 Apple Music 网页专辑区；自动匹配在 iTunes 无精确专辑候选时也使用该回退，仍严格核对专辑/艺人及实际曲目表，不静默跨到 US。
+- 手动搜索在 iTunes 无专辑结果时读取同市场 Apple Music 网页专辑区；自动匹配在 iTunes 无精确专辑候选时也使用该回退。CN 目录发现使用 US 目录，专辑页先核对用户市场，仅页面缺失/结构不可读可回退到同一 Adam ID 的 US 页面；曲目不匹配、限流和传输故障不触发市场回退。
 - 网页候选缺少发行日期，不能用于 Explicit/Clean 等价合并；多个精确候选仍返回 AMBIGUOUS。网页结构或市场不符报告解析错误，不冒充搜索为空。
 - 多碟专辑按碟分区的曲目表合并；专辑页解析分步骤记录失败点，单个异常曲目只跳过。
 - 手动绑定：把 Apple Music 专辑绑定到本地专辑名（可限定歌手），命中时跳过曲目核对。绑定只影响展示来源，不修改本地文件或标签。

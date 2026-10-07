@@ -88,6 +88,7 @@ public final class AmArtworkActivity extends Activity {
     private TextView cacheHint;
     private TextView galleryEmpty;
     private TextView marketValue;
+    private TextView matchValue;
     private TextView bridgeState;
     private TextView bridgeAction;
     private ConnectivityManager.NetworkCallback networkCallback;
@@ -383,6 +384,19 @@ public final class AmArtworkActivity extends Activity {
         marketRow.setBackground(AmUi.ripple(this, null, dp(14)));
         marketRow.setOnClickListener(view -> pickMarket());
         card.addView(marketRow);
+        card.addView(AmUi.divider(this));
+        LinearLayout matchTrailing = new LinearLayout(this);
+        matchTrailing.setGravity(Gravity.CENTER_VERTICAL);
+        matchValue = AmUi.chip(this, "", color(R.color.am_purple));
+        matchTrailing.addView(matchValue);
+        matchTrailing.addView(AmUi.icon(this, R.drawable.ic_am_chevron, color(R.color.am_text_tertiary)), new LinearLayout.LayoutParams(dp(20), dp(20)));
+        TextView matchSummary = new TextView(this);
+        matchSummary.setText(R.string.match_level_summary);
+        LinearLayout matchRow = AmUi.row(this, R.drawable.ic_am_tune, color(R.color.am_purple), getString(R.string.match_level_title),
+                matchSummary, matchTrailing);
+        matchRow.setBackground(AmUi.ripple(this, null, dp(14)));
+        matchRow.setOnClickListener(view -> pickMatchLevel());
+        card.addView(matchRow);
         return card;
     }
 
@@ -469,6 +483,7 @@ public final class AmArtworkActivity extends Activity {
         binding = false;
         showSourceState(on, animate);
         refreshMarket();
+        refreshMatchLevel();
         refreshCacheLimit();
         refreshNetwork();
         refreshBridge();
@@ -570,6 +585,35 @@ public final class AmArtworkActivity extends Activity {
         market.value().setText(code.toUpperCase(Locale.ROOT));
         market.detail().setText(countryName(code));
         marketValue.setText(code.toUpperCase(Locale.ROOT));
+    }
+
+    private String matchLevelName(String level) {
+        switch (level) {
+            case "strict": return getString(R.string.match_strict);
+            case "loose": return getString(R.string.match_loose);
+            default: return getString(R.string.match_standard);
+        }
+    }
+
+    private void refreshMatchLevel() {
+        matchValue.setText(matchLevelName(AmSettings.matchLevel(this)));
+    }
+
+    private void pickMatchLevel() {
+        String current = AmSettings.matchLevel(this);
+        String[] labels = { getString(R.string.match_strict), getString(R.string.match_standard), getString(R.string.match_loose) };
+        String[] values = { "strict", "standard", "loose" };
+        int index = "strict".equals(current) ? 0 : "loose".equals(current) ? 2 : 1;
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.match_level_dialog_title)
+                .setSingleChoiceItems(labels, index, (dialog, which) -> {
+                    dialog.dismiss();
+                    AmSettings.prefs(this).edit().putString("matchLevel", values[which]).apply();
+                    refreshMatchLevel();
+                    toast(getString(R.string.match_saved, labels[which]));
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     private static String countryName(String code) {

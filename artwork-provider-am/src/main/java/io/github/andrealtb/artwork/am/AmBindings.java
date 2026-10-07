@@ -20,7 +20,7 @@ final class AmBindings {
     record Binding(String localAlbum, String localArtist, String country, String albumId, String title, String artist) {
         boolean sameLocal(Binding other) {
             return AmIdentity.normalize(localAlbum).equals(AmIdentity.normalize(other.localAlbum))
-                    && AmIdentity.normalize(localArtist).equals(AmIdentity.normalize(other.localArtist));
+                    && AmIdentity.normalizeArtist(localArtist).equals(AmIdentity.normalizeArtist(other.localArtist));
         }
     }
 
@@ -33,9 +33,9 @@ final class AmBindings {
         Binding anyArtist = null;
         for (Binding binding : bindings) {
             if (!album.equals(AmIdentity.normalize(binding.localAlbum()))) continue;
-            String artist = AmIdentity.normalize(binding.localArtist());
+            String artist = AmIdentity.normalizeArtist(binding.localArtist());
             if (artist.isEmpty()) { if (anyArtist == null) anyArtist = binding; continue; }
-            if (artist.equals(AmIdentity.normalize(query.artist))
+            if (artist.equals(AmIdentity.normalizeArtist(query.artist))
                     || AmIdentity.credits(query.artist, query.title).contains(artist)) return binding;
         }
         return anyArtist;

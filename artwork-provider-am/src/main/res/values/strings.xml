@@ -72,6 +72,13 @@
     <string name="market_other_hint">Two-letter code, for example it</string>
     <string name="country_invalid">Enter a two-letter market code</string>
     <string name="market_saved">Market set to %1$s. Applies from the next song.</string>
+    <string name="match_level_title">Match strictness</string>
+    <string name="match_level_summary">How tolerant automatic matching is. Identity rules (wrong artist, album or recording) stay rejected on every level.</string>
+    <string name="match_level_dialog_title">Choose match strictness</string>
+    <string name="match_strict">Strict</string>
+    <string name="match_standard">Standard</string>
+    <string name="match_loose">Loose</string>
+    <string name="match_saved">Strictness set to %1$s. Applies to the next query.</string>
     <string name="section_advanced">Advanced</string>
     <string name="debug">Redacted diagnostics</string>
     <string name="debug_summary">Records matching, downloads and video checks locally (up to about 1 MB). No song text, media IDs, URLs or credentials. Export below after reproducing; no computer needed.</string>

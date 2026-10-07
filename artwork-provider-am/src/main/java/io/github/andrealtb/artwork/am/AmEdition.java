@@ -23,9 +23,9 @@ final class AmEdition {
         if (distinct.size() != 2) return null;
         Candidate a = distinct.firstEntry().getValue(), b = distinct.lastEntry().getValue();
         Info x = a.info(), y = b.info();
-        if (x == null || y == null || AmIdentity.normalize(a.artist()).isEmpty() || AmIdentity.normalize(a.album()).isEmpty()
-                || !AmIdentity.normalize(a.artist()).equals(AmIdentity.normalize(b.artist()))
-                || !AmIdentity.normalize(a.album()).equals(AmIdentity.normalize(b.album()))
+        if (x == null || y == null || AmIdentity.normalizeArtist(a.artist()).isEmpty() || AmIdentity.normalize(a.album()).isEmpty()
+                || !AmIdentity.normalizeArtist(a.artist()).equals(AmIdentity.normalizeArtist(b.artist()))
+                || !AmIdentity.ratingBase(a.album()).equals(AmIdentity.ratingBase(b.album()))
                 || x.releaseDay().isEmpty() || !x.releaseDay().equals(y.releaseDay())
                 || x.trackCount() <= 0 || x.trackCount() != y.trackCount()) return null;
         if ("explicit".equals(x.rating()) && "cleaned".equals(y.rating())) return a.id();

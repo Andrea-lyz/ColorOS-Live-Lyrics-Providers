@@ -68,6 +68,13 @@
     <string name="market_other_hint">两字母代码，如 it</string>
     <string name="country_invalid">请输入两字母市场代码</string>
     <string name="market_saved">已切换到 %1$s，下一首歌起生效</string>
+    <string name="match_level_title">匹配严格度</string>
+    <string name="match_level_summary">自动匹配的容忍范围。歌手/专辑/录音不符在任意档位都会被拒绝。</string>
+    <string name="match_level_dialog_title">选择匹配严格度</string>
+    <string name="match_strict">严格</string>
+    <string name="match_standard">标准</string>
+    <string name="match_loose">宽松</string>
+    <string name="match_saved">已设为 %1$s，下次查询起生效</string>
     <string name="section_advanced">高级</string>
     <string name="debug">脱敏诊断日志</string>
     <string name="debug_summary">记录匹配、下载和视频检查步骤，同时保存在本机（最多约 1 MB）。不含歌曲文字、媒体 ID、链接或凭证。复现后点下方导出，无需电脑。</string>

@@ -10,6 +10,35 @@ public class AmIdentityTest {
     static ArtworkQuery query(String title, String album, int pixels) {
         return new ArtworkQuery(title, "Taylor Swift", album, 231000, "", pixels, pixels, 1080, 1080, 20 * 1024 * 1024);
     }
+    @Test public void matchProfileMovesOnlyDurationAndPrefixThresholds() {
+        var track = new AmIdentity.Track("1", "10", "Style", "Taylor Swift", "1989", 231000);
+        // 15s drift with the exact title + album: rejected on standard, accepted on loose.
+        var drift = new ArtworkQuery("Style", "Taylor Swift", "1989", 231000 + 15000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024);
+        assertFalse(AmIdentity.agrees(track, drift, AmIdentity.MatchProfile.STANDARD));
+        assertTrue(AmIdentity.agrees(track, drift, AmIdentity.MatchProfile.LOOSE));
+        // A different recording stays different on every threshold setting.
+        var edit = new ArtworkQuery("Style (Radio Edit)", "Taylor Swift", "1989", 231000 + 5000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024);
+        assertFalse(AmIdentity.agrees(track, edit, AmIdentity.MatchProfile.STRICT));
+        assertFalse(AmIdentity.agrees(track, edit, AmIdentity.MatchProfile.STANDARD));
+        assertFalse(AmIdentity.agrees(track, edit, AmIdentity.MatchProfile.LOOSE));
+        // A wrong artist is rejected on every level, loose included.
+        var wrong = new AmIdentity.Track("2", "10", "Style", "Someone Else", "1989", 231000);
+        assertFalse(AmIdentity.agrees(wrong, new ArtworkQuery("Style", "Taylor Swift", "1989", 231000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024),
+                AmIdentity.MatchProfile.LOOSE));
+        // Truncated album prefix ratio: 50% passes loose only, 70% passes standard but not strict,
+        // and "1989" vs "1989 (Taylor's Version)" stays apart everywhere.
+        assertFalse(AmIdentity.albumClose("abcdefgh...", "abcdefghijklmnop", AmIdentity.MatchProfile.STANDARD));
+        assertTrue(AmIdentity.albumClose("abcdefgh...", "abcdefghijklmnop", AmIdentity.MatchProfile.LOOSE));
+        assertFalse(AmIdentity.albumClose("abcdefghij…", "abcdefghijklmn", AmIdentity.MatchProfile.STRICT));
+        assertTrue(AmIdentity.albumClose("abcdefghij…", "abcdefghijklmn", AmIdentity.MatchProfile.STANDARD));
+        for (var profile : List.of(AmIdentity.MatchProfile.STRICT, AmIdentity.MatchProfile.STANDARD, AmIdentity.MatchProfile.LOOSE)) {
+            assertFalse(AmIdentity.albumClose("1989", "1989 (Taylor's Version)", profile));
+        }
+        assertSame(AmIdentity.MatchProfile.STRICT, AmIdentity.MatchProfile.forLevel("strict"));
+        assertSame(AmIdentity.MatchProfile.STANDARD, AmIdentity.MatchProfile.forLevel("standard"));
+        assertSame(AmIdentity.MatchProfile.LOOSE, AmIdentity.MatchProfile.forLevel("loose"));
+        assertSame(AmIdentity.MatchProfile.STANDARD, AmIdentity.MatchProfile.forLevel("whatever"));
+    }
     @Test public void sameDurationDoesNotMakeOriginalAndRerecordEquivalent() {
         assertFalse(AmIdentity.agrees(new AmIdentity.Track("1", "10", "Style", "Taylor Swift", "1989", 231000),
                 query("Style (Taylor's Version)", "1989 (Taylor's Version)", 288)));
@@ -72,6 +101,48 @@ public class AmIdentityTest {
         var deluxe = new AmIdentity.Track("2", "20", "Style", "Taylor Swift", "1989 (Deluxe Edition)", 231000);
         assertEquals(original, AmIdentity.unique(List.of(original, deluxe), query("Style", "1989", 288), "", ""));
     }
+    @Test public void ratingAnnotationsRequireCatalogEvidenceAndDoNotEraseEditions() {
+        var explicit = new AmIdentity.Track("1", "10", "Style", "Taylor Swift", "1989 (Explicit)", 231000,
+                new AmEdition.Info("explicit", "2014-10-27", 13));
+        var clean = new AmIdentity.Track("2", "20", "Style", "Taylor Swift", "1989 (Clean)", 231000,
+                new AmEdition.Info("cleaned", "2014-10-27", 13));
+        for (var store : List.of(explicit, clean)) {
+            assertTrue(AmIdentity.agrees(store, query("Style", "1989", 288)));
+        }
+        assertTrue(AmIdentity.agrees(explicit, query("Style", "1989 (Explicit)", 288)));
+        assertFalse(AmIdentity.agrees(clean, query("Style", "1989 (Explicit)", 288)));
+        assertFalse(AmIdentity.albumClose("1989", "1989 (Explicit)"));
+        assertFalse(AmIdentity.albumClose("1989", "1989 explicit"));
+        assertFalse(AmIdentity.albumClose("1989 (Deluxe Edition)", "1989"));
+        assertFalse(AmIdentity.albumClose("1989", "1989 (3am Edition)"));
+        assertFalse(AmIdentity.albumClose("1989", "1989 (Mastered for iTunes)"));
+        assertFalse(AmIdentity.albumClose("1989", "1989 (2024 Remaster)"));
+        assertFalse(AmIdentity.albumClose("1989", "1989 (Taylor's Version)"));
+    }
+    @Test public void verifiedRatingAnnotationIsNotARecordingVersionWildcard() {
+        var explicit = new AmIdentity.Track("1", "10", "Shake It Off (Explicit)", "Taylor Swift", "1989", 231000,
+                new AmEdition.Info("explicit", "2014-10-27", 13));
+        var remix = new AmIdentity.Track("2", "20", "S&M (Remix)", "Rihanna", "Loud", 242000);
+        var remaster = new AmIdentity.Track("3", "30", "Hotel California (2013 Remaster)", "Eagles", "Hotel California", 391000);
+        assertTrue(AmIdentity.agrees(explicit, new ArtworkQuery("Shake It Off", "Taylor Swift", "1989", 231000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        assertFalse(AmIdentity.agrees(remix, new ArtworkQuery("S&M", "Rihanna", "Loud", 242000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        assertFalse(AmIdentity.agrees(remaster, new ArtworkQuery("Hotel California", "Eagles", "Hotel California", 391000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        assertFalse(AmIdentity.agrees(explicit, new ArtworkQuery("Shake It Off", "Taylor Swift", "", 231000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        assertFalse(AmIdentity.agrees(remix, new ArtworkQuery("S&M", "Rihanna", "", 242000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        // A foreign suffix such as Karaoke Version never collapses.
+        var karaoke = new AmIdentity.Track("4", "40", "Shake It Off [Karaoke Version]", "Taylor Swift", "1989", 231000);
+        assertFalse(AmIdentity.agrees(karaoke, new ArtworkQuery("Shake It Off", "Taylor Swift", "1989", 231000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+    }
+    @Test public void multilingualArtistNameCollapsesBehindTheAlbum() {
+        var store = new AmIdentity.Track("1", "10", "晴天", "周杰伦 Jay Chou", "葉惠美", 264000);
+        for (String artist : List.of("Jay Chou", "周杰伦", "周杰伦 Jay Chou")) {
+            assertTrue(artist, AmIdentity.agrees(store, new ArtworkQuery("晴天", artist, "葉惠美", 264000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        }
+        // Without the album a name subset is not trusted.
+        assertFalse(AmIdentity.agrees(store, new ArtworkQuery("晴天", "Jay Chou", "", 264000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        // Unrelated artists share no names.
+        assertFalse(AmIdentity.agrees(store, new ArtworkQuery("晴天", "JJ Lin", "葉惠美", 264000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+    }
     @Test public void missingAlbumWithMultipleEditionsIsAmbiguous() throws Exception {
         try {
             AmIdentity.unique(List.of(new AmIdentity.Track("1", "10", "Style", "Taylor Swift", "1989", 231000),
@@ -83,6 +154,45 @@ public class AmIdentityTest {
         assertEquals("周杰伦 七里香", AmIdentity.normalize("周杰伦《七里香》"));
         assertNotEquals(AmIdentity.normalize("青花瓷"), AmIdentity.normalize("七里香"));
         assertEquals("宇多田ヒカル", AmIdentity.normalize("宇多田ヒカル"));
+    }
+    @Test public void nativeAliasInArtistNameIsDroppedButLatinSuffixStays() {
+        assertEquals("meovv", AmIdentity.normalizeArtist("MEOVV (미야오)"));
+        assertEquals("aespa", AmIdentity.normalizeArtist("aespa (에스파)"));
+        assertEquals("bts", AmIdentity.normalizeArtist("BTS (방탄소년단)"));
+        assertEquals("hoshimachi suisei", AmIdentity.normalizeArtist("Hoshimachi Suisei (星街すいせい)"));
+        assertEquals("1989 explicit", AmIdentity.normalize("1989 (Explicit)"));
+        assertEquals("1989 clean", AmIdentity.normalize("1989 (Clean)"));
+        // Rerecording and digit labels stay.
+        assertEquals("1989 taylor s version", AmIdentity.normalize("1989 (Taylor's Version)"));
+        assertEquals("2024", AmIdentity.normalize("(2024)"));
+    }
+    @Test public void explicitTitleMatchesOnlyItsCorroboratedRatingBehindTheAlbum() {
+        var store = new AmIdentity.Track("1", "10", "Infinite Dream", "Bazzi", "Infinite Dream (Explicit)", 183000,
+                new AmEdition.Info("explicit", "2022-09-16", 19));
+        for (String title : List.of("Infinite Dream (Explicit)", "Infinite Dream")) {
+            assertTrue(title, AmIdentity.agrees(store, new ArtworkQuery(title, "Bazzi", "Infinite Dream (Explicit)", 183000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        }
+        assertFalse(AmIdentity.agrees(store, new ArtworkQuery("Infinite Dream (Clean)", "Bazzi", "Infinite Dream (Explicit)", 183000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        assertFalse(AmIdentity.agrees(store, new ArtworkQuery("Infinite Dream (Explicit)", "Bazzi", "", 183000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        var longTitle = new AmIdentity.Track("2", "20", "There's Always More That I Could Say", "Sigrid", "There's Always More That I Could Say (Explicit)", 232000,
+                new AmEdition.Info("explicit", "2025-03-21", 12));
+        assertTrue(AmIdentity.agrees(longTitle, new ArtworkQuery("There's Always More That I Could Say (Explicit)", "Sigrid",
+                "There's Always More That I Could Say (Explicit)", 232000, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+    }
+    @Test public void albumTypeSuffixAndTruncatedPrefixMatchTheAlbum() {
+        assertEquals("rich man", AmIdentity.editionBase("Rich Man - The 6th Mini Album"));
+        assertEquals("the 4th mini album", AmIdentity.editionBase("The 4th Mini Album")); // a real album title, not a suffix
+        assertTrue(AmIdentity.albumClose("Rich Man - The 6th Mini Al…", "Rich Man - The 6th Mini Album"));
+        assertFalse(AmIdentity.albumClose("Rich Man - The 6th Mini Al", "Rich Man - The 6th Mini Album"));
+        assertTrue(AmIdentity.albumClose("Rich Man", "Rich Man - The 6th Mini Album"));
+        assertFalse(AmIdentity.albumClose("1989", "1989 (Taylor's Version)"));
+        assertFalse(AmIdentity.albumClose("The 4th Mini Album", "1989"));
+    }
+    @Test public void singleAndMiniAlbumTypesMatchAtObservedPublicDurations() {
+        var meovv = new AmIdentity.Track("1", "10", "BURNING UP", "MEOVV (미야오)", "BURNING UP - Single", 169547);
+        assertTrue(AmIdentity.agrees(meovv, new ArtworkQuery("BURNING UP", "MEOVV", "BURNING UP", 169546, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
+        var aespa = new AmIdentity.Track("2", "20", "Rich Man", "aespa (에스파)", "Rich Man - The 6th Mini Album - EP", 197578);
+        assertTrue(AmIdentity.agrees(aespa, new ArtworkQuery("Rich Man", "aespa", "Rich Man - The 6th Mini Album", 197578, "", 288, 288, 1080, 1080, 20 * 1024 * 1024)));
     }
     @Test public void albumSongParameterKeepsBothIdentitiesAndMarket() throws Exception {
         var link = AmIdentity.link("https://music.apple.com/cn/album/album/1713845538?i=1713845746&uo=4");

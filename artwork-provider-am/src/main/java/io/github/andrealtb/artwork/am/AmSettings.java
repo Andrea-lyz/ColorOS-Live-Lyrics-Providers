@@ -22,6 +22,11 @@ final class AmSettings {
         String value = prefs(context).getString("country", "us");
         return value != null && value.matches("[a-zA-Z]{2}") ? value.toLowerCase(Locale.ROOT) : "us";
     }
+    /** Matching strictness: "strict" / "standard" / "loose"; anything unknown falls back to standard. */
+    static String matchLevel(Context context) {
+        String value = prefs(context).getString("matchLevel", "standard");
+        return "strict".equals(value) || "loose".equals(value) ? value : "standard";
+    }
     static boolean online(Context context) {
         if (!enabled(context) || !connected(context)) return false;
         ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
@@ -50,7 +55,11 @@ final class AmSettings {
     }
     static void matching(Context context, String stage, java.util.List<AmIdentity.Track> tracks,
             io.github.andrealtb.artwork.contract.ArtworkQuery query) {
+        matching(context, stage, tracks, query, AmIdentity.MatchProfile.STANDARD);
+    }
+    static void matching(Context context, String stage, java.util.List<AmIdentity.Track> tracks,
+            io.github.andrealtb.artwork.contract.ArtworkQuery query, AmIdentity.MatchProfile profile) {
         if (prefs(context).getBoolean("debug", false)) AmDiagnostics.record(context, "ARTWORK_AM_MATCH_CHECK",
-                "stage=" + stage + " " + AmIdentity.diagnostics(tracks, query));
+                "stage=" + stage + " " + AmIdentity.diagnostics(tracks, query, profile));
     }
 }

@@ -51,7 +51,7 @@ public class AmSearchTest {
         assertTrue(first.artwork().endsWith("/300x300bb.jpg"));
         assertEquals("", first.releaseDay());
     }
-    @Test public void emptyItunesFallsBackWithinSameMarketAndEncodesTerms() throws Exception {
+    @Test public void cnManualSearchUsesSelectedWebStorefrontAndEncodesTerms() throws Exception {
         String html = snapshot();
         List<java.net.URI> calls = new ArrayList<>();
         var hits = AmCatalog.searchAlbums((uri, limit) -> {
@@ -60,10 +60,10 @@ public class AmSearchTest {
             return uri.getHost().equals("itunes.apple.com") ? "{\"results\":[]}" : html;
         }, "Taylor Swift & 1989", "cn");
         assertEquals(21, hits.size());
-        assertEquals(2, calls.size());
-        assertTrue(calls.get(0).getQuery().contains("country=cn"));
-        assertEquals("/cn/search", calls.get(1).getPath());
-        assertTrue(calls.get(1).getRawQuery().contains("%26"));
+        assertEquals(1, calls.size());
+        assertEquals("music.apple.com",calls.get(0).getHost());
+        assertEquals("/cn/search", calls.get(0).getPath());
+        assertTrue(calls.get(0).getRawQuery().contains("%26"));
     }
     @Test public void existingItunesResultsAvoidExtraWebRequest() throws Exception {
         var hits = AmCatalog.searchAlbums((uri, limit) -> {
@@ -93,12 +93,33 @@ public class AmSearchTest {
             fail();
         } catch (AmFailure failure) { assertEquals("network_deadline", failure.reason); }
     }
+    @Test public void unrelatedUsItunesAlbumsCannotHideJayChousCnAlbum() throws Exception {
+        String html;
+        try(var stream=getClass().getResourceAsStream("/cn-jay-search-public.html")) {
+            assertNotNull(stream); html=new String(stream.readAllBytes(),StandardCharsets.UTF_8);
+        }
+        String unrelated="{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":99,"
+                + "\"collectionName\":\"The Very Best of Janet Baker\",\"artistName\":\"Dame Janet Baker\"}]}";
+        var calls=new ArrayList<java.net.URI>();
+        var hits=AmCatalog.searchAlbums((uri,limit)-> { calls.add(uri); return uri.getHost().equals("itunes.apple.com") ? unrelated : html; },
+                "周杰伦 最伟大的作品","cn");
+        assertEquals("1633408719",hits.get(0).id()); assertEquals("最伟大的作品",hits.get(0).title());
+        assertTrue(calls.stream().allMatch(uri->uri.getHost().equals("music.apple.com") && uri.getPath().equals("/cn/search")));
+    }
+    @Test public void emptyOtherStorefrontItunesFallsBackToThatSameStorefront() throws Exception {
+        String html=page(item("10","1989","Taylor Swift")).replace("\"cn\"","\"us\"").replace("/cn/","/us/");
+        var calls=new ArrayList<java.net.URI>();
+        var hits=AmCatalog.searchAlbums((uri,limit)-> { calls.add(uri); return uri.getHost().equals("itunes.apple.com") ? "{\"results\":[]}" : html; },
+                "1989","us");
+        assertEquals("10",hits.get(0).id()); assertEquals(2,calls.size());
+        assertTrue(calls.get(0).getQuery().contains("country=us")); assertEquals("/us/search",calls.get(1).getPath());
+    }
     private AmCatalog catalog(String items) {
         return new AmCatalog((uri, limit) -> {
             if (uri.getHost().equals("itunes.apple.com")) return "{\"results\":[]}";
             if (uri.getPath().equals("/cn/search")) return page(items);
-            assertEquals("/cn/album/-/10", uri.getPath());
-            return AmPageTest.page("null").replace("/us/", "/cn/");
+            assertTrue(uri.getPath(),uri.getPath().equals("/cn/album/-/10") || uri.getPath().equals("/cn/album/-/20"));
+            return AmCatalogTest.albumPage(uri.getPath().endsWith("/20") ? "20" : "10","Style").replace("/us/", "/cn/");
         }, (stage, tracks) -> {});
     }
     @Test public void automaticCnResolutionStillVerifiesActualSongTable() throws Exception {

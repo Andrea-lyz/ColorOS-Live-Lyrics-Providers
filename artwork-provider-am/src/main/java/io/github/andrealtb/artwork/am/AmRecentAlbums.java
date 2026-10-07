@@ -17,7 +17,7 @@ final class AmRecentAlbums {
     record Entry(String album, String artist, Outcome outcome) {
         boolean sameAlbum(Entry other) {
             return AmIdentity.normalize(album).equals(AmIdentity.normalize(other.album))
-                    && AmIdentity.normalize(artist).equals(AmIdentity.normalize(other.artist));
+                    && AmIdentity.normalizeArtist(artist).equals(AmIdentity.normalizeArtist(other.artist));
         }
     }
     static final int MAX = 30;

@@ -1,6 +1,6 @@
 # 动态封面正式版日志流程与状态码
 
-本文对应动态封面 Provider 1.0.2 与 Bridge C17 Artwork Preview1 的源码。
+本文对应动态封面 Provider 1.0.3 源码及其与 Bridge C17 Artwork Preview1 的交互链路。
 动态封面来源是独立应用，来源诊断与 Bridge 调试开关分别控制；版本与资产仍以发布契约和发布台账为准。
 
 ## 用户反馈流程
