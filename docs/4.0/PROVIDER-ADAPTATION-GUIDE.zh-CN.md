@@ -73,7 +73,7 @@ io.github.andrealtb.coloroslyrics.provider.<player>
 - `minSdk=27`，compile/target SDK 跟随根工程，Java/Kotlin 17 bytecode；
 - 唯一的 libxposed API 102 `XposedModule` 入口，API 使用 `compileOnly`，模块 UI 使用 service；
 - `module.prop` 固定 API 102 最低/目标、静态 scope、protective exception mode，并关闭 Hot Reload；
-- 导出的独立调试设置 launcher Activity，使用 libxposed Remote Preferences；
+- 导出的独立调试设置 Activity（`MAIN` + `INFO` + `DEFAULT`，不在桌面显示图标，保留 `getLaunchIntentForPackage` 前门入口），使用 libxposed Remote Preferences；
 - `scope.list` 只包含支持的宿主包；
 - 复用目标播放器 launcher 图标，不拿其他 Provider 图标占位；
 - release 签名统一读取矩阵构建已约定的环境变量。

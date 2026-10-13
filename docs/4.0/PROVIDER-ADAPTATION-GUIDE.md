@@ -77,7 +77,7 @@ Requirements:
 - `minSdk=27`, root compile/target SDK values, Java/Kotlin 17 bytecode;
 - one libxposed API 102 `XposedModule` entry with `compileOnly` API and service-backed module UI;
 - `module.prop` with API 102 minimum/target, static scope, protective exception mode, and Hot Reload disabled;
-- an exported debug-settings launcher activity backed by libxposed Remote Preferences;
+- an exported debug-settings activity (`MAIN` + `INFO` + `DEFAULT`; no desktop icon, keeps the `getLaunchIntentForPackage` front door) backed by libxposed Remote Preferences;
 - `scope.list` containing only supported host packages;
 - the target player's launcher icon, not another Provider's placeholder;
 - release signing from the environment variables already used by the matrix build.
