@@ -12,6 +12,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Work with absolute roots: callers pass workspace-relative paths from CI and Windows hosts.
+$RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+if (-not [string]::IsNullOrWhiteSpace($BridgeRepoRoot)) {
+    if (Test-Path -LiteralPath $BridgeRepoRoot -PathType Container) {
+        $BridgeRepoRoot = (Resolve-Path -LiteralPath $BridgeRepoRoot).Path
+    }
+}
+
 function Assert-Mirror {
     param(
         [bool] $Condition,

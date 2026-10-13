@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.ColorStateList;
 import android.graphics.Insets;
 import android.graphics.Outline;
 import android.graphics.drawable.GradientDrawable;
@@ -28,6 +29,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -39,6 +41,7 @@ import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import io.github.andrealtb.artwork.contract.ArtworkSigningIdentity;
 
 /**
@@ -53,7 +56,7 @@ public final class AmArtworkActivity extends Activity {
     private static final int DOT_ON = 0xFF3DD36B;
     private static final int DOT_OFF = 0xFFB4B3BC;
 
-    private record Tile(View root, FrameLayout badge, TextView value, TextView detail) {}
+    private record Tile(View root, FrameLayout badge, TextView value, TextView detail, TextView status) {}
 
     private final ExecutorService io = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "artwork-am-home");
@@ -102,6 +105,8 @@ public final class AmArtworkActivity extends Activity {
     private boolean resumed;
     private boolean firstShow = true;
     private int cacheGeneration;
+    /** Guards the home-page storefront probe so only the latest check may update the tile. */
+    private int marketProbeGeneration;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -292,8 +297,17 @@ public final class AmArtworkActivity extends Activity {
         root.addView(value, AmUi.marginTop(this, 10));
         TextView detail = AmUi.text(this, "", 12, color(R.color.am_text_tertiary), false);
         detail.setMaxLines(2);
-        root.addView(detail, AmUi.marginTop(this, 2));
-        return new Tile(root, badge, value, detail);
+        // The market tile shows its connectivity state in the free space of this row.
+        TextView status = AmUi.text(this, "", 12, color(R.color.am_text_tertiary), false);
+        status.setVisibility(View.GONE);
+        LinearLayout bottomRow = new LinearLayout(this);
+        bottomRow.setGravity(Gravity.CENTER_VERTICAL);
+        bottomRow.addView(detail, new LinearLayout.LayoutParams(0, AmUi.WRAP, 1f));
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(AmUi.WRAP, AmUi.WRAP);
+        statusParams.setMarginStart(dp(8));
+        bottomRow.addView(status, statusParams);
+        root.addView(bottomRow, AmUi.marginTop(this, 2));
+        return new Tile(root, badge, value, detail, status);
     }
 
     private View outcomeCard() {
@@ -620,6 +634,32 @@ public final class AmArtworkActivity extends Activity {
         market.value().setText(code.toUpperCase(Locale.ROOT));
         market.detail().setText(countryName(code));
         marketValue.setText(code.toUpperCase(Locale.ROOT));
+        probeMarket(code);
+    }
+
+    /** Every home-page open checks the selected storefront once; only the newest check may report. */
+    private void probeMarket(String code) {
+        int generation = ++marketProbeGeneration;
+        market.status().setVisibility(View.VISIBLE);
+        market.status().setText("…");
+        market.status().setTextColor(color(R.color.am_text_tertiary));
+        AmMarketProbe.worker().execute(() -> {
+            AmMarketProbe.Result result = AmMarketProbe.measure(code);
+            runOnUiThread(() -> {
+                if (isDestroyed() || generation != marketProbeGeneration) return;
+                showMarketResult(code, market.status(), result);
+            });
+        });
+    }
+
+    /** Green latency or red timeout, shared by the market tile and the dialog rows. */
+    private void showMarketResult(String code, TextView view, AmMarketProbe.Result result) {
+        view.setText(result.reachable()
+                ? getString(R.string.market_probe_latency, result.latencyMs())
+                : getString(R.string.market_probe_timeout));
+        view.setTextColor(color(result.reachable() ? R.color.am_good : R.color.am_bad));
+        AmSettings.trace(this, "ARTWORK_AM_MARKET_PROBE", "market=" + code + " reachable=" + result.reachable()
+                + " elapsedMs=" + result.latencyMs());
     }
 
     private String matchLevelName(String level) {
@@ -663,18 +703,60 @@ public final class AmArtworkActivity extends Activity {
         String current = AmSettings.country(this);
         List<String> codes = new ArrayList<>(List.of(MARKETS));
         if (!codes.contains(current)) codes.add(0, current);
-        String[] labels = new String[codes.size() + 1];
-        for (int i = 0; i < codes.size(); i++) labels[i] = codes.get(i).toUpperCase(Locale.ROOT) + " · " + countryName(codes.get(i));
-        labels[codes.size()] = getString(R.string.market_other);
-        new AlertDialog.Builder(this)
+        List<TextView> statuses = new ArrayList<>();
+        List<View> rows = new ArrayList<>();
+        LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        for (String code : codes) {
+            TextView status = AmUi.text(this, "…", 12.5f, color(R.color.am_text_tertiary), false);
+            statuses.add(status);
+            View row = marketDialogRow(code.toUpperCase(Locale.ROOT) + " · " + countryName(code), code.equals(current), status);
+            rows.add(row);
+            list.addView(row, new LinearLayout.LayoutParams(AmUi.MATCH, AmUi.WRAP));
+        }
+        View other = marketDialogRow(getString(R.string.market_other), false, null);
+        list.addView(other, new LinearLayout.LayoutParams(AmUi.MATCH, AmUi.WRAP));
+        ScrollView scroller = new ScrollView(this);
+        scroller.addView(list, new FrameLayout.LayoutParams(AmUi.MATCH, AmUi.WRAP));
+        AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle(R.string.market_dialog_title)
-                .setSingleChoiceItems(labels, codes.indexOf(current), (dialog, which) -> {
-                    dialog.dismiss();
-                    if (which == codes.size()) customMarket();
-                    else saveMarket(codes.get(which));
-                })
+                .setView(scroller)
                 .setNegativeButton(android.R.string.cancel, null)
-                .show();
+                .create();
+        for (int i = 0; i < codes.size(); i++) {
+            String code = codes.get(i);
+            rows.get(i).setOnClickListener(view -> { dialog.dismiss(); saveMarket(code); });
+        }
+        other.setOnClickListener(view -> { dialog.dismiss(); customMarket(); });
+        // The checks follow list order while this page is open; selecting a market stays immediate.
+        AtomicBoolean stopped = new AtomicBoolean();
+        dialog.setOnDismissListener(dismissed -> stopped.set(true));
+        dialog.show();
+        AmMarketProbe.worker().execute(() -> AmMarketProbe.sequence(codes, stopped::get,
+                (index, result) -> runOnUiThread(() -> {
+                    if (stopped.get() || isDestroyed()) return;
+                    showMarketResult(codes.get(index), statuses.get(index), result);
+                })));
+    }
+
+    /** One radio row of the market dialog; the status slot is filled only for actual markets. */
+    private View marketDialogRow(String label, boolean checked, TextView status) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(16), dp(10), dp(20), dp(10));
+        row.setBackground(AmUi.ripple(this, null, dp(12)));
+        RadioButton radio = new RadioButton(this);
+        radio.setClickable(false);
+        radio.setFocusable(false);
+        radio.setChecked(checked);
+        radio.setButtonTintList(ColorStateList.valueOf(color(R.color.am_accent)));
+        row.addView(radio);
+        TextView name = AmUi.text(this, label, 16, color(R.color.am_text), false);
+        LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(0, AmUi.WRAP, 1f);
+        nameParams.setMarginStart(dp(4));
+        row.addView(name, nameParams);
+        if (status != null) row.addView(status);
+        return row;
     }
 
     private void customMarket() {

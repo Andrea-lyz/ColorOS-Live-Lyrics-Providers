@@ -68,6 +68,8 @@
     <string name="market_other_hint">两字母代码，如 it</string>
     <string name="country_invalid">请输入两字母市场代码</string>
     <string name="market_saved">已切换到 %1$s，下一首歌起生效</string>
+    <string name="market_probe_latency">%1$d ms</string>
+    <string name="market_probe_timeout">Timeout</string>
     <string name="match_level_title">匹配严格度</string>
     <string name="match_level_summary">自动匹配的容忍范围。歌手/专辑/录音不符在任意档位都会被拒绝。</string>
     <string name="match_level_dialog_title">选择匹配严格度</string>

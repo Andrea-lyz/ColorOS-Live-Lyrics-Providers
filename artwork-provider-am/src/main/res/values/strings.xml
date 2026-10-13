@@ -72,6 +72,8 @@
     <string name="market_other_hint">Two-letter code, for example it</string>
     <string name="country_invalid">Enter a two-letter market code</string>
     <string name="market_saved">Market set to %1$s. Applies from the next song.</string>
+    <string name="market_probe_latency">%1$d ms</string>
+    <string name="market_probe_timeout">Timeout</string>
     <string name="match_level_title">Match strictness</string>
     <string name="match_level_summary">How tolerant automatic matching is. Identity rules (wrong artist, album or recording) stay rejected on every level.</string>
     <string name="match_level_dialog_title">Choose match strictness</string>
