@@ -65,7 +65,7 @@ KuGou and KuGou Lite, NetEase Cloud Music and its Honor build) for manual select
 page; only KuWo stays unavailable. **Enable only one Provider per player**: use either its dedicated
 Provider or the Universal Provider. With both on, each writes `lyricInfo` and they overwrite each other.
 
-Providers no longer show a home-screen icon (from 4.5.0); after installing the APK, open **Universal Player Provider** from the LSPosed module list. After an update, the old icon disappears once the launcher restarts. In its settings: select target apps on the Players page,
+After installing the APK, open **Universal Player Provider**: select target apps on the Players page,
 set lyric-source priority on Sources, and enable word timing, translations, raw lyrics, or sanitized
 diagnostics as needed. The module preserves existing host metadata and appends standard
 `MediaMetadata["lyricInfo"]` only to a selected active MediaSession. ColorOS SystemUI can consume it

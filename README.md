@@ -60,7 +60,7 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 可在“播放器”页手动选择；目前仅酷我仍不可选。**同一播放器只开一个 Provider**：它的专属 Provider
 与通用 Provider 二选一，同时开启时两者都会写入 `lyricInfo` 而互相覆盖。
 
-Provider 不在桌面显示图标（4.5.0 起）；安装 APK 后在 LSPosed 模块列表中点开 **Universal Player Provider** 进入设置；覆盖更新后，旧桌面图标需重启桌面（启动器）才会消失。在“播放器”页选择目标 App，在“来源”页调整歌词源
+安装 APK 后打开 **Universal Player Provider**：在“播放器”页选择目标 App，在“来源”页调整歌词源
 优先级，并按需打开逐字、翻译、原始歌词和脱敏诊断。模块会保留宿主已有 metadata，仅向选中播放器
 当前活跃 MediaSession 附加标准 `MediaMetadata["lyricInfo"]`。它可单独供 ColorOS SystemUI 消费；
 安装 Bridge 后，Bridge 仍只负责 SystemUI 的渲染、AOD 和翻译控制增强。
