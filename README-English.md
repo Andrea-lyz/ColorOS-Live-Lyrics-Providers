@@ -50,7 +50,7 @@ the Bridge five-slot control according to player-specific evidence. QQ Music HD 
 
 ## Universal Player Provider
 
-Universal Player Provider (`Provider-Universal 1.1.1 (3)`) is for players without a dedicated
+Universal Player Provider (`Provider-Universal 1.1.2 (4)`) is for players without a dedicated
 adapter that still create a standard Android `MediaSession`. It has static scope only in
 `system_server` and receives an explicit target-package list from its settings app; unselected music,
 video, and other media apps are never observed, queried for lyrics, or written with `lyricInfo`.
@@ -60,7 +60,12 @@ no longer has the synthetic `this$0` field and holds `mRecord` (a `WeakReference
 and earlier threw `NoSuchFieldException` and the enabled module answered no player at all. 1.1.1
 resolves the field by name first and falls back to its type; ColorOS 16 and earlier are unchanged.
 
-After installing the APK, open **Universal Player Provider**: select target apps on the Players page,
+1.1.2 opens the official players that already have a dedicated Provider (HeyTap Music, QQ Music,
+KuGou and KuGou Lite, NetEase Cloud Music and its Honor build) for manual selection on the Players
+page; only KuWo stays unavailable. **Enable only one Provider per player**: use either its dedicated
+Provider or the Universal Provider. With both on, each writes `lyricInfo` and they overwrite each other.
+
+Providers no longer show a home-screen icon (from 4.5.0); after installing the APK, open **Universal Player Provider** from the LSPosed module list. After an update, the old icon disappears once the launcher restarts. In its settings: select target apps on the Players page,
 set lyric-source priority on Sources, and enable word timing, translations, raw lyrics, or sanitized
 diagnostics as needed. The module preserves existing host metadata and appends standard
 `MediaMetadata["lyricInfo"]` only to a selected active MediaSession. ColorOS SystemUI can consume it
@@ -152,9 +157,11 @@ part of the v5 lyric matrix above. Without it the lock screen keeps the official
   then pick and authorize it in the Bridge under "Settings → Dynamic artwork".
 - Fully independent of the lyric Providers: install, update, or remove it on its own; the lyric
   path is unaffected.
-- Source version 1.0.4 (versionCode 8), signed with the same release key as the lyric Providers. It is
-  published as its own asset and does not enter the Provider bundle.
-- NetEase requires opt-in and QR sign-in, with a separate search field and cover thumbnails. Native 1280 video needs the paired C17 Artwork Preview2 Bridge.
+- Source version 1.0.5 (versionCode 9), signed with the same release key as the lyric Providers. From
+  Bridge 4.5.0 it ships with the formal release as its own asset and does not enter the Provider bundle.
+- The settings page can test reachability of the Apple Music storefront and shows the latency or a
+  timeout, so you can tell whether the network can reach the source.
+- NetEase requires opt-in and QR sign-in, with a separate search field and cover thumbnails. Native 1280 video needs Bridge 4.5.0 or later.
 - Source chain and development entry point: [artwork-provider-am/README.md](artwork-provider-am/README.md).
 
 `artwork-contract/` mirrors the protocol module of the same name in the Bridge repository; files

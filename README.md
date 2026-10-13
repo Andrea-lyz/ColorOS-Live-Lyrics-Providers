@@ -47,7 +47,7 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 
 ## 通用播放器 Provider
 
-通用播放器 Provider（`Provider-Universal 1.1.1 (3)`）面向没有专属适配、但会创建标准 Android
+通用播放器 Provider（`Provider-Universal 1.1.2 (4)`）面向没有专属适配、但会创建标准 Android
 `MediaSession` 的播放器。它以静态 scope 仅运行在 `system_server`，从设置 App 同步用户明确选择的
 目标包；没有被选择的音乐、视频和其他媒体 App 不会被观察、联网取词或写入 `lyricInfo`。
 
@@ -56,7 +56,11 @@ Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用�
 `this$0` 抛 `NoSuchFieldException`，模块虽已启用但对所有播放器零响应。1.1.1 按名逐级解析并
 按字段类型兜底，ColorOS 16 及更早行为不变。
 
-安装 APK 后打开 **Universal Player Provider**：在“播放器”页选择目标 App，在“来源”页调整歌词源
+1.1.2 放开已有专属 Provider 的官方播放器（欢太音乐、QQ 音乐、酷狗及概念版、网易云及荣耀版），
+可在“播放器”页手动选择；目前仅酷我仍不可选。**同一播放器只开一个 Provider**：它的专属 Provider
+与通用 Provider 二选一，同时开启时两者都会写入 `lyricInfo` 而互相覆盖。
+
+Provider 不在桌面显示图标（4.5.0 起）；安装 APK 后在 LSPosed 模块列表中点开 **Universal Player Provider** 进入设置；覆盖更新后，旧桌面图标需重启桌面（启动器）才会消失。在“播放器”页选择目标 App，在“来源”页调整歌词源
 优先级，并按需打开逐字、翻译、原始歌词和脱敏诊断。模块会保留宿主已有 metadata，仅向选中播放器
 当前活跃 MediaSession 附加标准 `MediaMetadata["lyricInfo"]`。它可单独供 ColorOS SystemUI 消费；
 安装 Bridge 后，Bridge 仍只负责 SystemUI 的渲染、AOD 和翻译控制增强。
@@ -151,9 +155,10 @@ v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了�
 - 首次使用：在应用内打开来源（默认关闭，默认仅非计费网络），再到 Bridge 的
   「设置 → 动态封面」中选择并授权它。
 - 与歌词 Provider 完全独立：可单独安装、更新、卸载，歌词链路不受影响。
-- 源码版本 1.0.4（versionCode 8），使用与歌词 Provider 相同的发布签名；
-  正式发布时作为独立资产提供，不进入 Provider bundle。
-- 网易云来源需单独开启并扫码登录；提供独立搜索框和封面缩略图。1280 原始视频需配套 C17 Artwork Preview2 Bridge。
+- 源码版本 1.0.5（versionCode 9），使用与歌词 Provider 相同的发布签名；自 Bridge 4.5.0 起
+  随正式版作为独立资产提供，不进入 Provider bundle。
+- 设置页可测试 Apple Music 商店的连通性，显示延迟或超时，便于判断网络是否能访问来源。
+- 网易云来源需单独开启并扫码登录；提供独立搜索框和封面缩略图。1280 原始视频需要 Bridge 4.5.0 或更高版本。
 - 开发入口与来源链路见 [artwork-provider-am/README.md](artwork-provider-am/README.md)。
 
 `artwork-contract/` 是 Bridge 仓库同名协议模块的镜像，`src/` 必须与其逐字节一致；
