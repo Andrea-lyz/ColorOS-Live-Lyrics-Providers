@@ -18,11 +18,11 @@ class UniversalBridgeBindingNotifierTest {
     }
 
     @Test
-    fun payloadDropsBlockedOfficialAndSpecialPlayers() {
+    fun payloadDropsOnlyKuwo() {
         val extras = UniversalBridgeBindingNotifier.boundPackageList(
             setOf("com.salt.music", "com.tencent.qqmusic", "cn.kuwo.player", "remix.myplayer")
         )
-        assertEquals(listOf("com.salt.music", "remix.myplayer").sorted(), extras.sorted())
+        assertEquals(listOf("com.salt.music", "com.tencent.qqmusic", "remix.myplayer").sorted(), extras.sorted())
     }
 }
 

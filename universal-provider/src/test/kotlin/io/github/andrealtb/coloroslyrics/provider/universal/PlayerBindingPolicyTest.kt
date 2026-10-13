@@ -2,16 +2,18 @@ package io.github.andrealtb.coloroslyrics.provider.universal
 
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PlayerBindingPolicyTest {
     @Test
-    fun blocksOfficialAndSpecialPlayers() {
-        assertTrue(PlayerBindingPolicy.isBlocked("com.tencent.qqmusic"))
-        assertTrue(PlayerBindingPolicy.isBlocked("com.kugou.android.lite"))
+    fun blocksOnlyKuwo() {
         assertTrue(PlayerBindingPolicy.isBlocked("cn.kuwo.player"))
-        assertEquals("禁用（已有官方 Provider）", PlayerBindingPolicy.blockReason("com.heytap.music"))
         assertEquals("禁用（需专项适配）", PlayerBindingPolicy.blockReason("cn.kuwo.player"))
+        assertFalse(PlayerBindingPolicy.isBlocked("com.tencent.qqmusic"))
+        assertFalse(PlayerBindingPolicy.isBlocked("com.kugou.android.lite"))
+        assertNull(PlayerBindingPolicy.blockReason("com.heytap.music"))
     }
 
     @Test
@@ -19,7 +21,6 @@ class PlayerBindingPolicyTest {
         val cleaned = PlayerBindingPolicy.sanitize(
             setOf("com.salt.music", "com.netease.cloudmusic", "cn.kuwo.player", "com.spotify.music")
         )
-        assertEquals(setOf("com.salt.music", "com.spotify.music"), cleaned)
+        assertEquals(setOf("com.salt.music", "com.netease.cloudmusic", "com.spotify.music"), cleaned)
     }
 }
-
