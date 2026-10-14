@@ -157,8 +157,13 @@ part of the v5 lyric matrix above. Without it the lock screen keeps the official
   then pick and authorize it in the Bridge under "Settings → Dynamic artwork".
 - Fully independent of the lyric Providers: install, update, or remove it on its own; the lyric
   path is unaffected.
-- Source version 1.0.5 (versionCode 9), signed with the same release key as the lyric Providers. From
+- Source version 1.0.6 (versionCode 10), signed with the same release key as the lyric Providers. From
   Bridge 4.5.0 it ships with the formal release as its own asset and does not enter the Provider bundle.
+- 1.0.6 (with Bridge 4.5.1): the manual binding page can import your own video as a local album's motion
+  cover, keeping a square 1080 SDR H.264 picture as is and centre-cropping and compressing anything else to
+  1080; manual search reads the selected storefront's Apple Music album shelf; same-titled editions get a
+  "Several editions" status and an automatic pick at Loose; symbol-named albums such as `=` and `÷ (Deluxe)`
+  bind and stay apart.
 - The settings page can test reachability of the Apple Music storefront and shows the latency or a
   timeout, so you can tell whether the network can reach the source.
 - NetEase requires opt-in and QR sign-in, with a separate search field and cover thumbnails. Native 1280 video needs Bridge 4.5.0 or later.

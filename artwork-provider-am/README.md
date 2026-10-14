@@ -1,11 +1,15 @@
 # 动态封面 Provider（Dynamic Artwork Provider）
 
-v1.0.4（versionCode 8）。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
+v1.0.6（versionCode 10）。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
 不注入 Apple Music 或 SystemUI，不进入任何播放器进程。通过 `artwork-contract` v1 向已授权的
 Bridge 返回 `localTestOnly=false` 与完整本地 MP4 的只读 FD。
 
 它是**可选**的独立应用：不安装它时，锁屏仍然是官方静态封面；安装并启用后才会联网匹配动态封面。
 界面默认英文，中文系统显示中文，语言跟随系统。
+
+1.0.6 随 Bridge v4.5.1 发布：手动绑定页新增本地视频导入（方形 1080 SDR H.264 保留原画质，其余居中裁剪并压缩到 1080，
+按内容哈希私有保存），手动搜索改读所选市场的 Apple Music 网页专辑区，同名多版本新增“多个版本”状态与宽松档自动选择，
+符号名专辑可绑定且互不串扰，匹配身份重构为具名折叠与单一取舍入口。1.0.5 随 v4.5.0 首次进入正式版。
 
 1.0.4 随 C17 Artwork Preview2 交付，增加网易云官方动态封面：来源默认关闭，开启后用官方客户端扫码登录自己的账号。
 自动匹配并发查找 AM 与已启用且已登录的网易云，优先使用 AM；只有 AM 最终失败才下载网易云视频。手动搜索使用独立 AM/网易云输入框、按钮和结果；网易云框仅在来源开启时显示，支持完整网易云单曲分享文本。

@@ -1,6 +1,6 @@
-# 未发布 / Unreleased
+# 1.0.6
 
-1.0.5 已随 v4.5.0 发布，以下改动不在其中。1.0.5 shipped with v4.5.0; the changes below are not part of it.
+随 Bridge v4.5.1 发布（versionCode 10）。Ships with Bridge v4.5.1 (versionCode 10).
 
 ## 简体中文
 
