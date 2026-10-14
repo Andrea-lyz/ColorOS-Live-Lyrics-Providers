@@ -43,6 +43,7 @@
     <string name="outcome_bound">已绑定</string>
     <string name="outcome_no_motion">无动态封面</string>
     <string name="outcome_unmatched">未匹配</string>
+    <string name="outcome_editions">多个版本</string>
     <string name="outcome_failed">获取失败</string>
     <string name="cache_title">动态封面缓存</string>
     <string name="cache_usage">已用 %1$s，上限 %2$s</string>
@@ -71,7 +72,7 @@
     <string name="market_probe_latency">%1$d ms</string>
     <string name="market_probe_timeout">Timeout</string>
     <string name="match_level_title">匹配严格度</string>
-    <string name="match_level_summary">自动匹配的容忍范围。歌手/专辑/录音不符在任意档位都会被拒绝。</string>
+    <string name="match_level_summary">自动匹配的容忍范围。歌手/专辑/录音不符在任意档位都会被拒绝。宽松还会在同名专辑的多个版本中自动选一个；严格和标准交由手动绑定选择。</string>
     <string name="match_level_dialog_title">选择匹配严格度</string>
     <string name="match_strict">严格</string>
     <string name="match_standard">标准</string>
@@ -137,5 +138,6 @@
     <string name="binding_recent_hint">点按记录，AM 填入专辑名，网易云填入曲目名</string>
     <string name="binding_recent_none">暂无记录。启用来源并播放音乐后会在这里列出。</string>
     <string name="binding_recent_picked">已按来源填入搜索词，可分别搜索</string>
+    <string name="binding_recent_editions">该专辑在 Apple Music 有多个版本。从结果中选一个绑定；或将匹配严格度改为宽松，自动选择。</string>
     <string name="binding_recent_clear">清除</string>
 </resources>

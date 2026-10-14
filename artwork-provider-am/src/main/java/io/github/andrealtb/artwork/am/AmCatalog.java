@@ -15,6 +15,7 @@ final class AmCatalog {
     private final BiConsumer<String, List<AmIdentity.Track>> diagnostic;
     private final java.util.function.Consumer<String> discovery;
     private final AmIdentity.MatchProfile profile;
+    private boolean settledEdition;
     AmCatalog(Fetch fetch, BiConsumer<String, List<AmIdentity.Track>> diagnostic) { this(fetch, diagnostic, detail -> {}); }
     AmCatalog(Fetch fetch, BiConsumer<String, List<AmIdentity.Track>> diagnostic, java.util.function.Consumer<String> discovery) {
         this(fetch, diagnostic, discovery, AmIdentity.MatchProfile.STANDARD);
@@ -23,7 +24,13 @@ final class AmCatalog {
             AmIdentity.MatchProfile profile) {
         this.fetch = fetch; this.diagnostic = diagnostic; this.discovery = discovery; this.profile = profile;
     }
+    /**
+     * True when the last {@link #resolve} picked one of several same-titled editions. That pick is a
+     * loose-level decision, not a fact about the album name, so it must not answer other levels.
+     */
+    boolean settledEdition() { return settledEdition; }
     AmPage.Album resolve(ArtworkQuery query, AmIdentity.AppleLink link, String country, AmPage.Album known) throws AmFailure {
+        settledEdition = false;
         if (known != null && (link == null || link.albumId().isEmpty() || link.albumId().equals(known.id()))) {
             return verify(known, query, link == null ? "" : link.songId(), "catalog_cache");
         }
@@ -65,8 +72,11 @@ final class AmCatalog {
         try { selected = AmIdentity.unique(tracks, query, "", "", profile); }
         catch (AmFailure failure) {
             // Other tracks may reveal an album hidden from the album search (e.g. an Explicit
-            // release). Reuse that evidence once; do not repeat either catalog search.
-            if (!failure.reason.equals("catalog_match_unconfirmed") || discovered.isEmpty()) throw failure;
+            // release). Reuse that evidence once; do not repeat either catalog search. The same
+            // evidence lets the loose level verify tied same-titled editions and settle the tie.
+            boolean hidden = failure.reason.equals("catalog_match_unconfirmed") && !discovered.isEmpty();
+            boolean editions = profile.settlesEditions && failure.reason.equals("multiple_catalog_matches") && discovered.size() > 1;
+            if (!hidden && !editions) throw failure;
             return verifyAlbums(List.copyOf(discovered.values()), query, country, "");
         }
         return verified(selected.albumId(), country, query, selected.songId(), "web_song_album", selected.edition());
@@ -107,10 +117,32 @@ final class AmCatalog {
                 if (!failure.reason.equals("catalog_match_unconfirmed")) unresolved = failure;
             }
         }
-        if (confirmed.size() > 1) throw new AmFailure(Status.AMBIGUOUS, "multiple_album_matches");
+        if (confirmed.size() > 1) {
+            // Strict and standard report the tie so the user binds an edition. Loose settles
+            // same-titled editions, but only from every candidate's complete table: an unread one
+            // could be the edition the rule prefers, and the choice must not depend on a failure.
+            if (profile.settlesEditions && unresolved != null) throw unresolved;
+            AmPage.Album edition = profile.settlesEditions ? sameTitleEdition(confirmed, query, songId) : null;
+            discovery.accept("stage=album_tie confirmed=" + confirmed.size() + " settled=" + (edition != null));
+            if (edition == null) throw new AmFailure(Status.AMBIGUOUS, "multiple_album_matches");
+            settledEdition = true;
+            return edition;
+        }
         if (unresolved != null) throw unresolved;
         if (confirmed.isEmpty()) throw new AmFailure(Status.RETRY_LATER, "catalog_match_unconfirmed", 60_000);
         return confirmed.get(0);
+    }
+    private AmPage.Album sameTitleEdition(List<AmPage.Album> albums, ArtworkQuery query, String songId) throws AmFailure {
+        java.util.ArrayList<AmEdition.Candidate> editions = new java.util.ArrayList<>();
+        for (AmPage.Album album : albums) {
+            // Each table already confirmed this track; its credit and rating describe the edition.
+            AmIdentity.Track track = AmIdentity.unique(album.tracks(), query, songId, album.id(), profile);
+            editions.add(new AmEdition.Candidate(album.id(), track.artist(), track.album(),
+                    new AmEdition.Info(track.edition().rating(), "", album.tracks().size())));
+        }
+        String chosen = AmEdition.choose(editions, true);
+        for (AmPage.Album album : albums) if (album.id().equals(chosen)) return album;
+        return null;
     }
     private void rememberAlbums(List<AmIdentity.Track> tracks, ArtworkQuery query,
             java.util.Map<String, AmPage.AlbumCandidate> albums) throws AmFailure {
@@ -160,12 +192,27 @@ final class AmCatalog {
         return List.copyOf(ids.values());
     }
     /** iTunes can return HTTP 200 with no music in a storefront that Apple Music serves (CN). */
+    /**
+     * Manual binding lists the selected storefront's own Apple Music search shelf. The iTunes album
+     * index is not a superset of it: it can lack a release outright (Lady Gaga's MAYHEM) while still
+     * answering with other artists' albums of the same name, so nothing in its results reveals the
+     * gap. CN's iTunes music catalog is empty and US hits must not stand in for it, so CN uses the
+     * shelf alone; elsewhere iTunes answers only when the shelf is empty or unreadable.
+     */
     static List<AmPage.AlbumHit> searchAlbums(Fetch fetch, String term, String country) throws AmFailure {
-        // Manual binding searches the selected storefront. CN's iTunes music catalog is not a
-        // substitute for the CN Apple Music page, and unrelated US hits must not suppress it.
         if (country.equals("cn")) return webAlbums(fetch, term, country);
+        AmFailure shelf = null;
+        try {
+            List<AmPage.AlbumHit> hits = webAlbums(fetch, term, country);
+            if (!hits.isEmpty()) return hits;
+        } catch (AmFailure failure) {
+            if (failure.status == Status.ERROR || failure.status == Status.NETWORK_BLOCKED) throw failure;
+            shelf = failure;
+        }
         List<AmPage.AlbumHit> hits = AmPage.albumHits(fetch.text(albumSearchUri(term, country), 2 * 1024 * 1024));
-        return hits.isEmpty() ? webAlbums(fetch, term, country) : hits;
+        // An unreadable shelf with nothing from iTunes is a failure, never an empty search.
+        if (hits.isEmpty() && shelf != null) throw shelf;
+        return hits;
     }
     private static List<AmPage.AlbumHit> webAlbums(Fetch fetch, String term, String country) throws AmFailure {
         URI uri = URI.create("https://music.apple.com/" + country + "/search?term=" + encode(term));

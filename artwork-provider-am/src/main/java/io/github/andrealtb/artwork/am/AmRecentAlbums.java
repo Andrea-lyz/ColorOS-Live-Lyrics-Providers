@@ -12,7 +12,8 @@ import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
  * Recent player album/song names, kept only in private storage and never logged, for source-specific search.
  */
 final class AmRecentAlbums {
-    enum Outcome { MATCHED, BOUND, NO_MOTION, UNMATCHED, FAILED }
+    /** {@code EDITIONS}: several releases verified and this level leaves the choice to a binding. */
+    enum Outcome { MATCHED, BOUND, NO_MOTION, UNMATCHED, EDITIONS, FAILED }
     record Entry(String album, String artist, Outcome outcome, String title) {
         Entry(String album, String artist, Outcome outcome) { this(album, artist, outcome, ""); }
         boolean sameAlbum(Entry other) {
@@ -36,7 +37,10 @@ final class AmRecentAlbums {
         return switch (failure.status) {
             case NO_MOTION -> Outcome.NO_MOTION;
             case UNSUPPORTED -> failure.reason.equals("no_square_motion_asset") ? Outcome.NO_MOTION : Outcome.FAILED;
-            case NO_MATCH, AMBIGUOUS -> Outcome.UNMATCHED;
+            case NO_MATCH -> Outcome.UNMATCHED;
+            // A tie between releases is found, not missed: say so, so the user binds one.
+            case AMBIGUOUS -> failure.reason.equals("multiple_album_matches")
+                    || failure.reason.equals("multiple_catalog_matches") ? Outcome.EDITIONS : Outcome.UNMATCHED;
             case RETRY_LATER -> failure.reason.equals("catalog_match_unconfirmed")
                     || failure.reason.equals("catalog_album_unconfirmed") ? Outcome.UNMATCHED : Outcome.FAILED;
             default -> Outcome.FAILED;
@@ -45,7 +49,7 @@ final class AmRecentAlbums {
 
     /** Most recent first; returns the same list when nothing changed so callers can skip the write. */
     static List<Entry> note(List<Entry> entries, Entry entry) {
-        if (AmIdentity.normalize(entry.album()).isEmpty()) return entries;
+        if (!AmIdentity.present(entry.album())) return entries;
         if (!entries.isEmpty() && entries.get(0).equals(entry)) return entries;
         List<Entry> next = new ArrayList<>();
         next.add(entry);
@@ -84,7 +88,7 @@ final class AmRecentAlbums {
                 try {
                     Entry entry = new Entry(clip(item.optString("album")), clip(item.optString("artist")),
                             Outcome.valueOf(item.optString("outcome")), clip(item.optString("title")));
-                    if (!AmIdentity.normalize(entry.album()).isEmpty()) entries.add(entry);
+                    if (AmIdentity.present(entry.album())) entries.add(entry);
                 } catch (IllegalArgumentException ignored) { /* unknown outcome from another version */ }
             }
         } catch (Exception ignored) { /* unreadable store: empty history */ }

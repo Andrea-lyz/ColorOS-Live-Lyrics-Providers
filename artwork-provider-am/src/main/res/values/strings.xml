@@ -47,6 +47,7 @@
     <string name="outcome_bound">Bound</string>
     <string name="outcome_no_motion">No motion cover</string>
     <string name="outcome_unmatched">Not matched</string>
+    <string name="outcome_editions">Several editions</string>
     <string name="outcome_failed">Fetch failed</string>
     <string name="cache_title">Motion cover cache</string>
     <string name="cache_usage">%1$s of %2$s</string>
@@ -75,7 +76,7 @@
     <string name="market_probe_latency">%1$d ms</string>
     <string name="market_probe_timeout">Timeout</string>
     <string name="match_level_title">Match strictness</string>
-    <string name="match_level_summary">How tolerant automatic matching is. Identity rules (wrong artist, album or recording) stay rejected on every level.</string>
+    <string name="match_level_summary">How tolerant automatic matching is. Identity rules (wrong artist, album or recording) stay rejected on every level. Loose also picks one of several same-titled editions; Strict and Standard leave that choice to a binding.</string>
     <string name="match_level_dialog_title">Choose match strictness</string>
     <string name="match_strict">Strict</string>
     <string name="match_standard">Standard</string>
@@ -143,5 +144,6 @@
     <string name="binding_recent_hint">Tap a record to fill AM with the album and NetEase with the song</string>
     <string name="binding_recent_none">Nothing yet. Albums appear here once the source is on and music plays.</string>
     <string name="binding_recent_picked">Search terms filled in for each source. Search them separately.</string>
+    <string name="binding_recent_editions">Apple Music has several editions of this album. Bind the one you want from the results, or set match strictness to Loose to pick one automatically.</string>
     <string name="binding_recent_clear">Clear</string>
 </resources>

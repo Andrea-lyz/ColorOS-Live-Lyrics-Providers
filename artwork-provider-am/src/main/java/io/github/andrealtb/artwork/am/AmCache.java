@@ -47,8 +47,8 @@ final class AmCache {
     }
     static String key(ArtworkQuery query, String country, AmIdentity.MatchProfile profile) {
         // Include raw URL, limits and completed query fields: no success or negative reuse across edition changes.
-        return hash("match-v8-1080\n" + profile.exactDeltaMs + "/" + profile.albumDeltaMs + "/" + profile.prefixRatioPct
-                + "\n" + country + "\n" + AmIdentity.normalize(query.title) + "\n" + AmIdentity.normalizeArtist(query.artist)
+        return hash("match-v9-1080\n" + profile.exactDeltaMs + "/" + profile.albumDeltaMs + "/" + profile.prefixRatioPct
+                + (profile.settlesEditions ? "/editions" : "") + "\n" + country + "\n" + AmIdentity.normalize(query.title) + "\n" + AmIdentity.normalizeArtist(query.artist)
                 + "\n" + AmIdentity.normalize(query.album) + "\n" + query.durationMs + "\n" + query.appleMusicUrl
                 + "\ntruncated=" + AmIdentity.truncated(query.album)
                 + "\n" + query.maxWidth + "x" + query.maxHeight + "\n" + query.maxFileBytes);
@@ -86,9 +86,13 @@ final class AmCache {
             return new Hit(null, new ArtworkResult(status, null, status == ArtworkResult.Status.RETRY_LATER ? remaining : 0, value.getString("reason")));
         } catch (Exception ignored) { map.delete(); return null; }
     }
-    private static String albumKey(ArtworkQuery query, String country) {
-        return hash("album-v3\n" + country + "\n" + AmIdentity.normalizeArtist(query.artist) + "\n" + AmIdentity.normalize(query.album)
-                + "\ntruncated=" + AmIdentity.truncated(query.album));
+    /**
+     * The shared snapshot answers every level. A loose edition choice is that level's decision about
+     * a tie, so it has its own key and never reaches strict or standard, which report the tie.
+     */
+    private static String albumKey(ArtworkQuery query, String country, boolean edition) {
+        return hash((edition ? "album-edition-v2\n" : "album-v4\n") + country + "\n" + AmIdentity.normalizeArtist(query.artist)
+                + "\n" + AmIdentity.normalize(query.album) + "\ntruncated=" + AmIdentity.truncated(query.album));
     }
     static String albumAssetKey(ArtworkQuery query, String country, String albumId) {
         return hash("album-asset-v3-1080\n" + country + "\n" + albumId + "\n" + query.maxWidth + "x" + query.maxHeight + "\n" + query.maxFileBytes);
@@ -98,8 +102,11 @@ final class AmCache {
         return hash("bound-v1\n" + albumAssetKey(query, country, albumId));
     }
     AmPage.Album album(ArtworkQuery query, String country) {
-        if (AmIdentity.normalize(query.album).isEmpty()) return null;
-        File file = new File(root, albumKey(query, country) + ".json");
+        return album(query, country, false);
+    }
+    AmPage.Album album(ArtworkQuery query, String country, boolean edition) {
+        if (!AmIdentity.present(query.album)) return null;
+        File file = new File(root, albumKey(query, country, edition) + ".json");
         try {
             if (!file.isFile() || file.length() > 256 * 1024) return null;
             JSONObject value = new JSONObject(new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
@@ -112,7 +119,10 @@ final class AmCache {
         rememberAlbum(query, country, album, AmIdentity.MatchProfile.STANDARD);
     }
     void rememberAlbum(ArtworkQuery query, String country, AmPage.Album album, AmIdentity.MatchProfile profile) {
-        if (AmIdentity.normalize(query.album).isEmpty()) return;
+        rememberAlbum(query, country, album, profile, false);
+    }
+    void rememberAlbum(ArtworkQuery query, String country, AmPage.Album album, AmIdentity.MatchProfile profile, boolean edition) {
+        if (!AmIdentity.present(query.album)) return;
         File temp = null;
         try {
             AmIdentity.unique(album.tracks(), query, "", album.id(), profile);
@@ -121,7 +131,7 @@ final class AmCache {
             if (bytes.length > 256 * 1024) return;
             temp = File.createTempFile("catalog-", ".part", root);
             try (FileOutputStream stream = new FileOutputStream(temp)) { stream.write(bytes); stream.getFD().sync(); }
-            java.nio.file.Files.move(temp.toPath(), new File(root, albumKey(query, country) + ".json").toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            java.nio.file.Files.move(temp.toPath(), new File(root, albumKey(query, country, edition) + ".json").toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             cleanup();
         } catch (Exception ignored) { /* advisory catalog cache cannot bypass matching */ }
         finally { if (temp != null) temp.delete(); }

@@ -924,7 +924,8 @@ public final class AmArtworkActivity extends Activity {
                 animate && total > 0);
         outcomesCaption.setText(total == 0 ? getString(R.string.outcomes_empty)
                 : getResources().getQuantityString(R.plurals.outcomes_caption, total, total));
-        int open = counts[AmRecentAlbums.Outcome.UNMATCHED.ordinal()] + counts[AmRecentAlbums.Outcome.FAILED.ordinal()];
+        int open = counts[AmRecentAlbums.Outcome.UNMATCHED.ordinal()] + counts[AmRecentAlbums.Outcome.EDITIONS.ordinal()]
+                + counts[AmRecentAlbums.Outcome.FAILED.ordinal()];
         attention.setVisibility(open > 0 ? View.VISIBLE : View.GONE);
         if (open > 0) attention.setText(getResources().getQuantityString(R.plurals.outcomes_attention, open, open));
     }
@@ -935,6 +936,7 @@ public final class AmArtworkActivity extends Activity {
             case BOUND -> R.color.am_violet;
             case NO_MOTION -> R.color.am_muted;
             case UNMATCHED -> R.color.am_warn;
+            case EDITIONS -> R.color.am_info;
             case FAILED -> R.color.am_bad;
         };
     }
@@ -945,6 +947,7 @@ public final class AmArtworkActivity extends Activity {
             case BOUND -> R.string.outcome_bound;
             case NO_MOTION -> R.string.outcome_no_motion;
             case UNMATCHED -> R.string.outcome_unmatched;
+            case EDITIONS -> R.string.outcome_editions;
             case FAILED -> R.string.outcome_failed;
         };
     }

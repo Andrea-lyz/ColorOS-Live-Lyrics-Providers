@@ -1,0 +1,88 @@
+{
+ "captured": "2026-10-14",
+ "url": "https://itunes.apple.com/search?term=%3D&media=music&entity=album&country=us&limit=25",
+ "note": "First 8 of 25 results; matching fields only.",
+ "resultCount": 8,
+ "results": [
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "collectionId": 1625197538,
+   "artistName": "Ed Sheeran",
+   "collectionName": "= (Tour Edition)",
+   "collectionExplicitness": "notExplicit",
+   "trackCount": 23,
+   "releaseDate": "2021-10-29T07:00:00Z"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "collectionId": 1581087024,
+   "artistName": "Ed Sheeran",
+   "collectionName": "=",
+   "collectionExplicitness": "notExplicit",
+   "trackCount": 14,
+   "releaseDate": "2021-10-29T07:00:00Z"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "collectionId": 1440634928,
+   "artistName": "Lin-Manuel Miranda & Mark Mancina",
+   "collectionName": "Moana (Original Motion Picture Soundtrack)",
+   "collectionExplicitness": "notExplicit",
+   "trackCount": 40,
+   "releaseDate": "2016-11-18T08:00:00Z"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "collectionId": 1487738280,
+   "artistName": "Kristen Anderson-Lopez & Robert Lopez, Idina Menzel, Kristen Bell & Christophe Beck",
+   "collectionName": "Frozen 2 (Original Motion Picture Soundtrack) [Deluxe Edition]",
+   "collectionExplicitness": "notExplicit",
+   "trackCount": 47,
+   "releaseDate": "2019-11-15T08:00:00Z"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "collectionId": 1440639027,
+   "artistName": "Lin-Manuel Miranda & Mark Mancina",
+   "collectionName": "Moana (Original Motion Picture Soundtrack/Deluxe Edition)",
+   "collectionExplicitness": "notExplicit",
+   "trackCount": 59,
+   "releaseDate": "2016-11-18T08:00:00Z"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "collectionId": 1594677532,
+   "artistName": "Lin-Manuel Miranda, Germaine Franco & Encanto - Cast",
+   "collectionName": "Encanto (Original Motion Picture Soundtrack)",
+   "collectionExplicitness": "notExplicit",
+   "trackCount": 44,
+   "releaseDate": "2021-11-19T08:00:00Z"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "collectionId": 1825699995,
+   "artistName": "d2s1",
+   "collectionName": "=( - Single",
+   "collectionExplicitness": "notExplicit",
+   "trackCount": 1,
+   "releaseDate": "2025-07-11T07:00:00Z"
+  },
+  {
+   "wrapperType": "collection",
+   "collectionType": "Album",
+   "collectionId": 1440618177,
+   "artistName": "Kristen Anderson-Lopez & Robert Lopez, Idina Menzel, Kristen Bell & Christophe Beck",
+   "collectionName": "Frozen (Original Motion Picture Soundtrack)",
+   "collectionExplicitness": "notExplicit",
+   "trackCount": 32,
+   "releaseDate": "2013-11-25T08:00:00Z"
+  }
+ ]
+}

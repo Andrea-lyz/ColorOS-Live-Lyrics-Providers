@@ -156,7 +156,7 @@ final class AmPage {
                     editions.add(new AmEdition.Candidate(albumId, item.getString("artistName"), item.getString("collectionName"), info));
                 }
             }
-            String preferred = AmEdition.explicitCleanChoice(editions);
+            String preferred = AmEdition.choose(editions, false);
             return preferred == null ? List.copyOf(matches.values()) : List.of(matches.get(preferred));
         } catch (Exception error) { throw new AmFailure(Status.RETRY_LATER, "catalog_schema_changed", 300_000); }
     }

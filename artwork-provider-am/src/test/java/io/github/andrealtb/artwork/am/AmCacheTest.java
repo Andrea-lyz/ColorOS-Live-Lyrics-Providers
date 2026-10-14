@@ -99,6 +99,20 @@ public class AmCacheTest {
         assertNull(cache.album(query, "cn"));
         assertNull(cache.album(AmIdentityTest.query("Style", "1989 Deluxe", 288), "us"));
     }
+    @Test public void looseEditionChoiceHasItsOwnSnapshotAndDecisionKey() throws Exception {
+        var cache = new AmCache(temporary.newFolder());
+        var query = AmIdentityTest.query("Style", "1989", 288);
+        var album = AmPage.album(AmPageTest.page("null"), "10");
+        cache.rememberAlbum(query, "us", album, AmIdentity.MatchProfile.LOOSE, true);
+        // Strict and standard read only the shared snapshot, so they still meet the tie.
+        assertNull(cache.album(query, "us"));
+        assertEquals("10", cache.album(query, "us", true).id());
+        cache.rememberAlbum(query, "us", album, AmIdentity.MatchProfile.STANDARD);
+        assertEquals("10", cache.album(query, "us").id());
+        assertNotEquals(AmCache.key(query, "us", AmIdentity.MatchProfile.LOOSE),
+                AmCache.key(query, "us", new AmIdentity.MatchProfile(6000, 20000, 45)));
+        assertEquals(AmCache.key(query, "us"), AmCache.key(query, "us", new AmIdentity.MatchProfile(3000, 12000, 60)));
+    }
     @Test public void albumVideoKeySharesAcrossSongsAndDisplaySizesButSeparatesAlbums() {
         var first = AmIdentityTest.query("Style", "1989", 288);
         var next = AmIdentityTest.query("Blank Space", "1989", 288);

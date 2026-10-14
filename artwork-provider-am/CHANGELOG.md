@@ -1,3 +1,29 @@
+# 未发布 / Unreleased
+
+1.0.5 已随 v4.5.0 发布，以下改动不在其中。1.0.5 shipped with v4.5.0; the changes below are not part of it.
+
+## 简体中文
+
+- 修复 US 等市场手动搜索找不到专辑：iTunes 专辑索引可能整张缺失某专辑（Lady Gaga《MAYHEM》），同时仍返回其他艺人的同名专辑，无法从其结果判断缺失。手动搜索改为直接读取所选市场的 Apple Music 网页专辑区；非 CN 市场仅在网页为空或不可读时改用 iTunes，网页不可读且 iTunes 无结果时报告错误，不显示为“无结果”。
+- 同名同艺人的多个已核验版本（如《MAYHEM》14 首版与 17 首版）：严格/标准档仍不替用户选择，最近记录新增“多个版本”状态并计入“需处理”；点按该记录直接用专辑名搜索 AM，列出各版本供绑定。
+- 宽松档自动选择其中一个：Explicit 优先，其次歌曲多的版本（通常包含另一版全部歌曲，整张专辑保持同一封面），最后目录 ID 较小者。任一候选页面未读完时保持可重试，不做选择；名称或艺人不同仍为歧义。曲目搜索打平时同样适用。
+- 宽松档的选择单独缓存，严格/标准档读不到；宽松档查询决策键随之区分，严格/标准档的键不变。匹配严格度说明补充三档区别。
+- 新增 US 公开网页专辑区与两张《MAYHEM》专辑页的字段裁剪样本（2026-10-13）。
+- 修复符号名称的专辑无法绑定、无法自动匹配或互相串扰：`=`、`÷`、`+`、`×`、`-`、`?` 这类没有字母数字的名称原先归一成空串，被当成“没有填写专辑名”（本地专辑 `=` 绑定 Ed Sheeran《=》时提示需填专辑名）；`÷ (Deluxe)` 与 `- (Deluxe)` 则都折叠成 `deluxe`，绑定其中一张会顶掉另一张，缓存与最近记录也合为一条。现在纯符号名称保留符号本身，以符号开头的名称保留首个符号词（`÷ (Deluxe)` 即 `÷ deluxe`，`= (Tour Edition)` 即 `= tour edition`）；以字母数字开头的名称比较结果完全不变。样例为 2026-10-14 US 的《=》（1581087024，有动态封面）与《= (Tour Edition)》（1625197538，无动态封面）。
+- 匹配身份重构：商店标签（艺人原生别名、Explicit/Clean、合作信用、译名括注、发行类型）改为具名折叠，由每个比较按需声明；“字段是否填写”只看原文，不再由折叠结果代理；Explicit/Clean 等价与宽松档同名版本选择合并为同一个取舍入口。新增按性质断言的 `AmNameIdentityTest`。由名称派生的缓存键升版（AM 决策 `match-v9-1080`、专辑快照 `album-v4` / `album-edition-v2`、网易云 `netease-query-v4` / `netease-album-native-v2`），已验证视频与手动绑定不受影响。
+- 验证（2026-10-14）：260 项单测通过，debug lint 0 errors（6 条既有 warning 均在 manifest / build 配置），Debug 构建通过。用户已在设备上确认 `artwork-provider-am-1.0.5-debug-identity.apk`（sha256 `3616c2e8…`）：US 手动搜索列出两张《MAYHEM》；本地专辑 `=` 绑定 Ed Sheeran《=》成功；符号专辑各绑各的不互相覆盖；自动匹配正常。
+
+## English
+
+- Fix manual album search in US and similar storefronts: the iTunes album index can lack an album outright (Lady Gaga's MAYHEM) while still answering with other artists' albums of the same name, so its results cannot reveal the gap. Manual search now reads the selected storefront's Apple Music album shelf; outside CN, iTunes answers only when the shelf is empty or unreadable, and an unreadable shelf without iTunes hits is an error, not an empty search.
+- Several verified same-titled editions by one artist (MAYHEM's 14- and 17-song releases): Strict and Standard still leave the choice to the user. Recent records show a new "Several editions" status that counts as needing attention; tapping it searches AM for the album and lists the editions to bind.
+- Loose picks one: Explicit first, then the most songs (usually a superset, so the whole album keeps one cover), then the earliest catalog ID. It does not choose while any candidate page is unread; different titles or artists stay ambiguous. A tie in the song search is settled the same way.
+- Loose's choice is cached apart, out of Strict and Standard's reach, and its query decisions get their own key; Strict and Standard keys are unchanged. The strictness summary explains the three levels.
+- Add field-trimmed public US samples of the album shelf and both MAYHEM album pages (2026-10-13).
+- Fix symbol-named albums that could not be bound, could not be matched, or stood in for each other. `=`, `÷`, `+`, `×`, `-` and `?` carry no letter or digit, so they folded to nothing and read as a missing album name (binding local album `=` to Ed Sheeran's "=" asked for an album name); `÷ (Deluxe)` and `- (Deluxe)` both folded to `deluxe`, so binding one replaced the other and the two shared one cache entry and one recent record. A symbol-only name now keeps its symbols and a name that opens with a symbol keeps that leading token (`÷ (Deluxe)` is `÷ deluxe`, `= (Tour Edition)` is `= tour edition`); names that open with a letter or digit fold exactly as before. Sample: US "=" (1581087024, has a motion cover) and "= (Tour Edition)" (1625197538, none) on 2026-10-14.
+- Matching identity refactor: store labels (native artist alias, Explicit/Clean, guest credit, translated annotation, release type) are named folds each comparison declares; "is this field filled in" reads the raw text instead of a folded form; the Explicit/Clean equivalence and the Loose same-title choice share one selection entry point. New property-based `AmNameIdentityTest`. Name-derived cache keys are versioned (`match-v9-1080`, `album-v4` / `album-edition-v2`, `netease-query-v4` / `netease-album-native-v2`); verified videos and manual bindings are unaffected.
+- Verification (2026-10-14): 260 unit tests, debug lint with 0 errors (6 pre-existing warnings in the manifest and build configuration), Debug build passed. The user confirmed `artwork-provider-am-1.0.5-debug-identity.apk` (sha256 `3616c2e8…`) on the device: US manual search lists both MAYHEM editions, local album `=` binds to Ed Sheeran's "=", symbol-named albums bind separately without replacing each other, and automatic matching works.
+
 # 1.0.4
 
 随 C17 Artwork Preview2 交付。Ships with C17 Artwork Preview2.

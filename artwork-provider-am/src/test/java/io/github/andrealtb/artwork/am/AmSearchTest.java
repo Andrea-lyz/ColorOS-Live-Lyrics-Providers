@@ -65,13 +65,13 @@ public class AmSearchTest {
         assertEquals("/cn/search", calls.get(0).getPath());
         assertTrue(calls.get(0).getRawQuery().contains("%26"));
     }
-    @Test public void existingItunesResultsAvoidExtraWebRequest() throws Exception {
-        var hits = AmCatalog.searchAlbums((uri, limit) -> {
-            assertEquals("itunes.apple.com", uri.getHost());
-            return "{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":10,"
-                    + "\"collectionName\":\"1989\",\"artistName\":\"Taylor Swift\"}]}";
-        }, "1989", "us");
+    @Test public void otherStorefrontsListTheirOwnShelfWithoutAnItunesRequest() throws Exception {
+        String html = page(item("10", "1989", "Taylor Swift")).replace("\"cn\"", "\"us\"").replace("/cn/", "/us/");
+        var calls = new ArrayList<java.net.URI>();
+        var hits = AmCatalog.searchAlbums((uri, limit) -> { calls.add(uri); return html; }, "1989", "us");
         assertEquals("10", hits.get(0).id());
+        assertEquals(1, calls.size());
+        assertEquals("music.apple.com", calls.get(0).getHost()); assertEquals("/us/search", calls.get(0).getPath());
     }
     @Test public void genuineEmptyAndDuplicateAlbumsAreHandled() throws Exception {
         assertTrue(AmPage.searchAlbums(page(""), "cn").isEmpty());
@@ -106,13 +106,63 @@ public class AmSearchTest {
         assertEquals("1633408719",hits.get(0).id()); assertEquals("最伟大的作品",hits.get(0).title());
         assertTrue(calls.stream().allMatch(uri->uri.getHost().equals("music.apple.com") && uri.getPath().equals("/cn/search")));
     }
-    @Test public void emptyOtherStorefrontItunesFallsBackToThatSameStorefront() throws Exception {
-        String html=page(item("10","1989","Taylor Swift")).replace("\"cn\"","\"us\"").replace("/cn/","/us/");
-        var calls=new ArrayList<java.net.URI>();
-        var hits=AmCatalog.searchAlbums((uri,limit)-> { calls.add(uri); return uri.getHost().equals("itunes.apple.com") ? "{\"results\":[]}" : html; },
-                "1989","us");
-        assertEquals("10",hits.get(0).id()); assertEquals(2,calls.size());
-        assertTrue(calls.get(0).getQuery().contains("country=us")); assertEquals("/us/search",calls.get(1).getPath());
+    @Test public void emptyOrUnreadableShelfFallsBackToThatStorefrontsItunes() throws Exception {
+        String itunes = "{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":10,"
+                + "\"collectionName\":\"1989\",\"artistName\":\"Taylor Swift\"}]}";
+        for (String shelf : List.of(page("").replace("\"cn\"", "\"us\""), "<html>unavailable</html>")) {
+            var calls = new ArrayList<java.net.URI>();
+            var hits = AmCatalog.searchAlbums((uri, limit) -> { calls.add(uri); return uri.getHost().equals("itunes.apple.com") ? itunes : shelf; },
+                    "1989", "us");
+            assertEquals("10", hits.get(0).id()); assertEquals(2, calls.size());
+            assertEquals("/us/search", calls.get(0).getPath()); assertTrue(calls.get(1).getQuery().contains("country=us"));
+        }
+    }
+    @Test public void unreadableShelfWithoutItunesHitsIsAnErrorNotAnEmptySearch() throws Exception {
+        try {
+            AmCatalog.searchAlbums((uri, limit) -> uri.getHost().equals("itunes.apple.com") ? "{\"results\":[]}" : "<html>unavailable</html>",
+                    "1989", "us");
+            fail();
+        } catch (AmFailure failure) { assertEquals("web_schema_changed", failure.reason); }
+        assertTrue(AmCatalog.searchAlbums((uri, limit) -> uri.getHost().equals("itunes.apple.com") ? "{\"results\":[]}"
+                : page("").replace("\"cn\"", "\"us\""), "1989", "us").isEmpty());
+    }
+    @Test public void cancelledOrBlockedShelfIsNotRetriedOnItunes() throws Exception {
+        for (AmFailure stop : List.of(new AmFailure(Status.ERROR, "cancelled"), new AmFailure(Status.NETWORK_BLOCKED, "network_policy"))) {
+            var calls = new ArrayList<java.net.URI>();
+            try {
+                AmCatalog.searchAlbums((uri, limit) -> { calls.add(uri); throw stop; }, "1989", "us");
+                fail();
+            } catch (AmFailure failure) { assertSame(stop, failure); }
+            assertEquals(1, calls.size());
+        }
+    }
+    /** Live US capture, 2026-10-13: Apple Music's own album shelf for "MAYHEM". */
+    static String mayhemShelf() {
+        try (var stream = AmSearchTest.class.getResourceAsStream("/us-mayhem-album-shelf-public.html")) {
+            assertNotNull(stream);
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (java.io.IOException error) {
+            throw new java.io.UncheckedIOException(error);
+        }
+    }
+    /**
+     * The same day the iTunes album index answered "MAYHEM" with 25 albums, three of them named
+     * exactly "Mayhem" by other artists and none by Lady Gaga, so nothing in it showed the gap.
+     */
+    @Test public void bareAlbumNameListsTheStorefrontEditionsThatItunesLacks() throws Exception {
+        String itunes = "{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":1749041979,"
+                + "\"collectionName\":\"Mayhem\",\"artistName\":\"Don Trip\"},"
+                + "{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":1442989718,"
+                + "\"collectionName\":\"Mayhem\",\"artistName\":\"Imelda May\"}]}";
+        var calls = new ArrayList<java.net.URI>();
+        var hits = AmCatalog.searchAlbums((uri, limit) -> { calls.add(uri); return uri.getHost().equals("itunes.apple.com") ? itunes : mayhemShelf(); },
+                "MAYHEM", "us");
+        assertEquals(1, calls.size()); assertEquals("/us/search", calls.get(0).getPath());
+        // Both of her editions lead the shelf, with the track counts that tell them apart.
+        var editions = hits.subList(0, 2);
+        assertEquals(List.of("1837310866", "1792666546"), editions.stream().map(AmPage.AlbumHit::id).toList());
+        assertEquals(List.of(21, 17), editions.stream().map(AmPage.AlbumHit::trackCount).toList());
+        assertTrue(editions.stream().allMatch(hit -> hit.title().equals("MAYHEM") && hit.artist().equals("Lady Gaga") && hit.explicit()));
     }
     private AmCatalog catalog(String items) {
         return new AmCatalog((uri, limit) -> {

@@ -443,7 +443,7 @@ public final class AmBindingActivity extends Activity {
 
     private void bind(Choice choice, Action action) {
         String local = album.getText().toString().trim(), only = artist.getText().toString().trim();
-        if (AmIdentity.normalize(local).isEmpty()) {
+        if (!AmIdentity.present(local)) {
             setStatus(getString(R.string.binding_need_album), Tone.ERROR, false);
             scroll.smoothScrollTo(0, 0);
             album.requestFocus();
@@ -665,8 +665,14 @@ public final class AmBindingActivity extends Activity {
             neteaseSearch.terms.setText(entry.title());
             appleSearch.terms.setSelection(appleSearch.terms.length());
             neteaseSearch.terms.setSelection(neteaseSearch.terms.length());
-            setStatus(getString(entry.title().isEmpty() && NcmSession.enabled(this)
-                    ? R.string.binding_recent_no_song : R.string.binding_recent_picked), Tone.NEUTRAL, false);
+            if (entry.outcome() == AmRecentAlbums.Outcome.EDITIONS) {
+                // The editions are the choice to make: list them now instead of asking for a search.
+                search(appleSearch);
+                setStatus(getString(R.string.binding_recent_editions), Tone.NEUTRAL, false);
+            } else {
+                setStatus(getString(entry.title().isEmpty() && NcmSession.enabled(this)
+                        ? R.string.binding_recent_no_song : R.string.binding_recent_picked), Tone.NEUTRAL, false);
+            }
             scroll.smoothScrollTo(0, 0);
         });
         return row;

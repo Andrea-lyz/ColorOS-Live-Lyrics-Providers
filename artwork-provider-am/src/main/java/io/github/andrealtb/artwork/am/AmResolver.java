@@ -176,7 +176,8 @@ final class AmResolver {
             }
         }
         long pausesAtStart = AmPauseDetector.pauses();
-        AmPage.Album known = verifiedAlbum(query, country, link, profile);
+        AmPage.Album known = verifiedAlbum(query, country, link, profile, false), edition = null;
+        if (known == null && profile.settlesEditions) known = edition = verifiedAlbum(query, country, link, profile, true);
         String albumId = known == null ? null : known.id();
         if (known != null) {
             AmSettings.matching(context, "catalog_cache", known.tracks(), query, profile);
@@ -194,14 +195,17 @@ final class AmResolver {
         try {
             AmSettings.trace(context, "ARTWORK_AM_CACHE", "miss");
             if (!AmSettings.online(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "network_policy");
-            AmPage.Album album = new AmCatalog((uri, limit) -> network.text(uri, limit, task),
+            AmCatalog catalog = new AmCatalog((uri, limit) -> network.text(uri, limit, task),
                     (stage, tracks) -> AmSettings.matching(context, stage, tracks, query, profile),
                     detail -> AmSettings.trace(context, "ARTWORK_AM_CATALOG", detail),
-                    profile).resolve(query, link, country, known);
+                    profile);
+            AmPage.Album album = catalog.resolve(query, link, country, known);
             task.check();
             albumId = album.id();
-            cache.rememberAlbum(query, country, album, profile);
-            AmSettings.trace(context, "ARTWORK_AM_MATCH", "unique_track_album_confirmed");
+            // An edition choice, fresh or reused from loose's own snapshot, goes back there only.
+            boolean settled = catalog.settledEdition() || edition != null && album == edition;
+            cache.rememberAlbum(query, country, album, profile, settled);
+            AmSettings.trace(context, "ARTWORK_AM_MATCH", settled ? "loose_edition_choice" : "unique_track_album_confirmed");
             return download(query, country, album, key, task);
         } catch (AmFailure failure) {
             return failed(failure, query, country, albumId, key, networkEpoch, pausesAtStart, task);
@@ -374,8 +378,14 @@ final class AmResolver {
             return new Resolved(file, asset);
         }
     }
+    /** The shared snapshot first; loose may fall back to its own edition choice for this album name. */
     private AmPage.Album verifiedAlbum(ArtworkQuery query, String country, AmIdentity.AppleLink link, AmIdentity.MatchProfile profile) {
-        AmPage.Album known = cache.album(query, country);
+        AmPage.Album shared = verifiedAlbum(query, country, link, profile, false);
+        return shared != null || !profile.settlesEditions ? shared : verifiedAlbum(query, country, link, profile, true);
+    }
+    private AmPage.Album verifiedAlbum(ArtworkQuery query, String country, AmIdentity.AppleLink link,
+            AmIdentity.MatchProfile profile, boolean edition) {
+        AmPage.Album known = cache.album(query, country, edition);
         if (known == null) return null;
         try {
             if (link != null && !link.albumId().isEmpty() && !link.albumId().equals(known.id())) return null;

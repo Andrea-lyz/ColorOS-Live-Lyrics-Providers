@@ -83,7 +83,13 @@ public class AmBindingsTest {
         assertEquals(entries, AmRecentAlbums.decode(AmRecentAlbums.encode(entries)));
 
         assertEquals(AmRecentAlbums.Outcome.UNMATCHED, AmRecentAlbums.outcome(new AmFailure(Status.RETRY_LATER, "catalog_match_unconfirmed", 60_000)));
-        assertEquals(AmRecentAlbums.Outcome.UNMATCHED, AmRecentAlbums.outcome(new AmFailure(Status.AMBIGUOUS, "multiple_catalog_matches")));
+        // A tie between releases is reported as such so the record leads to an edition choice.
+        assertEquals(AmRecentAlbums.Outcome.EDITIONS, AmRecentAlbums.outcome(new AmFailure(Status.AMBIGUOUS, "multiple_catalog_matches")));
+        assertEquals(AmRecentAlbums.Outcome.EDITIONS, AmRecentAlbums.outcome(new AmFailure(Status.AMBIGUOUS, "multiple_album_matches")));
+        assertEquals(AmRecentAlbums.Outcome.UNMATCHED, AmRecentAlbums.outcome(new AmFailure(Status.AMBIGUOUS, "identity_fields_missing")));
+        assertEquals(AmRecentAlbums.Outcome.UNMATCHED, AmRecentAlbums.outcome(new AmFailure(Status.NO_MATCH, "catalog_no_match")));
+        var editions = List.of(new AmRecentAlbums.Entry("MAYHEM", "Lady Gaga", AmRecentAlbums.Outcome.EDITIONS, "Abracadabra"));
+        assertEquals(editions, AmRecentAlbums.decode(AmRecentAlbums.encode(editions)));
         assertEquals(AmRecentAlbums.Outcome.NO_MOTION, AmRecentAlbums.outcome(new AmFailure(Status.NO_MOTION, "confirmed_album_no_motion")));
         // Device log 040311: a page that could not be parsed must still list the album for binding.
         assertEquals(AmRecentAlbums.Outcome.FAILED, AmRecentAlbums.outcome(new AmFailure(Status.RETRY_LATER, "web_schema_changed", 300_000)));

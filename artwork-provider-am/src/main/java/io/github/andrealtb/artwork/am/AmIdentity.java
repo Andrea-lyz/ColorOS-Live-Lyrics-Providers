@@ -31,43 +31,91 @@ final class AmIdentity {
             "\\s*(?:\\(\\s*(explicit|clean)\\s*\\)|\\[\\s*(explicit|clean)\\s*\\]|【\\s*(explicit|clean)\\s*】)\\s*$",
             Pattern.CASE_INSENSITIVE);
 
-    /** Artist-only aliases such as "MEOVV (미야오)"; title and album brackets retain their words. */
-    private static String stripNativeAlias(String value) {
-        if (value == null || value.isEmpty()) return value;
-        Matcher matcher = NATIVE_ALIAS.matcher(value);
-        StringBuffer buffer = new StringBuffer();
-        while (matcher.find()) {
-            String alias = matcher.group(0);
-            if (LATIN_IN_ALIAS.matcher(alias).find()) matcher.appendReplacement(buffer, Matcher.quoteReplacement(alias));
-            else matcher.appendReplacement(buffer, "");
+    /**
+     * The labels a store attaches to a name, each removable on its own evidence: a native-script
+     * artist alias, a content rating, a guest credit, a translated title annotation, a release type.
+     *
+     * <p>Each used to be a private helper called from inside one comparison, so which labels a
+     * decision removed depended on which function reached it. Naming them, and applying them only
+     * where a caller declares, is what makes a decision's evidence readable: a comparison states the
+     * folds it accepts, and nothing else is taken out of the text it compares.
+     */
+    enum Fold { ARTIST_ALIAS, RATING, GUEST, TRANSLATION, RELEASE_TYPE }
+
+    /** NFKC, then the named folds in order, trimmed. No folds is the plain text of the name. */
+    private static String through(String value, Fold... folds) {
+        String text = Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC);
+        for (Fold fold : folds) text = folded(fold, text);
+        return text.trim();
+    }
+
+    private static String folded(Fold fold, String text) {
+        if (text.isEmpty()) return text;
+        switch (fold) {
+            case ARTIST_ALIAS -> {
+                Matcher matcher = NATIVE_ALIAS.matcher(text);
+                StringBuffer buffer = new StringBuffer();
+                while (matcher.find()) {
+                    String alias = matcher.group(0);
+                    matcher.appendReplacement(buffer,
+                            LATIN_IN_ALIAS.matcher(alias).find() ? Matcher.quoteReplacement(alias) : "");
+                }
+                matcher.appendTail(buffer);
+                return buffer.toString();
+            }
+            case RATING -> { return RATING_LABEL.matcher(text).replaceAll(""); }
+            case GUEST -> { return GUEST_CLAUSE.matcher(text).replaceAll(""); }
+            case TRANSLATION -> {
+                Matcher matcher = TRAILING_ANNOTATION.matcher(text);
+                if (!matcher.find()) return text;
+                String note = matcher.group(1).trim(), base = text.substring(0, matcher.start()).trim();
+                if (note.isEmpty() || base.isEmpty()) return text;
+                if (VERSION_WORD.matcher(note).find()) return text;
+                if (LATIN.matcher(note).find() == LATIN.matcher(base).find()) return text;
+                return base;
+            }
+            case RELEASE_TYPE -> {
+                String current = text;
+                for (;;) {
+                    Matcher matcher = EDITION_TRAILER.matcher(current);
+                    if (!matcher.find()) return current;
+                    String base = matcher.replaceAll("").trim();
+                    if (base.isEmpty()) return current;
+                    current = base;
+                }
+            }
         }
-        matcher.appendTail(buffer);
-        return buffer.toString().trim();
+        return text;
     }
-    /** "Infinite Dream (Explicit)" -> "Infinite Dream"; "(Clean)" behaves the same. */
-    private static String stripRatingLabel(String value) {
-        if (value == null || value.isEmpty()) return value;
-        return RATING_LABEL.matcher(value).replaceAll("").trim();
-    }
+
+    /**
+     * Whether the caller supplied this field at all. The raw text decides, never a derived form: an
+     * album whose name is "=" is a name the user filled in, and no fold may turn it into an absent
+     * field. A caller that needs something to compare asks {@link #normalize} for emptiness instead.
+     */
+    static boolean present(String value) { return value != null && !value.isBlank(); }
 
     static String normalize(String value) {
         return AmMatchText.normalize(value);
     }
+    /** The artist identity: a native-script bracket alias in the artist field names the same act. */
     static String normalizeArtist(String value) {
-        return normalize(stripNativeAlias(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)));
+        return normalize(through(value, Fold.ARTIST_ALIAS));
     }
     /** Discovery/pairing helper only; callers must establish the catalog's content rating. */
     static String ratingBase(String value) {
-        return normalize(stripRatingLabel(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)));
+        return normalize(through(value, Fold.RATING));
     }
     private static String ratingTitleBody(String value) {
-        return coreTitle(stripRatingLabel(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC)));
+        return normalize(through(value, Fold.RATING, Fold.GUEST));
     }
+
+    /** The content rating a name states, or ""; evidence for pairing, never proof on its own. */
     private static String ratingLabel(String value) {
         Matcher matcher = RATING_LABEL.matcher(Normalizer.normalize(value == null ? "" : value, Normalizer.Form.NFKC));
         if (!matcher.find()) return "";
-        for (int i = 1; i <= 3; i++) if (matcher.group(i) != null) {
-            return matcher.group(i).equalsIgnoreCase("clean") ? "cleaned" : "explicit";
+        for (int group = 1; group <= 3; group++) if (matcher.group(group) != null) {
+            return matcher.group(group).equalsIgnoreCase("clean") ? "cleaned" : "explicit";
         }
         return "";
     }
@@ -103,20 +151,11 @@ final class AmIdentity {
     private static final Pattern LATIN = Pattern.compile("[a-zA-Z]");
 
     /**
-     * A script-foreign trailing annotation only translates the title: "特别的人 (Special Person)" names the
-     * same recording as "特别的人". Version labels ("(Live)", "(iTunes Session)") and same-script notes stay,
-     * so another take is never accepted.
+     * A script-foreign trailing annotation only translates the title: "特别的人 (Special Person)"
+     * names the same recording, while "(Live)" and "(iTunes Session)" name another take.
      */
     static String aliasBase(String title) {
-        String value = Normalizer.normalize(title == null ? "" : title, Normalizer.Form.NFKC).trim();
-        Matcher matcher = TRAILING_ANNOTATION.matcher(value);
-        if (!matcher.find()) return value;
-        String note = matcher.group(1).trim();
-        String base = value.substring(0, matcher.start()).trim();
-        if (note.isEmpty() || base.isEmpty()) return value;
-        if (VERSION_WORD.matcher(note).find()) return value;
-        if (LATIN.matcher(note).find() == LATIN.matcher(base).find()) return value;
-        return base;
+        return through(title, Fold.TRANSLATION);
     }
 
     /** Delimited release-type suffixes only; editions, remasters, regions and volumes stay distinct. */
@@ -127,9 +166,8 @@ final class AmIdentity {
 
     /** Title without its guest credit, e.g. "End Game (feat. Ed Sheeran & Future)" and "End Game" agree. */
     static String coreTitle(String title) {
-        return normalize(GUEST_CLAUSE.matcher(Normalizer.normalize(title == null ? "" : title, Normalizer.Form.NFKC)).replaceAll(""));
+        return normalize(through(title, Fold.GUEST));
     }
-
 
     /** Credited artists: the artist field split into names, plus the guests named in the title. */
     static Set<String> credits(String artist, String title) {
@@ -185,15 +223,9 @@ final class AmIdentity {
     }
     /** Album name without its release-type descriptors; all edition/recording words survive. */
     static String editionBase(String album) {
-        String value = Normalizer.normalize(album == null ? "" : album, Normalizer.Form.NFKC).trim();
-        for (;;) {
-            Matcher matcher = EDITION_TRAILER.matcher(value);
-            if (!matcher.find()) return normalize(value);
-            String base = matcher.replaceAll("").trim();
-            if (base.isEmpty()) return normalize(value);
-            value = base;
-        }
+        return normalize(through(album, Fold.RELEASE_TYPE));
     }
+
     /**
      * Release types may differ. A query ending in an explicit ellipsis may be a long prefix of
      * the complete catalog name; complete names never acquire a guessed truncation marker.
@@ -220,8 +252,8 @@ final class AmIdentity {
         String wantRating = ratingLabel(want), haveRating = ratingLabel(have);
         if (!wantRating.isEmpty() && !wantRating.equals(info.rating())
                 || !haveRating.isEmpty() && !haveRating.equals(info.rating())) return false;
-        return albumClose(wantRating.isEmpty() ? want : stripRatingLabel(Normalizer.normalize(want, Normalizer.Form.NFKC)),
-                haveRating.isEmpty() ? have : stripRatingLabel(Normalizer.normalize(have, Normalizer.Form.NFKC)), profile);
+        return albumClose(wantRating.isEmpty() ? want : through(want, Fold.RATING),
+                haveRating.isEmpty() ? have : through(have, Fold.RATING), profile);
     }
     /** First credited name; album-level search only, before the track table is verified. */
     static String primaryArtist(String artist) { return normalizeArtist(leadCredit(artist)); }
@@ -257,19 +289,26 @@ final class AmIdentity {
 
     /**
      * Matching tolerance dial. The standard level is the calibrated default; strict and loose move
-     * only the duration and truncated-album-prefix thresholds, never the identity rules (a wrong
-     * artist, album or recording is rejected on every level).
+     * the duration and truncated-album-prefix thresholds, never the identity rules (a wrong
+     * artist, album or recording is rejected on every level). Loose alone also settles a tie
+     * between same-titled editions by one artist; strict and standard report it for binding.
      */
     public static final class MatchProfile {
         public final long exactDeltaMs;
         public final long albumDeltaMs;
         public final int prefixRatioPct;
+        /** Choose one of several verified same-titled editions ({@link AmEdition#choose}). */
+        public final boolean settlesEditions;
         public MatchProfile(long exactDeltaMs, long albumDeltaMs, int prefixRatioPct) {
+            this(exactDeltaMs, albumDeltaMs, prefixRatioPct, false);
+        }
+        public MatchProfile(long exactDeltaMs, long albumDeltaMs, int prefixRatioPct, boolean settlesEditions) {
             this.exactDeltaMs = exactDeltaMs; this.albumDeltaMs = albumDeltaMs; this.prefixRatioPct = prefixRatioPct;
+            this.settlesEditions = settlesEditions;
         }
         public static final MatchProfile STRICT = new MatchProfile(2000, 8000, 75);
         public static final MatchProfile STANDARD = new MatchProfile(3000, 12000, 60);
-        public static final MatchProfile LOOSE = new MatchProfile(6000, 20000, 45);
+        public static final MatchProfile LOOSE = new MatchProfile(6000, 20000, 45, true);
         public static MatchProfile forLevel(String level) {
             if ("strict".equals(level)) return STRICT;
             if ("loose".equals(level)) return LOOSE;
@@ -376,7 +415,7 @@ final class AmIdentity {
                 || a.durationMs() <= 0 || b.durationMs() <= 0 || Math.abs(a.durationMs() - b.durationMs()) > 3000) return null;
         java.util.ArrayList<AmEdition.Candidate> editions = new java.util.ArrayList<>();
         for (Track track : matches) editions.add(new AmEdition.Candidate(track.albumId(), track.artist(), track.album(), track.edition()));
-        String chosen = AmEdition.explicitCleanChoice(editions);
+        String chosen = AmEdition.choose(editions, false);
         if (chosen == null) return null;
         return a.albumId().equals(chosen) ? a : b;
     }

@@ -137,7 +137,7 @@ final class NcmSearch {
         return albumKey(song.album(), song.albumId(), query.maxWidth, query.maxHeight, query.maxFileBytes);
     }
     static String albumKey(String album, String albumId, int maxWidth, int maxHeight, long maxFileBytes) {
-        return AmCache.hash("netease-album-native-v1\n" + AmIdentity.normalize(album) + "\n" + albumId
+        return AmCache.hash("netease-album-native-v2\n" + AmIdentity.normalize(album) + "\n" + albumId
                 + "\n" + maxWidth + "x" + maxHeight + "\n" + maxFileBytes);
     }
     /** The endpoint answers for one song; its absence/failure cannot exclude every song on an album. */
@@ -145,7 +145,7 @@ final class NcmSearch {
         return AmCache.hash("netease-song-failure-v1\n" + song.id() + "\n" + albumKey(song, query));
     }
     static String queryKey(ArtworkQuery query, String level) {
-        return AmCache.hash("netease-query-v3\n" + level + "\n" + AmIdentity.normalize(AmIdentity.aliasBase(query.title)) + "\n"
+        return AmCache.hash("netease-query-v4\n" + level + "\n" + AmIdentity.normalize(AmIdentity.aliasBase(query.title)) + "\n"
                 + AmIdentity.normalizeArtist(query.artist) + "\n" + AmIdentity.normalize(query.album) + "\n" + query.durationMs);
     }
 }

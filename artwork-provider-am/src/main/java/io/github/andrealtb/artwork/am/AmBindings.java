@@ -89,7 +89,7 @@ final class AmBindings {
     }
 
     static boolean valid(Binding binding) {
-        return !AmIdentity.normalize(binding.localAlbum()).isEmpty() && binding.country().matches("[a-z]{2}")
+        return AmIdentity.present(binding.localAlbum()) && binding.country().matches("[a-z]{2}")
                 && ("am".equals(binding.source()) && binding.songId().isEmpty()
                     || binding.netease() && binding.songId().matches("[0-9]{1,20}"))
                 && binding.albumId().matches("[0-9]{1,20}") && binding.localAlbum().length() <= 512
