@@ -2,15 +2,21 @@ package io.github.andrealtb.artwork.am;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Context;
+import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Insets;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
+import android.net.Uri;
 import android.os.Bundle;
+import android.text.Editable;
 import android.text.InputFilter;
 import android.text.TextUtils;
+import android.text.TextWatcher;
+import android.text.format.Formatter;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
@@ -27,11 +33,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import io.github.andrealtb.artwork.contract.ArtworkResult.Status;
 
 /**
  * Independent source searches: NetEase answers a song name, AM answers an album.
- * A choice is bound only after its own source confirms a motion cover exists.
+ * A choice is bound only after its own source confirms a motion cover exists; an imported video is
+ * bound only after it has been made into a cover the lock screen accepts.
  */
 public final class AmBindingActivity extends Activity {
     private record Choice(String country, String id, String title, String artist, String detail, String artwork, boolean explicit,
@@ -147,6 +156,7 @@ public final class AmBindingActivity extends Activity {
         }
     }
 
+    private static final int PICK_VIDEO = 41;
     private final ExecutorService io = Executors.newFixedThreadPool(2, runnable -> {
         Thread thread = new Thread(runnable, "artwork-am-binding");
         thread.setDaemon(true);
@@ -168,6 +178,12 @@ public final class AmBindingActivity extends Activity {
     private LinearLayout bindings;
     private LinearLayout recent;
     private TextView bindingCount;
+    private TextView importButton;
+    private View importRow;
+    private ProgressBar importBusy;
+    private TextView importStatus;
+    /** UI thread only: the running import's cancel flag; null when no import runs. */
+    private AtomicBoolean importing;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -202,6 +218,7 @@ public final class AmBindingActivity extends Activity {
         local.addView(step(1, R.string.binding_step_local));
         album = labelled(local, R.string.binding_local_album, R.string.binding_local_album_hint);
         artist = labelled(local, R.string.binding_local_artist, R.string.binding_local_artist_hint);
+        importSection(local);
         content.addView(local, AmUi.marginTop(this, 14));
 
         LinearLayout find = AmUi.card(this);
@@ -267,7 +284,13 @@ public final class AmBindingActivity extends Activity {
         super.onSaveInstanceState(state);
     }
 
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (request == PICK_VIDEO && result == RESULT_OK && data != null && data.getData() != null) startImport(data.getData());
+    }
+
     @Override protected void onDestroy() {
+        if (importing != null) importing.set(true);
         if (task != null) task.cancel();
         appleSearch.cancel();
         neteaseSearch.cancel();
@@ -330,6 +353,167 @@ public final class AmBindingActivity extends Activity {
         field.setFilters(new InputFilter[] { new InputFilter.LengthFilter(512) });
         parent.addView(field, AmUi.marginTop(this, 6));
         return field;
+    }
+
+    /** The local card's own action: turn a video of the user's into this album's cover. */
+    private void importSection(LinearLayout parent) {
+        importButton = AmUi.tonalButton(this, getString(R.string.binding_import), color(R.color.am_accent));
+        Drawable motion = getDrawable(R.drawable.ic_am_motion);
+        if (motion != null) {
+            motion = motion.mutate();
+            motion.setTint(color(R.color.am_accent));
+            motion.setBounds(0, 0, dp(18), dp(18));
+            importButton.setCompoundDrawablesRelative(motion, null, null, null);
+            importButton.setCompoundDrawablePadding(dp(6));
+        }
+        importButton.setPadding(dp(16), dp(10), dp(18), dp(10));
+        importButton.setOnClickListener(view -> { if (importing != null) cancelImport(); else pickVideo(); });
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(AmUi.WRAP, AmUi.WRAP);
+        buttonParams.topMargin = dp(16);
+        parent.addView(importButton, buttonParams);
+        TextView hint = AmUi.text(this, getString(R.string.binding_import_hint), 12, color(R.color.am_text_tertiary), false);
+        LinearLayout.LayoutParams hintParams = AmUi.marginTop(this, 6);
+        hintParams.setMarginStart(dp(4));
+        parent.addView(hint, hintParams);
+        LinearLayout line = new LinearLayout(this);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+        importBusy = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
+        importBusy.setIndeterminateTintList(ColorStateList.valueOf(color(R.color.am_accent)));
+        LinearLayout.LayoutParams busyParams = new LinearLayout.LayoutParams(dp(18), dp(18));
+        busyParams.setMarginEnd(dp(8));
+        line.addView(importBusy, busyParams);
+        importStatus = AmUi.text(this, "", 13, color(R.color.am_text_secondary), false);
+        line.addView(importStatus, new LinearLayout.LayoutParams(0, AmUi.WRAP, 1f));
+        importRow = line;
+        parent.addView(line, AmUi.marginTop(this, 8));
+        setImportStatus("", Tone.NEUTRAL, false);
+        album.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+            @Override public void onTextChanged(CharSequence text, int start, int before, int count) {}
+            @Override public void afterTextChanged(Editable text) { refreshImport(); }
+        });
+        refreshImport();
+    }
+
+    /** Importing needs the local album name the cover will answer for; while running the button cancels. */
+    private void refreshImport() {
+        boolean running = importing != null, ready = running || AmIdentity.present(album.getText().toString());
+        importButton.setText(running ? R.string.binding_import_cancel : R.string.binding_import);
+        importButton.setEnabled(ready);
+        importButton.setAlpha(ready ? 1f : 0.4f);
+    }
+
+    private void pickVideo() {
+        if (!AmIdentity.present(album.getText().toString())) {
+            setImportStatus(getString(R.string.binding_need_album), Tone.ERROR, false);
+            album.requestFocus();
+            return;
+        }
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("video/*");
+        try { startActivityForResult(pick, PICK_VIDEO); }
+        catch (ActivityNotFoundException missing) { setImportStatus(getString(R.string.binding_import_no_picker), Tone.ERROR, false); }
+    }
+
+    /** Names the album and artist as they read when the video was picked; later edits do not move it. */
+    private void startImport(Uri uri) {
+        String local = album.getText().toString().trim(), only = artist.getText().toString().trim();
+        if (!AmIdentity.present(local)) { setImportStatus(getString(R.string.binding_need_album), Tone.ERROR, false); return; }
+        if (importing != null) importing.set(true);
+        // A bind check still running for this page would otherwise land after the import and replace it.
+        cancelBinding();
+        AtomicBoolean cancelled = new AtomicBoolean();
+        importing = cancelled;
+        refreshImport();
+        setImportStatus(getString(R.string.binding_import_checking), Tone.NEUTRAL, true);
+        Context app = getApplicationContext();
+        try {
+            io.execute(() -> {
+                try {
+                    AmLocalVideos.Imported imported = AmLocalVideos.importVideo(app, uri,
+                            percent -> runOnUiThread(() -> {
+                                if (importing == cancelled) setImportStatus(getString(R.string.binding_import_progress, percent), Tone.NEUTRAL, true);
+                            }),
+                            () -> cancelled.get() || Thread.currentThread().isInterrupted());
+                    AmSettings.trace(app, "ARTWORK_LOCAL_IMPORT", "ready original=" + imported.original() + " cropped=" + imported.cropped()
+                            + " side=" + imported.width() + " durationMs=" + imported.durationMs() + " bytes=" + imported.bytes());
+                    runOnUiThread(() -> {
+                        if (isDestroyed() || importing != cancelled) return;
+                        importing = null;
+                        saveImport(local, only, imported);
+                    });
+                } catch (AmFailure failure) {
+                    AmSettings.trace(app, "ARTWORK_LOCAL_IMPORT", failure.reason + (failure.detail == null ? "" : " " + failure.detail));
+                    runOnUiThread(() -> finishImport(cancelled, importMessage(failure), failure.reason.equals("cancelled") ? Tone.NEUTRAL : Tone.ERROR));
+                } catch (RuntimeException error) {
+                    AmSettings.trace(app, "ARTWORK_LOCAL_IMPORT", AmExceptionDiagnostic.describe("local_import", error));
+                    runOnUiThread(() -> finishImport(cancelled, getString(R.string.binding_import_failed, "unexpected"), Tone.ERROR));
+                }
+            });
+        } catch (RejectedExecutionException closing) {
+            finishImport(cancelled, "", Tone.NEUTRAL);
+        }
+    }
+
+    private void finishImport(AtomicBoolean owner, String text, Tone tone) {
+        if (isDestroyed() || importing != owner) return;
+        importing = null;
+        refreshImport();
+        setImportStatus(text, tone, false);
+    }
+
+    private void cancelImport() {
+        if (importing == null) return;
+        importing.set(true);
+        importing = null;
+        refreshImport();
+        setImportStatus(getString(R.string.binding_import_cancelled), Tone.NEUTRAL, false);
+    }
+
+    private void saveImport(String local, String only, AmLocalVideos.Imported imported) {
+        refreshImport();
+        AmBindings.Binding binding = AmBindings.Binding.local(local, only, imported.id(), imported.name());
+        if (!AmBindings.valid(binding)) { setImportStatus(getString(R.string.binding_failed, "invalid_binding"), Tone.ERROR, false); return; }
+        List<AmBindings.Binding> before = AmBindings.load(this), after = AmBindings.put(before, binding);
+        AmBindings.save(this, after);
+        forgetUnused(before, after);
+        showBindings();
+        setImportStatus(getString(R.string.binding_import_saved, local, importDetail(imported)), Tone.SUCCESS, false);
+    }
+
+    private String importDetail(AmLocalVideos.Imported imported) {
+        long seconds = Math.round(imported.durationMs() / 1000.0);
+        int note = imported.original() ? R.string.binding_import_original
+                : imported.cropped() ? R.string.binding_import_cropped : R.string.binding_import_compressed;
+        return imported.width() + "×" + imported.height() + " · " + seconds / 60 + ":" + String.format(Locale.ROOT, "%02d", seconds % 60)
+                + " · " + Formatter.formatShortFileSize(this, imported.bytes()) + " · " + getString(note);
+    }
+
+    private String importMessage(AmFailure failure) {
+        return switch (failure.reason) {
+            case "local_unreadable" -> getString(R.string.binding_import_unreadable);
+            case "local_not_video" -> getString(R.string.binding_import_not_video);
+            case "local_decoder_missing" -> getString(R.string.binding_import_decoder,
+                    failure.detail == null ? "?" : failure.detail.replaceFirst("^mime=", ""));
+            case "local_encoder_missing" -> getString(R.string.binding_import_encoder);
+            case "local_too_long" -> getString(R.string.binding_import_too_long);
+            case "local_too_short" -> getString(R.string.binding_import_too_short);
+            case "local_too_small" -> getString(R.string.binding_import_too_small);
+            case "local_too_large" -> getString(R.string.binding_import_too_large);
+            case "local_storage" -> getString(R.string.binding_import_storage);
+            case "cancelled" -> getString(R.string.binding_import_cancelled);
+            default -> getString(R.string.binding_import_failed, failure.reason);
+        };
+    }
+
+    private void setImportStatus(String text, Tone tone, boolean working) {
+        importRow.setVisibility(text.isEmpty() && !working ? View.GONE : View.VISIBLE);
+        importBusy.setVisibility(working ? View.VISIBLE : View.GONE);
+        importStatus.setText(text);
+        importStatus.setTextColor(color(switch (tone) {
+            case ERROR -> R.color.am_bad;
+            case SUCCESS -> R.color.am_good;
+            case NEUTRAL -> R.color.am_text_secondary;
+        }));
     }
 
     private View header(int title, View afterTitle, View atEnd) {
@@ -563,7 +747,9 @@ public final class AmBindingActivity extends Activity {
         row.setPadding(0, dp(10), 0, dp(10));
         CoverTile tile = new CoverTile(this, dp(12));
         tile.setPlaceholder(binding.albumId(), binding.title());
-        AmThumbnails.bound(this, tile, binding.thumbnailScope(), binding.albumId(), dp(52));
+        // An imported video is its own picture; catalog bindings keep the art saved when they were bound.
+        if (binding.local()) AmThumbnails.video(tile, AmLocalVideos.file(this, binding.albumId()), dp(52));
+        else AmThumbnails.bound(this, tile, binding.thumbnailScope(), binding.albumId(), dp(52));
         row.addView(tile, new LinearLayout.LayoutParams(dp(52), dp(52)));
         LinearLayout texts = new LinearLayout(this);
         texts.setOrientation(LinearLayout.VERTICAL);
@@ -579,14 +765,16 @@ public final class AmBindingActivity extends Activity {
         LinearLayout target = new LinearLayout(this);
         target.setGravity(Gravity.CENTER_VERTICAL);
         target.addView(AmUi.icon(this, R.drawable.ic_am_forward, color(R.color.am_accent)), new LinearLayout.LayoutParams(dp(14), dp(14)));
-        TextView catalog = AmUi.single(AmUi.text(this, binding.title() + " — " + binding.artist(), 12.5f, color(R.color.am_text_secondary), false));
+        TextView catalog = AmUi.single(AmUi.text(this, binding.local() ? binding.title() : binding.title() + " — " + binding.artist(),
+                12.5f, color(R.color.am_text_secondary), false));
         LinearLayout.LayoutParams catalogParams = new LinearLayout.LayoutParams(0, AmUi.WRAP, 1f);
         catalogParams.setMarginStart(dp(5));
         target.addView(catalog, catalogParams);
         LinearLayout.LayoutParams marketParams = new LinearLayout.LayoutParams(AmUi.WRAP, AmUi.WRAP);
         marketParams.setMarginStart(dp(6));
         target.addView(AmUi.chip(this, binding.netease() ? getString(R.string.source_netease)
-                : "AM · " + binding.country().toUpperCase(Locale.ROOT), color(binding.netease() ? R.color.am_accent : R.color.am_purple)), marketParams);
+                : binding.local() ? getString(R.string.source_local) : "AM · " + binding.country().toUpperCase(Locale.ROOT),
+                color(binding.netease() ? R.color.am_accent : binding.local() ? R.color.am_good : R.color.am_purple)), marketParams);
         texts.addView(target, AmUi.marginTop(this, 4));
         LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, AmUi.WRAP, 1f);
         textParams.setMarginStart(dp(12));
@@ -616,14 +804,16 @@ public final class AmBindingActivity extends Activity {
                 .show();
     }
 
-    /** Drops the saved art of albums no binding refers to any more. */
+    /** Drops the saved art, and an imported video itself, once no binding refers to it any more. */
     private void forgetUnused(List<AmBindings.Binding> before, List<AmBindings.Binding> after) {
         for (AmBindings.Binding old : before) {
             boolean used = false;
             for (AmBindings.Binding kept : after) {
                 if (kept.thumbnailScope().equals(old.thumbnailScope()) && kept.albumId().equals(old.albumId())) { used = true; break; }
             }
-            if (!used) AmThumbnails.forget(this, old.thumbnailScope(), old.albumId());
+            if (used) continue;
+            AmThumbnails.forget(this, old.thumbnailScope(), old.albumId());
+            if (old.local()) AmLocalVideos.delete(this, old.albumId());
         }
     }
 

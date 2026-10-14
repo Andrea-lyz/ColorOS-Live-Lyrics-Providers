@@ -10,7 +10,8 @@ import io.github.andrealtb.artwork.contract.ArtworkQuery;
 /**
  * Album choices the user made in the plugin for local files whose tags differ from the catalog.
  * The player's metadata stays as it is: a local album name, optionally narrowed to one artist,
- * names an Apple Music album, and that album's motion cover is used without a track check.
+ * names an Apple Music or NetEase album, or a video the user imported, and that cover is used without
+ * a track check.
  */
 final class AmBindings {
     static final int MAX = 200;
@@ -22,8 +23,14 @@ final class AmBindings {
         Binding(String localAlbum, String localArtist, String country, String albumId, String title, String artist) {
             this(localAlbum, localArtist, country, albumId, title, artist, "am", "");
         }
+        /** The user's own imported video: no catalog or market, the album ID is the file's content hash. */
+        static Binding local(String localAlbum, String localArtist, String videoId, String name) {
+            return new Binding(localAlbum, localArtist, "", videoId, name, "", "local", "");
+        }
+        boolean apple() { return "am".equals(source); }
         boolean netease() { return "netease".equals(source); }
-        String thumbnailScope() { return netease() ? "netease" : country; }
+        boolean local() { return "local".equals(source); }
+        String thumbnailScope() { return netease() ? "netease" : local() ? "local" : country; }
         boolean sameLocal(Binding other) {
             return AmIdentity.normalize(localAlbum).equals(AmIdentity.normalize(other.localAlbum))
                     && AmIdentity.normalizeArtist(localArtist).equals(AmIdentity.normalizeArtist(other.localArtist));
@@ -89,10 +96,15 @@ final class AmBindings {
     }
 
     static boolean valid(Binding binding) {
-        return AmIdentity.present(binding.localAlbum()) && binding.country().matches("[a-z]{2}")
-                && ("am".equals(binding.source()) && binding.songId().isEmpty()
-                    || binding.netease() && binding.songId().matches("[0-9]{1,20}"))
-                && binding.albumId().matches("[0-9]{1,20}") && binding.localAlbum().length() <= 512
+        boolean target = switch (binding.source() == null ? "" : binding.source()) {
+            case "am" -> binding.country().matches("[a-z]{2}") && binding.albumId().matches("[0-9]{1,20}") && binding.songId().isEmpty();
+            case "netease" -> binding.country().matches("[a-z]{2}") && binding.albumId().matches("[0-9]{1,20}")
+                    && binding.songId().matches("[0-9]{1,20}");
+            // The ID names a private file, so only a content hash may reach the file system.
+            case "local" -> binding.country().isEmpty() && AmLocalPolicy.videoId(binding.albumId()) && binding.songId().isEmpty();
+            default -> false;
+        };
+        return target && AmIdentity.present(binding.localAlbum()) && binding.localAlbum().length() <= 512
                 && binding.localArtist().length() <= 512 && binding.title().length() <= 512 && binding.artist().length() <= 512;
     }
 

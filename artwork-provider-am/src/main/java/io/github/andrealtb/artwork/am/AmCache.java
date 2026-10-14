@@ -228,6 +228,8 @@ final class AmCache {
     }
     private void pin(File file) { synchronized (pinLock) { pins.merge(file.getName(), 1, Integer::sum); } }
     void unpin(File file) {
+        // Pins are by name; an imported cover lives elsewhere and must never release a cache file's pin.
+        if (file == null || !root.equals(file.getParentFile())) return;
         synchronized (pinLock) { pins.computeIfPresent(file.getName(), (name, count) -> count <= 1 ? null : count - 1); }
     }
     private boolean pinned(String name) { synchronized (pinLock) { return pins.containsKey(name); } }

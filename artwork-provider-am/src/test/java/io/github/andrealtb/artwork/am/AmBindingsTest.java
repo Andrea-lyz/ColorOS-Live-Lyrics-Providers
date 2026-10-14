@@ -118,6 +118,33 @@ public class AmBindingsTest {
         assertEquals(netease.thumbnailScope(), AmBindings.decode(AmBindings.encode(List.of(netease))).get(0).thumbnailScope());
     }
 
+    @Test public void importedVideoBindsByContentHashAndReplacesOrIsReplacedLikeAnyBinding() {
+        String id = "0123456789abcdef".repeat(4);
+        var local = AmBindings.Binding.local("Demo Tape", "", id, "clip.mp4");
+        assertTrue(AmBindings.valid(local));
+        assertTrue(local.local());
+        assertFalse(local.apple() || local.netease());
+        assertEquals("local", local.thumbnailScope());
+        assertEquals(List.of(local), AmBindings.decode(AmBindings.encode(List.of(local))));
+        assertEquals(id, AmBindings.find(List.of(local), query("Any Song", "Anyone", "demo tape")).albumId());
+        // The ID names a private file: nothing but a content hash may reach the file system.
+        for (String bad : List.of("../" + "a".repeat(61), id.toUpperCase(java.util.Locale.ROOT), id.substring(1), "10")) {
+            assertFalse(bad, AmBindings.valid(AmBindings.Binding.local("Demo Tape", "", bad, "clip.mp4")));
+        }
+        // A local binding has no market, and a catalog binding never carries a hash.
+        assertFalse(AmBindings.valid(new AmBindings.Binding("Demo Tape", "", "us", id, "clip.mp4", "", "local", "")));
+        assertFalse(AmBindings.valid(new AmBindings.Binding("Demo Tape", "", "us", id, "t", "a")));
+        assertFalse(AmBindings.valid(new AmBindings.Binding("Demo Tape", "", "", "10", "t", "a", "other", "")));
+        // One binding per local album, whichever kind came last.
+        var apple = binding("Demo Tape", "", "10");
+        assertEquals(List.of(local), AmBindings.put(List.of(apple), local));
+        assertEquals(List.of(apple), AmBindings.put(List.of(local), apple));
+        // An imported cover limited to one artist leaves the album's other artists alone.
+        var limited = AmBindings.Binding.local("Demo Tape", "Band", id, "clip.mp4");
+        assertNull(AmBindings.find(List.of(limited), query("Any Song", "Someone Else", "Demo Tape")));
+        assertEquals(2, AmBindings.put(List.of(apple), limited).size());
+    }
+
     @Test public void albumSearchOffersEveryAlbumWithItsEditionDetails() throws Exception {
         var hits = AmPage.albumHits("{\"results\":[{\"wrapperType\":\"collection\",\"collectionType\":\"Album\",\"collectionId\":10,"
                 + "\"collectionName\":\"1989 (Deluxe Edition)\",\"artistName\":\"Taylor Swift\",\"releaseDate\":\"2014-10-27T07:00:00Z\","

@@ -140,7 +140,11 @@ public final class AmArtworkService extends Service {
                         asset.height, asset.durationMs, asset.fileBytes, remaining);
                 request.finished = true;
                 reply(request.callback, request.id, new ArtworkResult(ArtworkResult.Status.READY, request.asset, 0,
-                        "netease".equals(result.source()) ? "netease_official_verified" : "am_web_verified"));
+                        switch (result.source()) {
+                            case "netease" -> "netease_official_verified";
+                            case "local" -> "local_import_verified";
+                            default -> "am_web_verified";
+                        }));
             }
         } catch (AmFailure failure) { fail(request, failure.result()); }
         catch (Exception error) {

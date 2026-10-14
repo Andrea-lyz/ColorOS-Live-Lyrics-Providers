@@ -16,8 +16,10 @@ final class AmResolver {
     record Resolved(File file, ArtworkAsset asset, String source, long sessionEpoch) {
         Resolved(File file, ArtworkAsset asset) { this(file, asset, "am", -1); }
         boolean available(Context context) {
-            return AmSettings.enabled(context) && (!"netease".equals(source)
-                    || NcmSession.enabled(context) && NcmSession.epoch() == sessionEpoch && NcmSession.read(context) != null);
+            if (!AmSettings.enabled(context)) return false;
+            if ("netease".equals(source)) return NcmSession.enabled(context) && NcmSession.epoch() == sessionEpoch && NcmSession.read(context) != null;
+            // Deleting the binding removes the file; a lease on it ends there.
+            return !"local".equals(source) || file.isFile();
         }
     }
     private final Context context;
@@ -37,6 +39,7 @@ final class AmResolver {
         boolean fallback = binding == null && query.appleMusicUrl.isEmpty()
                 && NcmSession.enabled(context) && NcmSession.read(context) != null;
         return ArtworkSources.resolve(binding != null, () -> {
+            if (binding != null && binding.local()) return local(query, binding, task);
             if (binding != null && binding.netease())
                 return recover(task, () -> new NcmResolver(context).resolve(query, binding, task));
             if (!fallback) return recover(task, () -> automatic(query, task, false));
@@ -92,6 +95,8 @@ final class AmResolver {
         AmIdentity.AppleLink link = query.appleMusicUrl.isEmpty() ? null : AmIdentity.link(query.appleMusicUrl);
         // An exact catalog link outranks the user's album choice, which is meant for local files without one.
         AmBindings.Binding binding = link == null ? AmBindings.find(AmBindings.load(context), query) : null;
+        // Another source's binding saved since routing: never read its ID as an Apple album.
+        if (binding != null && !binding.apple()) binding = null;
         AmDiagnostics.record(context, "ARTWORK_AM_QUERY", "route=" + (link != null ? "link" : binding != null ? "binding" : "automatic")
                 + " market=" + (link != null ? link.country() : binding != null ? binding.country() : AmSettings.country(context))
                 + " titlePresent=" + !query.title.isEmpty() + " artistPresent=" + !query.artist.isEmpty()
@@ -103,6 +108,24 @@ final class AmResolver {
             return bound(query, binding, task);
         }
         return matched(query, link, task);
+    }
+
+    /** The user's own imported video: no catalog and no network, only the private file the binding names. */
+    private Resolved local(ArtworkQuery query, AmBindings.Binding binding, AmNetwork.Task task) throws AmFailure {
+        task.check();
+        AmSettings.trace(context, "ARTWORK_LOCAL_BINDING", "user_video");
+        File file = AmLocalVideos.file(context, binding.albumId());
+        if (!file.isFile()) throw new AmFailure(Status.UNSUPPORTED, "local_video_missing");
+        try (ParcelFileDescriptor fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) {
+            ArtworkAsset asset = ArtworkFileVerifier.inspect(fd, UUID.randomUUID().toString(), binding.albumId(), query.maxFileBytes);
+            if (!asset.fits(query)) throw new AmFailure(Status.UNSUPPORTED, "resource_limits");
+            AmSettings.dimensions(context, "ARTWORK_LOCAL_READY", asset.width, asset.height, asset.fileBytes);
+            return new Resolved(file, asset, "local", -1);
+        } catch (AmFailure failure) {
+            throw failure;
+        } catch (Exception error) {
+            throw new AmFailure(Status.UNSUPPORTED, "local_video_invalid", 0, AmExceptionDiagnostic.describe("local_inspect", error));
+        }
     }
 
     /** The user named this album for the local album name: no track check, the album's own motion cover. */
