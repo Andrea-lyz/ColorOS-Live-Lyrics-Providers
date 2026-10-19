@@ -159,6 +159,8 @@ part of the v5 lyric matrix above. Without it the lock screen keeps the official
   path is unaffected.
 - Source version 1.0.6 (versionCode 10), signed with the same release key as the lyric Providers. From
   Bridge 4.5.0 it ships with the formal release as its own asset and does not enter the Provider bundle.
+  Bridge 4.5.2 does not change this Provider or the lyric Providers; only the suite asset file names
+  move to 4.5.2.
 - 1.0.6 (with Bridge 4.5.1): the manual binding page can import your own video as a local album's motion
   cover, keeping a square 1080 SDR H.264 picture as is and centre-cropping and compressing anything else to
   1080; manual search reads the selected storefront's Apple Music album shelf; same-titled editions get a

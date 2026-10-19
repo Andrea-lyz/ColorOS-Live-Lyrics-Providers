@@ -1,6 +1,6 @@
 {
   "schema": 4,
-  "suiteVersion": "4.5.1",
+  "suiteVersion": "4.5.2",
   "sourceTag": "main",
   "compileSdk": 37,
   "targetSdk": 37,
@@ -10,7 +10,7 @@
   "xposedStaticScope": true,
   "xposedExceptionMode": "protective",
   "xposedAutoHotReload": false,
-  "bundleAsset": "ColorOS-Live-Lyrics-Providers-v4.5.1.zip",
+  "bundleAsset": "ColorOS-Live-Lyrics-Providers-v4.5.2.zip",
   "artworkProviders": [
     {
       "module": "artwork-provider-am",
@@ -35,7 +35,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.salt",
       "versionName": "1.1.2",
       "versionCode": 8,
-      "asset": "ColorOS-Live-Lyrics-Provider-Salt-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-Salt-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.salt.SaltModuleEntry",
       "scopes": [
         "com.salt.music"
@@ -57,7 +57,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.cone",
       "versionName": "1.1.2",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-Cone-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-Cone-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.cone.ConeModuleEntry",
       "scopes": [
         "ink.trantor.coneplayer",
@@ -84,7 +84,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.kuwo",
       "versionName": "1.2.2",
       "versionCode": 5,
-      "asset": "ColorOS-Live-Lyrics-Provider-KuWo-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-KuWo-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.kuwo.KuWoModuleEntry",
       "scopes": [
         "cn.kuwo.player"
@@ -106,7 +106,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.lx",
       "versionName": "1.2.1",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-LX-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-LX-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.lx.LxModuleEntry",
       "scopes": [
         "cn.toside.music.mobile",
@@ -133,7 +133,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.poweramp",
       "versionName": "1.2.1",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-Poweramp-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-Poweramp-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.poweramp.PowerampModuleEntry",
       "scopes": [
         "com.maxmpz.audioplayer"
@@ -155,7 +155,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.metrolist",
       "versionName": "1.2.1",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-Metrolist-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-Metrolist-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.metrolist.MetrolistModuleEntry",
       "scopes": [
         "com.metrolist.music"
@@ -177,7 +177,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.kugou",
       "versionName": "1.2.4",
       "versionCode": 7,
-      "asset": "ColorOS-Live-Lyrics-Provider-KuGou-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-KuGou-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.kugou.KuGouModuleEntry",
       "scopes": [
         "com.kugou.android",
@@ -208,7 +208,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.qq",
       "versionName": "1.2.1",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-QQ-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-QQ-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.qq.QqModuleEntry",
       "scopes": [
         "com.tencent.qqmusic"
@@ -233,7 +233,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.netease",
       "versionName": "1.2.1",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-NetEase-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-NetEase-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.netease.NeteaseModuleEntry",
       "scopes": [
         "com.netease.cloudmusic",
@@ -270,7 +270,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.apple",
       "versionName": "1.2.1",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-Apple-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-Apple-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.apple.AppleModuleEntry",
       "scopes": [
         "com.apple.android.music"
@@ -292,7 +292,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.spotify",
       "versionName": "1.1.2",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-Spotify-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-Spotify-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.spotify.SpotifyModuleEntry",
       "scopes": [
         "com.spotify.music"
@@ -317,7 +317,7 @@
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.qishui",
       "versionName": "1.1.2",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-QiShui-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-QiShui-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.qishui.QishuiModuleEntry",
       "scopes": [
         "com.luna.music"
@@ -343,7 +343,7 @@
       "applicationClass": "UniversalProviderApplication",
       "versionName": "1.1.2",
       "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-Universal-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-Universal-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.universal.UniversalModuleEntry",
       "scopes": [
         "system"
@@ -366,7 +366,7 @@
       "applicationClass": "ReadifyApplication",
       "versionName": "1.0.2",
       "versionCode": 3,
-      "asset": "ColorOS-Live-Lyrics-Provider-Readify-v4.5.1.apk",
+      "asset": "ColorOS-Live-Lyrics-Provider-Readify-v4.5.2.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.readify.ReadifyModule",
       "scopes": [
         "com.readin.app"
