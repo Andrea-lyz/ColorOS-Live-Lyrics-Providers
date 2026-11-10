@@ -246,6 +246,85 @@ class NeteaseLyricInfoPayloadEncoderTest {
         assertTrue(encoded.value.contains("\"rawLyric\""))
     }
 
+    @Test
+    fun replacesOfficialDisplayLyricWhenHostTimelineIsOutOfOrder() {
+        val lines = listOf(
+            RichLyricLine(begin = 0L, end = 9_000L, duration = 9_000L, text = "Line 0"),
+            RichLyricLine(begin = 10_000L, end = 19_000L, duration = 9_000L, text = "Line 1"),
+            RichLyricLine(begin = 20_000L, end = 29_000L, duration = 9_000L, text = "Line 2"),
+            RichLyricLine(begin = 30_000L, end = 39_000L, duration = 9_000L, text = "Line 3"),
+            RichLyricLine(begin = 40_000L, end = 49_000L, duration = 9_000L, text = "Line 4")
+        )
+        val existing = """{"lyric":"[00:00.000]Line 0\n[00:10.000]Line 1\n[00:30.000]Line 3\n[00:20.000]Line 2\n[00:40.000]Line 4\n","songName":"Out Of Order"}"""
+
+        val encoded = NeteaseLyricInfoPayloadEncoder.encode(
+            track = TrackIdentity(id = "1", title = "Out Of Order", artist = "Artist", durationMs = 60_000L),
+            lines = lines,
+            trackGeneration = 1L,
+            hostPackage = NeteasePlayerConstants.HOST_PACKAGE,
+            existingLyricInfo = existing,
+            mode = NeteasePayloadMode.OFFICIAL_APPEND
+        )
+
+        requireNotNull(encoded)
+        assertTrue(encoded.repairedOfficialLyric)
+        val line20 = encoded.plainLyric.indexOf("[00:20.000]Line 2")
+        val line30 = encoded.plainLyric.indexOf("[00:30.000]Line 3")
+        assertTrue(line20 in 0 until line30)
+        assertFalse(encoded.plainLyric.contains("[00:30.000]Line 3\n[00:20.000]Line 2"))
+    }
+
+    @Test
+    fun replacesOfficialDisplayLyricWhenPlaceholderRowExceedsTrackDuration() {
+        val lines = (0..5).map { index ->
+            RichLyricLine(
+                begin = index * 10_000L,
+                end = index * 10_000L + 9_000L,
+                duration = 9_000L,
+                text = "Line $index"
+            )
+        }
+        val existing = """{"lyric":"[00:00.000]Line 0\n[00:10.000]Line 1\n[00:20.000]Line 2\n[00:30.000]Line 3\n[00:40.000]Line 4\n[00:50.000]Line 5\n[01:05.960]\n","songName":"Placeholder"}"""
+
+        val encoded = NeteaseLyricInfoPayloadEncoder.encode(
+            track = TrackIdentity(id = "2", title = "Placeholder", artist = "Artist", durationMs = 60_000L),
+            lines = lines,
+            trackGeneration = 1L,
+            hostPackage = NeteasePlayerConstants.HOST_PACKAGE,
+            existingLyricInfo = existing,
+            mode = NeteasePayloadMode.OFFICIAL_APPEND
+        )
+
+        requireNotNull(encoded)
+        assertTrue(encoded.repairedOfficialLyric)
+        assertFalse(encoded.plainLyric.contains("01:05.960"))
+    }
+
+    @Test
+    fun keepsMonotonicOfficialDisplayLyricInsideTrackDuration() {
+        val lines = (0..3).map { index ->
+            RichLyricLine(
+                begin = index * 10_000L,
+                end = index * 10_000L + 9_000L,
+                duration = 9_000L,
+                text = "Line $index"
+            )
+        }
+        val existing = """{"lyric":"[00:00.000]Line 0\n[00:10.000]Line 1\n[00:20.000]Line 2\n[00:30.000]Line 3\n","songName":"Healthy"}"""
+
+        val encoded = NeteaseLyricInfoPayloadEncoder.encode(
+            track = TrackIdentity(id = "3", title = "Healthy", artist = "Artist", durationMs = 60_000L),
+            lines = lines,
+            trackGeneration = 1L,
+            hostPackage = NeteasePlayerConstants.HOST_PACKAGE,
+            existingLyricInfo = existing,
+            mode = NeteasePayloadMode.OFFICIAL_APPEND
+        )
+
+        requireNotNull(encoded)
+        assertFalse(encoded.repairedOfficialLyric)
+    }
+
     private fun inlineTagTimes(line: String): List<Long> {
         val regex = Regex("""<(\d{1,3}):(\d{2})\.(\d{1,3})>""")
         return regex.findAll(line).map { match ->
