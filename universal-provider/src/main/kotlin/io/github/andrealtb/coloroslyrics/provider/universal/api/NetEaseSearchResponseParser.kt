@@ -15,9 +15,15 @@ internal object NetEaseSearchResponseParser {
 
     fun songId(song: JSONObject): Long = song.optLong("id")
 
+    /** Every credited artist, so a duet credited in another order is not a hard mismatch. */
     fun artist(song: JSONObject): String {
-        val artists = song.optJSONArray("ar") ?: song.optJSONArray("artists")
-        return artists?.optJSONObject(0)?.optString("name").orEmpty()
+        val artists = song.optJSONArray("ar") ?: song.optJSONArray("artists") ?: return ""
+        return buildList {
+            for (index in 0 until artists.length()) {
+                val name = artists.optJSONObject(index)?.optString("name").orEmpty().trim()
+                if (name.isNotEmpty()) add(name)
+            }
+        }.joinToString("/")
     }
 
     fun album(song: JSONObject): String {

@@ -99,6 +99,21 @@ class UniversalMonitorActivity : ComponentActivity() {
                     Toast.makeText(this@UniversalMonitorActivity, getString(io.github.andrealtb.coloroslyrics.provider.universal.R.string.toast_session_refreshed), Toast.LENGTH_SHORT).show()
                 },
                 onClearCache = {
+                    snapshotRevision++
+                    cachedSongs.intValue = 0
+                    if (snapshotMap.value["cachedSongs"] != "0") {
+                        snapshotMap.value = snapshotMap.value + ("cachedSongs" to "0")
+                    }
+                    UniversalAppIo.execute {
+                        runCatching {
+                            val current = UniversalSnapshotStore.read()
+                            if (!current.isNullOrBlank()) {
+                                val lines = current.lines().filterNot { it.startsWith("cachedSongs=") }
+                                val updated = (lines + "cachedSongs=0").joinToString("\n").trimEnd() + "\n"
+                                UniversalSnapshotStore.write(updated)
+                            }
+                        }
+                    }
                     sendBroadcast(Intent(UniversalSnapshotStore.ACTION_CLEAR_CACHE).apply {
                         addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
                         addFlags(0x01000000)

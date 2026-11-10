@@ -72,4 +72,15 @@ class UniversalLyricCacheFileTest {
             executor.shutdownNow()
         }
     }
+
+    @Test
+    fun clearTruncatesSongsToZeroEvenWhenFileRemainsOnDisk() {
+        val file = folder.newFile()
+        UniversalLyricCache.put("one", "artist", payload("one"), file)
+        assertEquals(1, UniversalLyricCache.getCacheCount(file))
+        UniversalLyricCache.clear(file)
+        // Simulate a filesystem where unlink was denied and the truncated file stayed on disk.
+        if (!file.isFile) file.writeText("{}")
+        assertEquals(0, UniversalLyricCache.getCacheCount(file))
+    }
 }

@@ -24,9 +24,9 @@ class NoLyricPolicyTest {
     }
 
     @Test
-    fun confirmedMissIsAutoNegative() {
+    fun confirmedMissIsNotANegativeResult() {
         assertEquals(
-            NoLyricPolicy.Outcome.AUTO_NEGATIVE,
+            NoLyricPolicy.Outcome.AUTO_MISS,
             NoLyricPolicy.decide(hasUsableLyric = false, instrumental = false, transientFailure = false)
         )
         assertEquals(NoLyricPolicy.REASON_MISS, NoLyricPolicy.autoReason(instrumental = false))
@@ -46,11 +46,22 @@ class NoLyricPolicyTest {
         val user = "{\"noLyric\":true,\"noLyricReason\":\"userConfirmed\"}"
         val lyric = "{\"noLyric\":false,\"lyric\":\"[00:01.000]hi\"}"
         assertTrue(NoLyricPolicy.isNoLyric(auto))
-        assertTrue(NoLyricPolicy.shouldSkipNetwork(auto))
+        // A legacy automatic miss is retryable, so it must not suppress the network.
+        assertFalse(NoLyricPolicy.shouldSkipNetwork(auto))
+        assertTrue(NoLyricPolicy.isRetryableMiss(auto))
         assertFalse(NoLyricPolicy.isUserConfirmed(auto))
+        assertTrue(NoLyricPolicy.shouldSkipNetwork(user))
         assertTrue(NoLyricPolicy.isUserConfirmed(user))
+        assertFalse(NoLyricPolicy.isRetryableMiss(user))
         assertFalse(NoLyricPolicy.isNoLyric(lyric))
         assertFalse(NoLyricPolicy.shouldSkipNetwork(lyric))
     }
-}
 
+    @Test
+    fun missPayloadIsNotANegativeResult() {
+        val miss = NoLyricPolicy.missPayloadJson("Song", "Artist")
+        assertFalse(NoLyricPolicy.isNoLyric(miss))
+        assertTrue(NoLyricPolicy.isRetryableMiss(miss))
+        assertFalse(NoLyricPolicy.shouldSkipNetwork(miss))
+    }
+}

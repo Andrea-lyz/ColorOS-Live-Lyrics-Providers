@@ -8,10 +8,10 @@ internal data class TimedLine(val startMs: Long, val endMs: Long, val words: Lis
 internal object StructuredLyrics {
     private val QRC_XML = Regex("""LyricContent\s*=\s*"([\s\S]*?)"(?=\s*/?>)""")
     private val META = Regex("""^\[(\w+):([^]]*)]$""")
-    private val QRC_LINE = Regex("""^\[(\d+),(\d+)](.*)$""")
-    private val QRC_WORD = Regex("""((?:(?!\(\d+,\d+\)).)*)\((\d+),(\d+)\)""")
-    private val YRC_LINE = Regex("""^\[(\d+),(\d+)](.*)$""")
-    private val YRC_WORD = Regex("""\((\d+),(\d+),\d+\)([^()]*)""")
+    private val QRC_LINE = Regex("""^\[\s*(\d+)\s*,\s*(\d+)\s*](.*)$""")
+    private val QRC_WORD = Regex("""((?:(?!\(\s*\d+\s*,\s*\d+\s*\)).)*)\(\s*(\d+)\s*,\s*(\d+)\s*\)""")
+    private val YRC_LINE = Regex("""^\[\s*(\d+)\s*,\s*(\d+)\s*](.*)$""")
+    private val YRC_WORD = Regex("""\(\s*(\d+)\s*,\s*(\d+)\s*,\s*\d+\s*\)([^()]*)""")
     private val LRC_TIME = Regex("""\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?]""")
 
     fun parseQrc(text: String?): List<TimedLine> {
@@ -19,7 +19,7 @@ internal object StructuredLyrics {
         var content: String = text
         QRC_XML.find(text)?.groupValues?.getOrNull(1)?.let { raw ->
             content = raw.replace("&quot;", "\"")
-                .replace("&apos;", "''")
+                .replace("&apos;", "'")
                 .replace("&lt;", "<")
                 .replace("&gt;", ">")
                 .replace("&amp;", "&")
@@ -143,6 +143,7 @@ internal object StructuredLyrics {
         val normalized = text.trim().lowercase().replace("\uFF1A", ":")
         if (normalized.isEmpty()) return true
         if (TRACK_HEADER.matches(text.trim())) return true
+        if (SHORT_CREDIT_LABEL.containsMatchIn(normalized)) return true
         return CREDIT_PREFIXES.any { prefix ->
             normalized.startsWith(prefix) ||
                 normalized.startsWith("$prefix:") ||
@@ -169,9 +170,18 @@ internal object StructuredLyrics {
     private val TRACK_HEADER = Regex("^.{1,80}\\s[-–—]\\s.{1,80}$")
 
     private val CREDIT_PREFIXES = listOf(
-        "作词", "作曲", "编曲", "制作人", "混音", "母带", "录音",
+        "作词", "作曲", "编曲", "制作人", "混音", "母带", "录音", "合声", "和声",
+        "出品", "监制", "统筹", "编程", "词曲",
         "written by", "produced by", "composed by", "arranged by",
         "lyrics by", "music by", "mixed by", "mastered by", "vocals by"
+    )
+
+    /**
+     * QQ Music writes credits as "词：…" / "曲：…". The label only names a credit when a colon
+     * follows it, so an ordinary lyric line that starts with 词 still aligns normally.
+     */
+    private val SHORT_CREDIT_LABEL = Regex(
+        """^(词曲|词|曲|编曲|制作人?|合声|和声|监制|出品|统筹|编程|吉他|贝斯|鼓|录音|混音|母带|op|sp)\s*:"""
     )
 
     fun toPlainLrc(lines: List<TimedLine>): String =

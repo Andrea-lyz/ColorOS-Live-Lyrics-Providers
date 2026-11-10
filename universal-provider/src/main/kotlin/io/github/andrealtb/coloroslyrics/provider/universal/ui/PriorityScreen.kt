@@ -56,6 +56,32 @@ fun PriorityScreen(onBack: () -> Unit) {
     var rowHeightPx by remember { mutableFloatStateOf(0f) }
     val rowSpacingPx = with(LocalDensity.current) { 6.dp.toPx() }
 
+    /** Applies the order as soon as it changes, so leaving without the button keeps it. */
+    fun persistSelection(notify: Boolean) {
+        if (!settingsLoaded) return
+        val selected = sourceList.filter { enabledMap[it] == true }
+        val appContext = context.applicationContext
+        UniversalAppIo.execute {
+            LyricsSourceConfigStore.write(appContext, selected)
+            val prefs = appContext.getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, Context.MODE_PRIVATE)
+            appContext.sendBroadcast(Intent(UniversalSnapshotStore.ACTION_UPDATE_SOURCE_CONFIG).apply {
+                addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                putExtra(UniversalSnapshotStore.EXTRA_SOURCE_PRIORITY, LyricsSourceConfigStore.encode(selected))
+                putExtra(UniversalSnapshotStore.EXTRA_WORD_TIMING_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_WORD_TIMING, false))
+                putExtra(UniversalSnapshotStore.EXTRA_TRANSLATION_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_TRANSLATION, true))
+                putExtra(UniversalSnapshotStore.EXTRA_RAW_LYRIC_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_RAW_LYRIC, true))
+                putExtra(UniversalSnapshotStore.EXTRA_DEBUG_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_DEBUG, false))
+                putExtra(
+                    UniversalSnapshotStore.EXTRA_CLOCK_LINE_FALLBACK_ENABLED,
+                    prefs.getBoolean(UniversalSettingsConstants.KEY_CLOCK_LINE_FALLBACK, true)
+                )
+            })
+        }
+        if (notify) {
+            Toast.makeText(context, context.getString(R.string.toast_priority_saved), Toast.LENGTH_SHORT).show()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -107,6 +133,7 @@ fun PriorityScreen(onBack: () -> Unit) {
                                     },
                                     onDragEnd = {
                                         draggingId = null
+                                        persistSelection(notify = false)
                                         dragOffset = 0f
                                     },
                                     onDrag = { change, amount ->
@@ -146,7 +173,10 @@ fun PriorityScreen(onBack: () -> Unit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Switch(
                                     checked = enabledMap[id] == true,
-                                    onCheckedChange = { enabledMap[id] = it }
+                                    onCheckedChange = {
+                                        enabledMap[id] = it
+                                        persistSelection(notify = false)
+                                    }
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Icon(
@@ -166,25 +196,7 @@ fun PriorityScreen(onBack: () -> Unit) {
         Button(
             enabled = settingsLoaded,
             onClick = {
-                val selected = sourceList.filter { enabledMap[it] == true }
-                val appContext = context.applicationContext
-                UniversalAppIo.execute {
-                    LyricsSourceConfigStore.write(appContext, selected)
-                    val prefs = appContext.getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, Context.MODE_PRIVATE)
-                    appContext.sendBroadcast(Intent(UniversalSnapshotStore.ACTION_UPDATE_SOURCE_CONFIG).apply {
-                        addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
-                        putExtra(UniversalSnapshotStore.EXTRA_SOURCE_PRIORITY, LyricsSourceConfigStore.encode(selected))
-                        putExtra(UniversalSnapshotStore.EXTRA_WORD_TIMING_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_WORD_TIMING, false))
-                        putExtra(UniversalSnapshotStore.EXTRA_TRANSLATION_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_TRANSLATION, true))
-                        putExtra(UniversalSnapshotStore.EXTRA_RAW_LYRIC_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_RAW_LYRIC, true))
-                        putExtra(UniversalSnapshotStore.EXTRA_DEBUG_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_DEBUG, false))
-                        putExtra(
-                            UniversalSnapshotStore.EXTRA_CLOCK_LINE_FALLBACK_ENABLED,
-                            prefs.getBoolean(UniversalSettingsConstants.KEY_CLOCK_LINE_FALLBACK, true)
-                        )
-                    })
-                }
-                Toast.makeText(context, context.getString(R.string.toast_priority_saved), Toast.LENGTH_SHORT).show()
+                persistSelection(notify = true)
                 onBack()
             },
             modifier = Modifier.fillMaxWidth().height(56.dp),
