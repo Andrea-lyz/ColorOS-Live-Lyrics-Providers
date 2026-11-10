@@ -25,6 +25,9 @@ object NeteaseLyricInfoPayloadEncoder {
     private val JSON_STRING_FIELD =
         Regex(""""([^"\\]+)":\s*"((?:\\.|[^"\\])*)"""")
     private const val DISPLAY_LINE_MATCH_WINDOW_MS = 650L
+    private const val TIMELINE_END_MARGIN_MS = 2_000L
+    private const val MIN_TIMELINE_ROWS_TO_COMPARE = 12
+    private const val MAX_MISSING_DISPLAY_ROW_PERCENT = 5
 
     data class Encoded(
         val value: String,
@@ -44,6 +47,11 @@ object NeteaseLyricInfoPayloadEncoder {
         val matchKey: String
     )
 
+    private data class TimedRow(
+        val timeMillis: Long,
+        val matchKey: String
+    )
+
     fun encode(
         track: TrackIdentity,
         lines: List<RichLyricLine>,
@@ -53,15 +61,19 @@ object NeteaseLyricInfoPayloadEncoder {
         mode: NeteasePayloadMode
     ): Encoded? {
         if (lines.isEmpty()) return null
-        val plainLyric = toPlainLrc(track, lines)
+        // ColorOS maps official rows by index, so every encoded lane must share one
+        // chronological order; a single stray row shifts all later slots.
+        val orderedLines = lines.sortedBy { it.begin }
+        val plainLyric = toPlainLrc(track, orderedLines)
         if (plainLyric.isBlank()) return null
-        val rawLyric = toEnhancedLrc(track, lines)
-        val translationLyric = toTranslationLrc(lines)
+        val rawLyric = toEnhancedLrc(track, orderedLines)
+        val translationLyric = toTranslationLrc(orderedLines)
         val existing = existingLyricInfo?.trim().orEmpty()
         val displayLyric = chooseDisplayLyric(
             mode = mode,
             hostOfficialLyric = extractJsonString(existing, "lyric"),
-            decodedPrimaryLyric = plainLyric
+            decodedPrimaryLyric = plainLyric,
+            trackDurationMs = track.durationMs
         )
         val officialLyric = displayLyric.lyric
         val songId = firstNonBlank(
@@ -105,23 +117,28 @@ object NeteaseLyricInfoPayloadEncoder {
 
     /**
      * Keep NetEase's native display lyric unless it can alias a later row onto an earlier
-     * decoded YRC line. ColorOS suppresses duplicate alias objects outside the active slot;
-     * that made the later row stay blank until playback reached it. In that narrow case the
-     * decoded primary timeline is authoritative because it is also the source of rawLyric.
+     * decoded YRC line, or its timeline is out of order / runs past the track. ColorOS
+     * suppresses duplicate alias objects outside the active slot and maps rows by index;
+     * either defect made later rows stay blank until playback reached them. In both cases
+     * the decoded primary timeline is authoritative because it is also the source of rawLyric.
      */
     private fun chooseDisplayLyric(
         mode: NeteasePayloadMode,
         hostOfficialLyric: String?,
-        decodedPrimaryLyric: String
+        decodedPrimaryLyric: String,
+        trackDurationMs: Long
     ): DisplayLyricSelection {
         val hostLyric = hostOfficialLyric?.takeIf { it.isNotBlank() }
             ?: return DisplayLyricSelection(decodedPrimaryLyric, false)
-        if (mode != NeteasePayloadMode.OFFICIAL_APPEND ||
-            !hasCrossTimestampAliasCollision(hostLyric, decodedPrimaryLyric)
-        ) {
+        if (mode != NeteasePayloadMode.OFFICIAL_APPEND) {
             return DisplayLyricSelection(hostLyric, false)
         }
-        return DisplayLyricSelection(decodedPrimaryLyric, true)
+        if (hasCrossTimestampAliasCollision(hostLyric, decodedPrimaryLyric) ||
+            hasUntrustworthyDisplayTimeline(hostLyric, decodedPrimaryLyric, trackDurationMs)
+        ) {
+            return DisplayLyricSelection(decodedPrimaryLyric, true)
+        }
+        return DisplayLyricSelection(hostLyric, false)
     }
 
     private fun hasCrossTimestampAliasCollision(
@@ -154,6 +171,57 @@ object NeteaseLyricInfoPayloadEncoder {
         }
         return false
     }
+
+    /**
+     * NetEase 9.6.x can hand over a display lyric whose tail is out of playback order (a
+     * 03:34 row after a 03:53 row) or that carries a placeholder row past the track end.
+     * ColorOS renders official rows in list order and Bridge maps them by index, so one
+     * stray row shifts every later slot: the row stays blank until playback reaches it.
+     * The decoded primary timeline is sorted by construction, so fall back to it whenever
+     * the host timeline cannot be trusted.
+     */
+    private fun hasUntrustworthyDisplayTimeline(
+        hostLyric: String,
+        decodedPrimaryLyric: String,
+        trackDurationMs: Long
+    ): Boolean {
+        val officialRows = parseTimedRows(hostLyric)
+        if (officialRows.isEmpty()) return false
+        for (index in 1 until officialRows.size) {
+            if (officialRows[index].timeMillis < officialRows[index - 1].timeMillis) {
+                return true
+            }
+        }
+        val decodedRows = parseTimedRows(decodedPrimaryLyric)
+        if (trackDurationMs > 0L) {
+            // Without a host duration a trailing line cannot be judged, so only a known
+            // duration may reject rows that start past the end of the track.
+            val lastDecodedTime = decodedRows.maxOfOrNull { it.timeMillis } ?: 0L
+            val boundary = maxOf(trackDurationMs, lastDecodedTime) + TIMELINE_END_MARGIN_MS
+            for (row in officialRows) {
+                if (row.timeMillis > boundary) return true
+            }
+        }
+        val officialTextRows = officialRows.count { it.matchKey.isNotEmpty() }
+        val decodedTextRows = decodedRows.count { it.matchKey.isNotEmpty() }
+        if (decodedTextRows < MIN_TIMELINE_ROWS_TO_COMPARE) return false
+        val missingPercent = (decodedTextRows - officialTextRows) * 100 / decodedTextRows
+        return missingPercent > MAX_MISSING_DISPLAY_ROW_PERCENT
+    }
+
+    private fun parseTimedRows(lyric: String): List<TimedRow> =
+        lyric.lineSequence().mapNotNull { rawLine ->
+            val line = rawLine.trim()
+            val firstTag = TIMED_LRC_CAPTURE_REGEX.find(line)
+                ?.takeIf { it.range.first == 0 }
+                ?: return@mapNotNull null
+            val timeMillis = parseLrcTimeMillis(firstTag)
+            if (timeMillis < 0L) return@mapNotNull null
+            TimedRow(
+                timeMillis = timeMillis,
+                matchKey = displayMatchKey(TIMED_LRC_REGEX.replace(line, ""))
+            )
+        }.toList()
 
     private fun parseTimedDisplayLines(lyric: String): List<TimedDisplayLine> =
         lyric.lineSequence().mapNotNull { rawLine ->
