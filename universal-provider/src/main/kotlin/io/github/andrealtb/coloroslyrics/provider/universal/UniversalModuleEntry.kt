@@ -350,7 +350,10 @@ class UniversalModuleEntry : XposedModule() {
         overlayMetadata(record, session, cachedMetadataField, cachedLockField, cachedPushMetadataUpdateMethod)
 
         val title = session.descriptor.title
-        if (realLyricsByPackage["$ownerPackage|$currentGen"].isNullOrBlank() && !title.isNullOrBlank()) {
+        val existingPayload = realLyricsByPackage["$ownerPackage|$currentGen"]
+        val retryUpgradedMiss = shouldRetryMiss(existingPayload, session.descriptor.artist, session.descriptor.durationMs)
+        if ((existingPayload.isNullOrBlank() || retryUpgradedMiss) && !title.isNullOrBlank()) {
+            if (retryUpgradedMiss) fetchBackoffUntil.remove("$ownerPackage|$currentGen")
             triggerBackgroundFetch(
                 ownerPackage,
                 title,
@@ -516,7 +519,9 @@ class UniversalModuleEntry : XposedModule() {
         val cacheKey = "$ownerPackage|$currentGen"
 
         var realJson = realLyricsByPackage[cacheKey]
-        if (realJson.isNullOrBlank() && !title.isNullOrBlank()) {
+        val retryUpgradedMiss = shouldRetryMiss(realJson, artist, durationMs)
+        if ((realJson.isNullOrBlank() || retryUpgradedMiss) && !title.isNullOrBlank()) {
+            if (retryUpgradedMiss) fetchBackoffUntil.remove(cacheKey)
             val manualKey = bindingKey(title, artist.orEmpty())
             val manual = loadManualBinding(manualKey)
             if (!manual.isNullOrBlank()) {
@@ -524,7 +529,8 @@ class UniversalModuleEntry : XposedModule() {
                 realLyricsByPackage[cacheKey] = realJson
             } else {
                 val cached = loadCachedLyric(title, artist.orEmpty())
-                if (!cached.isNullOrBlank()) {
+                // An automatically missed track is retried; only a real lyric or a user decision wins.
+                if (!cached.isNullOrBlank() && !NoLyricPolicy.isRetryableMiss(cached)) {
                     realJson = updateGeneration(cached, currentGen, ownerPackage)
                     realLyricsByPackage[cacheKey] = realJson
                 } else {
@@ -535,7 +541,7 @@ class UniversalModuleEntry : XposedModule() {
         // Publish after the lookup so a cache hit is not reported as pending.
         publishSnapshot(context)
 
-        if (!realJson.isNullOrBlank()) {
+        if (!realJson.isNullOrBlank() && !NoLyricPolicy.isRetryableMiss(realJson)) {
             UniversalDiagnostics.lyricInfoAttached(ownerPackage, currentGen, "metadata-rewrite")
             return MediaMetadata.Builder(metadata).putString("lyricInfo", realJson).build()
         }
@@ -558,7 +564,7 @@ class UniversalModuleEntry : XposedModule() {
         }
         val gen = session.descriptor.trackGeneration
         val realJson = realLyricsByPackage["$ownerPackage|$gen"]
-        if (realJson.isNullOrBlank()) {
+        if (realJson.isNullOrBlank() || NoLyricPolicy.isRetryableMiss(realJson)) {
             return
         }
         val originalMetadata = metadataField?.get(record) as? MediaMetadata ?: return
@@ -722,18 +728,32 @@ class UniversalModuleEntry : XposedModule() {
                                     if (debugChanged) persistDebugEnabled(debug)
                                     if (clockFallbackChanged) persistClockLineFallbackEnabled(clockFallback)
                                 }
+                                if (priorityChanged) retryMissedTracks()
                                 UniversalDiagnostics.sourceConfigUpdated(sourcePriority.map { it.name })
                                 // The home screen shows whether the current player is on the clock fallback.
                                 publishSnapshot(context)
                             }
                             UniversalSnapshotStore.ACTION_CLEAR_CACHE -> {
                                 val cleared = UniversalLyricCache.clear()
-                                realLyricsByPackage.clear()
-                                val ctx = currentSystemContext()
-                                val snap = latestSnapshotText ?: format(null, 0, 0)
-                                latestSnapshotText = upsertCachedSongs(snap)
-                                if (ctx != null) {
-                                    sendSnapshotBroadcast(ctx, latestSnapshotText ?: snap, cacheCleared = cleared.songs)
+                                // Drop negative and missed entries so they can retry, while keeping an
+                                // already-published lyric for the active generation from immediately
+                                // re-fetching on the next 1s playback tick and re-populating the cache.
+                                realLyricsByPackage.entries
+                                    .filter { (_, value) ->
+                                        runCatching {
+                                            val obj = JSONObject(value)
+                                            obj.optBoolean("noLyric", false) || obj.optString("lyric").isBlank()
+                                        }.getOrDefault(true)
+                                    }
+                                    .forEach { entry -> realLyricsByPackage.remove(entry.key) }
+                                fetchBackoffUntil.clear()
+                                synchronized(snapshotLock) {
+                                    val snap = latestSnapshotText ?: format(null, 0, 0)
+                                    val updated = upsertCachedSongs(snap)
+                                    latestSnapshotText = updated
+                                    (c ?: context ?: currentSystemContext())?.let { ctx ->
+                                        sendSnapshotBroadcast(ctx, updated, cacheCleared = cleared.songs, force = true)
+                                    }
                                 }
                             }
                         }
@@ -932,7 +952,10 @@ class UniversalModuleEntry : XposedModule() {
 
     private fun lyricStatusOf(payload: JSONObject?): String = when {
         payload == null -> "pending"
-        payload.optBoolean("noLyric") -> "noLyric"
+        payload.optString("lyricStatus") == NoLyricPolicy.STATUS_MISS -> "failed"
+        // Legacy caches stored an automatic miss as a negative result; report it honestly.
+        payload.optBoolean("noLyric") ->
+            if (NoLyricPolicy.isRetryableMiss(payload.toString())) "failed" else "noLyric"
         payload.optString("lyric").isNotBlank() -> "success"
         else -> "failed"
     }
@@ -975,6 +998,45 @@ class UniversalModuleEntry : XposedModule() {
     private fun fieldOrNull(type: Class<*>, name: String): Field? =
         runCatching { type.getDeclaredField(name).apply { isAccessible = true } }.getOrNull()
 
+    /**
+     * Re-resolves tracks that previously produced nothing. A miss is only a statement about the
+     * source order that was in effect, so changing that order must retry instead of showing a
+     * stale "failed" state until the app is restarted.
+     */
+    /**
+     * True when a previous attempt missed with incomplete metadata (missing artist or duration)
+     * and the player has now supplied the missing field for the same generation.
+     */
+    private fun shouldRetryMiss(existingJson: String?, artist: String?, durationMs: Long?): Boolean {
+        if (existingJson.isNullOrBlank() || !NoLyricPolicy.isRetryableMiss(existingJson)) return false
+        val obj = runCatching { JSONObject(existingJson) }.getOrNull() ?: return false
+        val prevArtist = obj.optString("artist")
+        val prevDuration = obj.optLong("durationMs", 0L)
+        val artistArrived = prevArtist.isBlank() && !artist.isNullOrBlank()
+        val durationArrived = prevDuration <= 0L && (durationMs ?: 0L) > 0L
+        return artistArrived || durationArrived
+    }
+
+    private fun retryMissedTracks() {
+        realLyricsByPackage.entries
+            .filter { (_, value) ->
+                runCatching { JSONObject(value).optString("lyricStatus") == NoLyricPolicy.STATUS_MISS }
+                    .getOrDefault(false)
+            }
+            .forEach { entry -> realLyricsByPackage.remove(entry.key) }
+        fetchBackoffUntil.clear()
+        val descriptor = repository.snapshot().selected?.descriptor ?: return
+        val title = descriptor.title?.takeIf { it.isNotBlank() } ?: return
+        triggerBackgroundFetch(
+            descriptor.ownerPackage,
+            title,
+            descriptor.artist.orEmpty(),
+            descriptor.album,
+            descriptor.durationMs,
+            descriptor.trackGeneration
+        )
+    }
+
     private fun triggerBackgroundFetch(
         ownerPackage: String,
         title: String,
@@ -1013,7 +1075,8 @@ class UniversalModuleEntry : XposedModule() {
                 UniversalDiagnostics.cacheLookup("manual", generation, hit = false, noLyric = false)
 
                 val cached = loadCachedLyric(title, artist)
-                if (!cached.isNullOrBlank()) {
+                // A legacy automatic miss is retried instead of being replayed forever.
+                if (!cached.isNullOrBlank() && !NoLyricPolicy.isRetryableMiss(cached)) {
                     val negative = runCatching { JSONObject(cached).optBoolean("noLyric", false) }.getOrDefault(false)
                     UniversalDiagnostics.cacheLookup("auto", generation, hit = true, noLyric = negative)
                     UniversalDiagnostics.fetchStarted(ownerPackage, generation, "auto-cache")
@@ -1044,7 +1107,7 @@ class UniversalModuleEntry : XposedModule() {
                     durationMs = durationMs,
                     generation = generation
                 )
-                val report = aggregator.fetchFirst(query, sourcePriority)
+                val report = aggregator.fetchFirst(query, sourcePriority, preferWordTiming = wordTimingEnabled)
                 val result = report.result
                 val instrumental = result != null && io.github.andrealtb.coloroslyrics.provider.universal.api.SongMatchScorer.isInstrumentalOrCreditsOnly(result.lyric)
                 val usable = result != null && result.lyric.isNotBlank() && !instrumental
@@ -1104,17 +1167,25 @@ class UniversalModuleEntry : XposedModule() {
                 } else {
                     val rejectReason = when {
                         report.transientFailure -> "transient:" + report.reason
-                        instrumental -> "instrumentalOrCreditsOnly source=" + (result?.source ?: "none")
+                        instrumental -> "instrumentalOrCreditsOnly source=" + result.source
                         else -> "miss:" + report.reason
                     }
                     UniversalDiagnostics.fetchEmpty(ownerPackage, generation, rejectReason)
-                    if (outcome == NoLyricPolicy.Outcome.AUTO_NEGATIVE) {
-                        val reason = NoLyricPolicy.autoReason(instrumental)
-                        val noLyricJson = NoLyricPolicy.payloadJson(title, artist, reason)
-                        saveCachedLyric(title, artist, noLyricJson)
-                        applyFetchedLyric(ownerPackage, generation, noLyricJson, title, artist)
-                    } else {
-                        fetchBackoffUntil.remove(fetchKey)
+                    when (outcome) {
+                        NoLyricPolicy.Outcome.AUTO_NEGATIVE -> {
+                            val reason = NoLyricPolicy.autoReason(instrumental)
+                            val noLyricJson = NoLyricPolicy.payloadJson(title, artist, reason)
+                            // Only a complete identity may be cached as a negative result.
+                            if (artist.isNotBlank()) saveCachedLyric(title, artist, noLyricJson)
+                            applyFetchedLyric(ownerPackage, generation, noLyricJson, title, artist)
+                        }
+                        NoLyricPolicy.Outcome.AUTO_MISS -> {
+                            // A miss describes this attempt, not the track: keep it in memory so a
+                            // later callback with fuller metadata or a source-order change can retry.
+                            val missJson = NoLyricPolicy.missPayloadJson(title, artist, durationMs)
+                            applyFetchedLyric(ownerPackage, generation, missJson, title, artist, replay = false)
+                        }
+                        else -> fetchBackoffUntil.remove(fetchKey)
                     }
                 }
             }.onFailure { error ->
@@ -1155,12 +1226,14 @@ class UniversalModuleEntry : XposedModule() {
         generation: Long,
         json: String,
         title: String,
-        artist: String
+        artist: String,
+        replay: Boolean = true
     ): UniversalLyricPayloadPolicy.Result {
         val payload = JSONObject(json)
         val published = applyWordTimingPolicy(payload, ownerPackage)
         realLyricsByPackage["$ownerPackage|$generation"] = payload.toString()
-        replayMetadataForGeneration(ownerPackage, generation)
+        // A miss only updates the status; it must not overwrite the host's current lyric payload.
+        if (replay) replayMetadataForGeneration(ownerPackage, generation)
         // The track may already have been skipped, so its row takes the result where it stands.
         UniversalLyricHistory.row(title, artist, lyricSourceOf(payload), lyricStatusOf(payload))?.let { row ->
             synchronized(snapshotLock) { recentHistory = UniversalLyricHistory.replaceInPlace(recentHistory, row) }
@@ -1169,12 +1242,14 @@ class UniversalModuleEntry : XposedModule() {
         // The first callback can race SystemUI's notification/card creation.
         // Replay after the normal load window as a fail-open compatibility
         // measure for ColorOS builds that ignore pushMetadataUpdate early.
-        listOf(250L, 750L, 1500L).forEach { delayMs ->
-            metadataReplayExecutor.schedule(
-                { replayMetadataForGeneration(ownerPackage, generation) },
-                delayMs,
-                java.util.concurrent.TimeUnit.MILLISECONDS
-            )
+        if (replay) {
+            listOf(250L, 750L, 1500L).forEach { delayMs ->
+                metadataReplayExecutor.schedule(
+                    { replayMetadataForGeneration(ownerPackage, generation) },
+                    delayMs,
+                    java.util.concurrent.TimeUnit.MILLISECONDS
+                )
+            }
         }
         return published
     }

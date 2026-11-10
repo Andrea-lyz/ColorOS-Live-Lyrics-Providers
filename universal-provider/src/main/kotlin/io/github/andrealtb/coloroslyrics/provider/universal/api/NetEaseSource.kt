@@ -14,54 +14,85 @@ import io.github.andrealtb.coloroslyrics.provider.parser.yrc.YrcParser
 class NetEaseSource(private val client: OkHttpClient) : LyricsSource {
     override val name: String = "netease"
 
-    override fun fetchLyrics(query: TrackQuery): LyricResult? {
-        val songId = search(query) ?: return null
-        return fetch(songId, query)
+    private companion object {
+        const val MATCH_THRESHOLD = 0.45
+        const val CONFIDENT_MATCH_THRESHOLD = 0.75
+        const val PROBE_SCORE_SLACK = 0.15
+        /** Probe the top candidates so one empty/instrumental upload cannot deny the track. */
+        const val PROBE_LIMIT = 3
     }
 
-    private fun search(query: TrackQuery): Long? {
-        val threshold = 0.45
-        val attempts = listOf(
-            "title+artist" to "${query.title} ${query.artist}".trim(),
-            "title" to query.title.trim()
-        )
-        var bestId: Long? = null
+    override fun fetchLyrics(query: TrackQuery): LyricResult? {
+        val ranked = search(query)
+        if (ranked.isEmpty()) return null
+        var instrumental: LyricResult? = null
+        for (songId in ranked) {
+            val result = fetch(songId, query) ?: continue
+            if (result.lyric.isBlank()) continue
+            if (SongMatchScorer.isInstrumentalOrCreditsOnly(result.lyric)) {
+                if (instrumental == null) instrumental = result
+                continue
+            }
+            return result
+        }
+        return instrumental
+    }
+
+    /** Scored song ids, best first, bounded by [PROBE_LIMIT]. */
+    private fun search(query: TrackQuery): List<Long> {
+        val core = SongMatchScorer.coreTitle(query.title)
+        val attempts = buildList {
+            add("title+artist" to "${query.title} ${query.artist}".trim())
+            if (core.isNotBlank() && !core.equals(query.title.trim(), ignoreCase = true)) {
+                add("core+artist" to "$core ${query.artist}".trim())
+            }
+            add("title" to query.title.trim())
+        }
         var bestScore = -1.0
         var bestCount = 0
         var bestMode = "title+artist"
+        var ranked: List<Pair<Long, Double>> = emptyList()
         for ((mode, keyword) in attempts) {
             if (keyword.isBlank()) continue
             val songs = searchSongs(query.generation, keyword, mode) ?: continue
+            val scored = mutableListOf<Pair<Long, Double>>()
             for (i in 0 until songs.length()) {
                 val song = songs.optJSONObject(i) ?: continue
+                val id = NetEaseSearchResponseParser.songId(song)
+                if (id == 0L) continue
                 val score = SongMatchScorer.calculate(
                     query.title,
                     query.artist,
                     query.durationMs,
                     NetEaseSearchResponseParser.title(song),
                     NetEaseSearchResponseParser.artist(song),
-                    NetEaseSearchResponseParser.durationMs(song).takeIf { it > 0L }
+                    NetEaseSearchResponseParser.durationMs(song).takeIf { it > 0L },
+                    rankIndex = i
                 )
-                if (score > bestScore) {
-                    bestScore = score
-                    bestId = NetEaseSearchResponseParser.songId(song)
-                    bestCount = songs.length()
-                    bestMode = mode
-                }
+                scored += id to score
             }
-            if (bestScore >= threshold) break
+            val localBest = scored.maxOfOrNull { it.second } ?: -1.0
+            if (localBest > bestScore) {
+                bestScore = localBest
+                bestCount = songs.length()
+                bestMode = mode
+                ranked = scored.sortedByDescending { it.second }
+            }
+            if (bestScore >= CONFIDENT_MATCH_THRESHOLD) break
         }
         UniversalDiagnostics.sourceMatch(
             source = name,
             generation = query.generation,
             candidateCount = bestCount,
             bestScore = bestScore,
-            threshold = threshold,
-            accepted = bestScore >= threshold && bestId != null && bestId != 0L,
+            threshold = MATCH_THRESHOLD,
+            accepted = bestScore >= MATCH_THRESHOLD,
             keywordMode = bestMode,
             durationPresent = query.durationMs != null && query.durationMs > 0L
         )
-        return if (bestScore >= threshold) bestId else null
+        if (bestScore < MATCH_THRESHOLD) return emptyList()
+        val probeFloor = maxOf(MATCH_THRESHOLD, bestScore - PROBE_SCORE_SLACK)
+        return ranked.filter { it.second >= probeFloor }.take(PROBE_LIMIT).map { it.first }
     }
 
     private fun searchSongs(generation: Long, keyword: String, mode: String): JSONArray? {

@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import io.github.andrealtb.coloroslyrics.provider.universal.UniversalSnapshotStore
 import io.github.andrealtb.coloroslyrics.provider.universal.UniversalAppNetwork
+import io.github.andrealtb.coloroslyrics.provider.universal.LyricsSourceConfigStore
+import io.github.andrealtb.coloroslyrics.provider.universal.UniversalSettingsConstants
 import io.github.andrealtb.coloroslyrics.provider.universal.api.LyricsSourceAggregator
 import io.github.andrealtb.coloroslyrics.provider.universal.api.TrackQuery
 import io.github.andrealtb.coloroslyrics.provider.universal.cache.UniversalLyricCache
@@ -34,7 +36,7 @@ class UniversalLyricEngine(
 
         // Check cache first
         val cachedJson = UniversalLyricCache.get(context, title, artist)
-        if (!cachedJson.isNullOrBlank()) {
+        if (!cachedJson.isNullOrBlank() && !io.github.andrealtb.coloroslyrics.provider.universal.NoLyricPolicy.isRetryableMiss(cachedJson)) {
             val updatedJson = updateGeneration(cachedJson, generation)
             syncToSystem(ownerPackage, generation, updatedJson)
             return
@@ -43,9 +45,21 @@ class UniversalLyricEngine(
         executor.execute {
             UniversalAppNetwork.initialize(context)
             val query = TrackQuery(title, artist, album, durationMs)
-            val report = aggregator.fetchFirst(query.copy(generation = generation))
+            val priority = LyricsSourceConfigStore.read(context).mapNotNull { id ->
+                runCatching { LyricsSourceAggregator.SourceId.valueOf(id) }.getOrNull()
+            }.distinct()
+            val preferWordTiming = context
+                .getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(UniversalSettingsConstants.KEY_WORD_TIMING, false)
+            val report = aggregator.fetchFirst(
+                query.copy(generation = generation),
+                priority.ifEmpty { LyricsSourceAggregator.SourceId.values().toList() },
+                preferWordTiming
+            )
             val result = report.result
-            if (result != null && result.lyric.isNotBlank()) {
+            if (result != null && result.lyric.isNotBlank() &&
+                !io.github.andrealtb.coloroslyrics.provider.universal.api.SongMatchScorer.isInstrumentalOrCreditsOnly(result.lyric)
+            ) {
                 val json = JSONObject().apply {
                     put("songName", result.title)
                     put("artist", result.artist)
@@ -56,8 +70,8 @@ class UniversalLyricEngine(
                     put("noLyric", false)
                     put("lyric", result.lyric)
                     put("rawLyric", result.rawLyric ?: result.lyric)
-                    val translationOn = context.getSharedPreferences("LyricSourceSettingsActivity", android.content.Context.MODE_PRIVATE)
-                        .getBoolean("translation_enabled", true)
+                    val translationOn = context.getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+                        .getBoolean(UniversalSettingsConstants.KEY_TRANSLATION, true)
                     if (translationOn && !result.translationLyric.isNullOrBlank()) {
                         put("transLyric", result.translationLyric)
                         put("translationLyric", result.translationLyric)

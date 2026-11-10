@@ -32,6 +32,11 @@ import io.github.andrealtb.coloroslyrics.provider.universal.UniversalSnapshotSto
 import io.github.andrealtb.coloroslyrics.provider.universal.UniversalAppNetwork
 import io.github.andrealtb.coloroslyrics.provider.universal.api.LyricsSourceAggregator
 import io.github.andrealtb.coloroslyrics.provider.universal.api.SearchCandidate
+import io.github.andrealtb.coloroslyrics.provider.universal.LyricsSourceConfigStore
+import io.github.andrealtb.coloroslyrics.provider.universal.api.SongMatchScorer
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import io.github.andrealtb.coloroslyrics.provider.universal.cache.UniversalLyricCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -47,6 +52,7 @@ class SearchUiState {
     var isSearching by mutableStateOf(false)
     var seeded by mutableStateOf(false)
 }
+private data class CandidateOrder(val bucket: Int, val priority: Int, val originalIndex: Int)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,21 +68,106 @@ fun SearchScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    val filterSources by produceState(
+        initialValue = LyricsSourceAggregator.SourceId.values().toList(),
+        key1 = context
+    ) {
+        val configured = withContext(Dispatchers.IO) { LyricsSourceConfigStore.read(context) }
+        val ordered = configured.mapNotNull { id ->
+            runCatching { LyricsSourceAggregator.SourceId.valueOf(id) }.getOrNull()
+        }.distinct()
+        value = ordered.ifEmpty { LyricsSourceAggregator.SourceId.values().toList() }
+    }
+
+    fun orderedSources(): List<LyricsSourceAggregator.SourceId> {
+        val configured = LyricsSourceConfigStore.read(context)
+        val ordered = configured.mapNotNull { id ->
+            runCatching { LyricsSourceAggregator.SourceId.valueOf(id) }.getOrNull()
+        }.distinct()
+        return ordered.ifEmpty { LyricsSourceAggregator.SourceId.values().toList() }
+    }
+
+    /**
+     * Relevance first, then the user's source order. A shared edition suffix no longer lets a
+     * different song outrank the real one, and a disabled source never appears at all.
+     */
+    fun mergeAndSort(
+        rows: List<SearchCandidate>,
+        sources: List<LyricsSourceAggregator.SourceId>,
+        searchQuery: String = state.query
+    ): List<SearchCandidate> {
+        val priority = sources.withIndex().associate { (index, id) -> id.label to index }
+        val rankInSource = HashMap<String, Int>()
+        val trimmedQuery = searchQuery.trim()
+        val matchesPlayingTrack = currentTitle.isNotBlank() &&
+            trimmedQuery.contains(currentTitle.trim(), ignoreCase = true)
+        val targetTitle = if (matchesPlayingTrack) currentTitle else trimmedQuery
+        val targetArtist = if (matchesPlayingTrack) currentArtist else ""
+        // A source disabled in the priority screen must not survive in a stale candidate list.
+        return rows.filter { it.source in priority }.mapIndexed { index, item ->
+            val sourceRank = rankInSource.getOrDefault(item.source, 0)
+            rankInSource[item.source] = sourceRank + 1
+            val bucket = if (targetTitle.isBlank()) 0 else {
+                val score = SongMatchScorer.calculate(
+                    targetTitle,
+                    targetArtist,
+                    null,
+                    item.title,
+                    item.artist,
+                    item.durationMs,
+                    rankIndex = sourceRank
+                )
+                when {
+                    score >= 0.70 -> 0
+                    score >= 0.45 -> 1
+                    else -> 2
+                }
+            }
+            CandidateOrder(bucket, priority[item.source] ?: Int.MAX_VALUE, index) to item
+        }.sortedWith(
+            compareBy<Pair<CandidateOrder, SearchCandidate>> { it.first.bucket }
+                .thenBy { it.first.priority }
+                .thenBy { it.first.originalIndex }
+        ).map { it.second }
+    }
+
     fun doSearch(kw: String) {
         if (kw.isBlank()) return
         state.isSearching = true
         state.statusText = context.getString(R.string.searching_sources)
         scope.launch(Dispatchers.IO) {
             UniversalAppNetwork.initialize(context)
+            val sources = orderedSources()
             val aggregator = LyricsSourceAggregator.shared
-            val qq = aggregator.qqSource.searchCandidates(kw)
-            val netease = aggregator.netEaseSource.searchCandidates(kw)
-            val apple = aggregator.appleMusicSource.searchCandidates(kw)
-            val combined = qq + netease + apple
+            // Parallel: a slow source can no longer delay or hide the ones behind it.
+            val perSource = coroutineScope {
+                sources.map { id -> async { aggregator.searchCandidates(id, kw) } }.awaitAll()
+            }
+            val combined = mergeAndSort(perSource.flatten(), sources, kw)
             withContext(Dispatchers.Main) {
                 state.candidates = combined
                 state.statusText = context.getString(R.string.search_results, combined.size)
                 state.isSearching = false
+            }
+        }
+    }
+
+    /** Refills one source when the combined search lost it, so a chip tap self-heals. */
+    fun doSearchSource(id: LyricsSourceAggregator.SourceId, kw: String) {
+        if (kw.isBlank()) return
+        scope.launch(Dispatchers.IO) {
+            UniversalAppNetwork.initialize(context)
+            val rows = LyricsSourceAggregator.shared.searchCandidates(id, kw)
+            if (rows.isEmpty()) return@launch
+            val sources = orderedSources()
+            withContext(Dispatchers.Main) {
+                val merged = mergeAndSort(
+                    (state.candidates + rows).distinctBy { it.source + it.id },
+                    sources,
+                    kw
+                )
+                state.candidates = merged
+                state.statusText = context.getString(R.string.search_results, merged.size)
             }
         }
     }
@@ -174,16 +265,29 @@ fun SearchScreen(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf(
-                stringResource(R.string.filter_all) to null,
-                stringResource(R.string.source_qq) to "QQ音乐",
-                stringResource(R.string.source_netease) to "网易云音乐",
-                stringResource(R.string.source_apple) to "Apple Music"
-            ).forEach { (label, src) ->
+            val allLabel = stringResource(R.string.filter_all)
+            val qqLabel = stringResource(R.string.source_qq)
+            val netEaseLabel = stringResource(R.string.source_netease)
+            val appleLabel = stringResource(R.string.source_apple)
+            val chips = listOf<Pair<String, String?>>(allLabel to null) + filterSources.map { id ->
+                val label = when (id) {
+                    LyricsSourceAggregator.SourceId.QQ -> qqLabel
+                    LyricsSourceAggregator.SourceId.NETEASE -> netEaseLabel
+                    LyricsSourceAggregator.SourceId.APPLE_MUSIC -> appleLabel
+                }
+                label to id.label
+            }
+            chips.forEach { (label, src) ->
                 val isSelected = state.selectedFilter == src
                 FilterChip(
                     selected = isSelected,
-                    onClick = { state.selectedFilter = src },
+                    onClick = {
+                        state.selectedFilter = src
+                        val id = LyricsSourceAggregator.SourceId.values().firstOrNull { it.label == src }
+                        if (id != null && state.query.isNotBlank() && state.candidates.none { it.source == src }) {
+                            doSearchSource(id, state.query)
+                        }
+                    },
                     label = { Text(label) },
                     leadingIcon = {
                         if (isSelected) Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -234,12 +338,7 @@ fun SearchScreen(
                             scope.launch(Dispatchers.IO) {
                                 UniversalAppNetwork.initialize(context)
                                 val aggregator = LyricsSourceAggregator.shared
-                                val source = when (item.source) {
-                                    "QQ音乐" -> aggregator.qqSource
-                                    "Apple Music" -> aggregator.appleMusicSource
-                                    else -> aggregator.netEaseSource
-                                }
-                                val result = source.fetchLyricByCandidate(item)
+                                val result = LyricsSourceAggregator.shared.fetchByCandidate(item)
                                 if (result != null && result.lyric.isNotBlank()) {
                                     val json = JSONObject().apply {
                                         put("songName", currentTitle.ifBlank { result.title })

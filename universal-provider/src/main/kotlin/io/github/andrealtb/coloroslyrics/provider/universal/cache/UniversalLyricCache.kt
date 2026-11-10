@@ -51,7 +51,18 @@ object UniversalLyricCache {
     fun clear(file: File = File(SYSTEM_PATH)): Stats {
         val previous = stats(file)
         statsSnapshot = null
-        if (file.isFile) runCatching { file.delete() }
+        if (file.isFile) {
+            // Truncate to an empty object first so a directory that denies unlink still clears every song.
+            runCatching { writeRoot(file, JSONObject()) }
+            runCatching { file.delete() }
+        }
+        val emptyStats = Stats(0, 0, 0)
+        statsSnapshot = StatsSnapshot(
+            path = file.absolutePath,
+            modified = file.lastModified(),
+            size = if (file.isFile) file.length() else 0L,
+            stats = emptyStats
+        )
         return previous
     }
 

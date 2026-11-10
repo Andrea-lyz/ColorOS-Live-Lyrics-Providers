@@ -30,8 +30,19 @@ internal object QqSearchResponseParser {
         return if (id != 0L) id else item.optLong("songid")
     }
 
-    fun artist(item: JSONObject): String =
-        item.optJSONArray("singer")?.optJSONObject(0)?.optString("name").orEmpty()
+    /**
+     * Every credited singer, joined the way players render duets. Keeping only the first name made
+     * a track credited "Sugarland/Taylor Swift" score as a different artist.
+     */
+    fun artist(item: JSONObject): String {
+        val singers = item.optJSONArray("singer") ?: return ""
+        return buildList {
+            for (index in 0 until singers.length()) {
+                val name = singers.optJSONObject(index)?.optString("name").orEmpty().trim()
+                if (name.isNotEmpty()) add(name)
+            }
+        }.joinToString("/")
+    }
 
     fun album(item: JSONObject): String {
         val album = item.optJSONObject("album") ?: return ""

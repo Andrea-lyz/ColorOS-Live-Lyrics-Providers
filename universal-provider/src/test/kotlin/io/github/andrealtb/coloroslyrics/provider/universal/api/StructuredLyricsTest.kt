@@ -94,4 +94,18 @@ class StructuredLyricsTest {
         assertTrue(!lrc.contains("[00:00.000]"))
         assertTrue(!lrc.contains("[00:04.340]"))
     }
+
+    @Test
+    fun toleratesSpacesInsideQrcTimestamps() {
+        val qrc = "<Lyric_1 LyricContent=\"[ 1000 , 800 ]Hel( 1000 , 300 )lo( 1300 , 500 )\"/>"
+        val lines = StructuredLyrics.parseQrc(qrc)
+        assertEquals(1, lines.size)
+        assertEquals("Hello", lines.single().text)
+    }
+
+    @Test
+    fun decodesApostropheEntityOnce() {
+        val qrc = "<Lyric_1 LyricContent=\"[1000,800]Don&apos;t(1000,800)\"/>"
+        assertEquals("Don't", StructuredLyrics.parseQrc(qrc).single().text)
+    }
 }
