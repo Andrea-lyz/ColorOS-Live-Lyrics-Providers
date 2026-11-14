@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildPayload, renewPayload, matrixModules, releaseTag } from './catalog-payload.mjs';
-import { parseBadging, parseSigners } from './apk-facts.mjs';
+import { parseBadging, parseSigners, signersOf } from './apk-facts.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const matrix = JSON.parse(fs.readFileSync(path.join(root, 'release', 'v5-provider-matrix.json'), 'utf8'));
@@ -113,4 +113,14 @@ test('aapt2 badging and apksigner output are parsed strictly', () => {
   assert.deepEqual(parseSigners(`Verifies\nSigner (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ${SIGNER}\n`), [SIGNER]);
   // A failure names the verification lines it saw.
   assert.throws(() => parseSigners('Verifies\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: zz\n'), /Number of signers: 1/);
+});
+
+test('signers fall back to an older apksigner only when the certificate line is missing', () => {
+  const noCert = 'Verifies\nVerified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\n';
+  const withCert = `Verifies\nSigner #1 certificate SHA-256 digest: ${SIGNER}\n`;
+  const outputs = { '37.0.0': noCert, '36.1.0': withCert, bad: 'DOES NOT VERIFY\nERROR: APK not signed\n' };
+  const runTool = (tool) => outputs[tool];
+  assert.deepEqual(signersOf(['37.0.0', '36.1.0'], 'x.apk', runTool), [SIGNER]);
+  assert.throws(() => signersOf(['bad', '36.1.0'], 'x.apk', runTool), /Verifies/);
+  assert.throws(() => signersOf(['37.0.0'], 'x.apk', runTool), /no signer certificate[\s\S]*apksigner: 37\.0\.0/);
 });
