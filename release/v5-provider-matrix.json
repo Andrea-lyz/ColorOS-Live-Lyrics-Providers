@@ -104,8 +104,8 @@
       "module": "player-lx",
       "displayName": "LX",
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.lx",
-      "versionName": "1.2.1",
-      "versionCode": 4,
+      "versionName": "1.2.2",
+      "versionCode": 5,
       "asset": "ColorOS-Live-Lyrics-Provider-LX-v4.5.4.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.lx.LxModuleEntry",
       "scopes": [

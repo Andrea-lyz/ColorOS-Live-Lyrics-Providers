@@ -14,6 +14,7 @@ internal object UniversalSnapshotStore {
     const val EXTRA_CACHED_SONGS = "extra_cached_songs"
     const val EXTRA_CACHE_CLEARED = "extra_cache_cleared"
     const val EXTRA_SOURCE_PRIORITY = "extra_source_priority"
+    const val EXTRA_CONFIG_REVISION = "runtime_diagnostic_config_revision"
     const val EXTRA_WORD_TIMING_ENABLED = "extra_word_timing_enabled"
     const val EXTRA_TRANSLATION_ENABLED = "extra_translation_enabled"
     const val EXTRA_RAW_LYRIC_ENABLED = "extra_raw_lyric_enabled"

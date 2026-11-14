@@ -55,7 +55,8 @@ fun UniversalMainApp(
     cachedSongsCount: Int,
     onRefreshSnapshot: () -> Unit,
     onClearCache: () -> Unit,
-    onConfirmNoLyric: () -> Unit
+    onConfirmNoLyric: () -> Unit,
+    onOpenRuntimeDiagnostics: () -> Unit
 ) {
     var currentScreen by remember { mutableStateOf(initialScreen) }
     var searchInitialQuery by remember { mutableStateOf("") }
@@ -178,7 +179,8 @@ fun UniversalMainApp(
                             Screen.SETTINGS -> SettingsScreen(
                                 cachedSongsCount = cachedSongsCount,
                                 onNavigateToPriority = { currentScreen = Screen.PRIORITY },
-                                onClearCache = onClearCache
+                                onClearCache = onClearCache,
+                                onOpenRuntimeDiagnostics = onOpenRuntimeDiagnostics
                             )
                             Screen.PRIORITY -> PriorityScreen(
                                 onBack = { currentScreen = Screen.SETTINGS }

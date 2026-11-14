@@ -43,6 +43,8 @@ dependencies {
     // libxposed service belongs to the Provider module App path only; it must never be pulled
     // into provider-hook-api102 or the hooked player path.
     implementation(libs.libxposed.service)
+    // Enable-state endpoint for the Bridge store; fed by ProviderModuleApplication.
+    implementation(project(":provider-module-status"))
     implementation(libs.androidx.core.ktx)
 
     testImplementation(libs.junit)

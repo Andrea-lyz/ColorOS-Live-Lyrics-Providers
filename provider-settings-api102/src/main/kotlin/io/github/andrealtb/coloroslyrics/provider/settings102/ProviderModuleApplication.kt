@@ -7,6 +7,7 @@
 package io.github.andrealtb.coloroslyrics.provider.settings102
 
 import android.app.Application
+import io.github.andrealtb.coloroslyrics.provider.modulestatus.ModuleStatus
 import io.github.libxposed.service.XposedService
 import io.github.libxposed.service.XposedServiceHelper
 
@@ -24,9 +25,11 @@ open class ProviderModuleApplication : Application(), XposedServiceHelper.OnServ
 
     final override fun onServiceBind(service: XposedService) {
         ProviderServiceState.onServiceBind(service)
+        ModuleStatus.onServiceBind(service)
     }
 
     final override fun onServiceDied(service: XposedService) {
         ProviderServiceState.onServiceDied(service)
+        ModuleStatus.onServiceDied(service)
     }
 }

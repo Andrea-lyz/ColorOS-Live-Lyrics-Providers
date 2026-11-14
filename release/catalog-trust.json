@@ -1,0 +1,11 @@
+{
+  "comment": "Provider store catalog trust (plan §14.5/§14.6). Public keys only; private keys live in the protected 'provider-catalog' GitHub Environment. keys must equal Bridge CatalogTrust.PRODUCTION_CATALOG_KEYS.",
+  "channel": "stable",
+  "releaseCertificateSha256": "ff38544ba21922c35989097fe6f2ad0bda434b4d0bb611e016d51d7862d36195",
+  "catalogBranch": "store-catalog",
+  "catalogPath": "catalog/stable.json",
+  "keys": {
+    "cll-catalog-2026a": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbW5YgxEtOIU7NMZDsWd+oVjdQuCb55eiaSlXGlkN6Pyg8fdGwi9sAzcL+QVRjyb794VHO9fyklXFTto3rjDOEg==",
+    "cll-catalog-2026b": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAENbTQvHtHeAfGoAEHAAWbUZxhKFKEIuYDlvTvYegpF5U2KOj+98HFv++QZtlfxxDzmmeQGlfVBIqGcW++oXr1nQ=="
+  }
+}

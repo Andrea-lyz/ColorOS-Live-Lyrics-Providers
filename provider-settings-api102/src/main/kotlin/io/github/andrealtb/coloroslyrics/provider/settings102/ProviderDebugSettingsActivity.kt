@@ -73,6 +73,20 @@ abstract class ProviderDebugSettingsActivity : Activity() {
 
         root.addView(titleView())
         root.addView(descriptionView())
+        root.addView(android.widget.Button(this).apply {
+            text = "本模块运行诊断（只读）"
+            setOnClickListener { startActivity(android.content.Intent(this@ProviderDebugSettingsActivity,
+                io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.RuntimeDiagnosticsActivity::class.java)) }
+        })
+        root.addView(TextView(this).apply {
+            text = "已安装模块 buildId：" +
+                io.github.andrealtb.coloroslyrics.provider.core.diagnostics.ProviderBuildIdentity.describe(javaClass) +
+                "\n注入进程构建：unknown（独立读取该 Provider 的 MODULE_LOADED 日志；安装不等于生效）"
+            textSize = 11f
+            maxLines = 5
+            setTextColor(Color.rgb(80, 80, 80))
+            setTextIsSelectable(true)
+        })
 
         debugSwitch = Switch(this).apply {
             text = "启用调试日志"
@@ -150,6 +164,10 @@ abstract class ProviderDebugSettingsActivity : Activity() {
             val committed = runCatching {
                 prefs.edit()
                     .putBoolean(ProviderDebugConfig.KEY_DEBUG_ENABLED, enabled)
+                    .putLong(ProviderDebugConfig.KEY_REVISION,
+                        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.RuntimeDiagnosticProtocol.nextRevision(
+                            runCatching { prefs.getLong(ProviderDebugConfig.KEY_REVISION, -1L) }.getOrDefault(-1L),
+                            System.currentTimeMillis()))
                     .commit()
             }.getOrDefault(false)
             if (committed) {
@@ -160,7 +178,7 @@ abstract class ProviderDebugSettingsActivity : Activity() {
             }
         }
 
-        setContentView(root)
+        setContentView(android.widget.ScrollView(this).apply { isFillViewport = true; addView(root) })
         ViewCompat.requestApplyInsets(root)
 
         ProviderServiceState.addListener(serviceListener)

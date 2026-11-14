@@ -45,5 +45,6 @@ dependencies {
 
     testImplementation(libs.libxposed.api)
     testImplementation(libs.junit)
+    testImplementation("org.robolectric:robolectric:4.16.1")
     testImplementation(kotlin("test"))
 }

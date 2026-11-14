@@ -51,6 +51,19 @@ public final class ReadifyModule extends XposedModule {
         boolean verified;
     }
 
+    @Override public void onModuleLoaded(ModuleLoadedParam param) {
+        try {
+            io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.initialize(
+                    getModuleApplicationInfo().packageName, param.getProcessName(), BuildConfig.BUILD_ID,
+                    getFrameworkName() + " / " + getFrameworkVersion() + " (" + getFrameworkVersionCode() + ")",
+                    getApiVersion(), getFrameworkProperties());
+            io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.configConsumed(
+                    false, -1L, "NOT_APPLICABLE");
+        } catch (RuntimeException | LinkageError ignored) { }
+        info("[CLL] level=INFO component=provider/readify area=bootstrap event=BUILD_ID process="
+                + param.getProcessName() + " buildId=" + BuildConfig.BUILD_ID);
+    }
+
     @Override public void onPackageReady(PackageReadyParam param) {
         if (!TARGET.equals(param.getPackageName()) || installed) return;
         installed = true;
@@ -84,6 +97,7 @@ public final class ReadifyModule extends XposedModule {
             } catch (Throwable e) { failure("application context", e); }
         });
         main.postDelayed(this::runtimeSummary, 12000);
+        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.installerReturned(true);
     }
 
     private void installContextHooks() throws Exception {
@@ -101,6 +115,7 @@ public final class ReadifyModule extends XposedModule {
     }
 
     private synchronized void checkVersion(android.content.Context context, String origin) {
+        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.register(context);
         if (versionResolved || context == null) return;
         try {
             String version = context.getPackageManager().getPackageInfo(TARGET, 0).versionName;

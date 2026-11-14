@@ -18,3 +18,6 @@ replay_pid*.log
 .cxx
 local.properties
 /device-testing/
+
+# Local evidence, candidate APKs and device logs; never source inputs
+/artifacts/

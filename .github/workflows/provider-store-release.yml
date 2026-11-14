@@ -1,0 +1,250 @@
+name: Provider Store Release
+
+# Per-Provider store release (5.0 plan §14.5.2/§14.6, decisions D1 = M, D2).
+# Tag <module>-v<versionName> on main, after the matrix carries that version:
+#   build + test + sign APK -> immutable GitHub Release -> re-download and check SHA-256
+#   -> (protected Environment approval) sign the next catalog -> promote it to the
+#   store-catalog branch. A failure at any step leaves the published catalog unchanged.
+# Old suite tags (providers-v*) are not store releases.
+on:
+  push:
+    tags:
+      - '*-v*'
+      - '!providers-v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: provider-store-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    outputs:
+      module: ${{ steps.tag.outputs.module }}
+      kind: ${{ steps.tag.outputs.kind }}
+      version_name: ${{ steps.tag.outputs.versionName }}
+      asset_name: ${{ steps.tag.outputs.assetName }}
+      sha256: ${{ steps.collect.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Resolve tag against the matrix
+        id: tag
+        run: node scripts/catalog/resolve-release-tag.mjs --tag "$GITHUB_REF_NAME" --github-output "$GITHUB_OUTPUT"
+
+      - name: Require the tagged commit to be on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Catalog tool tests
+        run: node --test scripts/catalog/catalog-envelope.test.mjs scripts/catalog/catalog-payload.test.mjs scripts/catalog/resolve-release-tag.test.mjs
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: wrapper
+          cache-read-only: true
+
+      - name: Decode keystore
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          test -n "$SIGNING_KEY"
+          printf '%s' "$SIGNING_KEY" | base64 -d > release.jks
+
+      # Shared provider-core/runtime code can affect every module, so the whole matrix is
+      # tested even when one Provider is released (plan §9.1).
+      - name: Matrix tests
+        run: chmod +x ./gradlew && ./gradlew testV5Matrix --rerun-tasks
+
+      - name: Artwork tests and contract mirror
+        if: steps.tag.outputs.kind == 'artwork'
+        run: |
+          ./gradlew :artwork-provider-am:testDebugUnitTest
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify-artwork-contract.ps1 -RepoRoot .
+
+      - name: Assemble release APK
+        env:
+          GRADLE_TASK: ${{ steps.tag.outputs.gradleAssemble }}
+          RELEASE_STORE_FILE: ../release.jks
+          RELEASE_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew "$GRADLE_TASK"
+
+      - name: Collect exactly one APK
+        id: collect
+        env:
+          MODULE: ${{ steps.tag.outputs.module }}
+          ASSET: ${{ steps.tag.outputs.assetName }}
+        run: |
+          mapfile -t apks < <(find "$MODULE/build/outputs/apk/release" -maxdepth 1 -name '*.apk')
+          test "${#apks[@]}" -eq 1
+          mkdir -p out
+          cp "${apks[0]}" "out/$ASSET"
+          (cd out && sha256sum "$ASSET" > "$ASSET.sha256")
+          echo "sha256=$(cut -d' ' -f1 "out/$ASSET.sha256")" >> "$GITHUB_OUTPUT"
+
+      # Same rules the catalog uses: package/version equal the matrix, signed only by the
+      # release certificate. A debug or mis-versioned APK stops here, before any Release.
+      - name: Check APK identity
+        env:
+          MODULE: ${{ steps.tag.outputs.module }}
+          ASSET: ${{ steps.tag.outputs.assetName }}
+        run: |
+          signer="$(node -p "require('./release/catalog-trust.json').releaseCertificateSha256")"
+          node scripts/catalog/build-catalog-payload.mjs --repo "$GITHUB_REPOSITORY" --source-commit "$GITHUB_SHA" \
+            --expected-signer "$signer" --apk "$MODULE=out/$ASSET" --out "$RUNNER_TEMP/identity-check.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: store-apk
+          path: out/
+          if-no-files-found: error
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f release.jks
+
+  publish:
+    name: Publish immutable Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MODULE: ${{ needs.build.outputs.module }}
+      VERSION_NAME: ${{ needs.build.outputs.version_name }}
+      ASSET: ${{ needs.build.outputs.asset_name }}
+      SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: store-apk
+          path: out
+
+      - name: Create Release (never overwrite)
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; published assets are immutable" >&2
+            exit 1
+          fi
+          notes="release/notes/$MODULE/$VERSION_NAME.md"
+          if [ ! -f "$notes" ]; then
+            notes="$RUNNER_TEMP/notes.md"
+            printf '%s %s\n\nInstall and update from the ColorOS Live Lyrics Bridge store.\n' "$MODULE" "$VERSION_NAME" > "$notes"
+          fi
+          gh release create "$GITHUB_REF_NAME" "out/$ASSET" "out/$ASSET.sha256" \
+            --verify-tag --title "$MODULE $VERSION_NAME" --notes-file "$notes"
+
+      - name: Re-download and check SHA-256
+        run: |
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ASSET"
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -fsSL --proto '=https' -o "$RUNNER_TEMP/served.apk" "$url" \
+              && [ "$(sha256sum "$RUNNER_TEMP/served.apk" | cut -d' ' -f1)" = "$SHA256" ]; then
+              echo "served bytes match"
+              exit 0
+            fi
+            sleep $((attempt * 10))
+          done
+          echo "Published asset is not downloadable with the expected SHA-256" >&2
+          exit 1
+
+  promote:
+    name: Sign and promote catalog
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    # Required reviewer approval and the catalog signing secret live in this Environment (D2).
+    environment: provider-catalog
+    permissions:
+      contents: write
+    concurrency:
+      group: provider-catalog
+      cancel-in-progress: false
+    env:
+      MODULE: ${{ needs.build.outputs.module }}
+      VERSION_NAME: ${{ needs.build.outputs.version_name }}
+      ASSET: ${{ needs.build.outputs.asset_name }}
+      SHA256: ${{ needs.build.outputs.sha256 }}
+      KEY_ID: ${{ vars.CLL_CATALOG_KEY_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Check signing configuration
+        run: |
+          test -n "$KEY_ID" || { echo "Environment variable CLL_CATALOG_KEY_ID is not set" >&2; exit 1; }
+          node -e "const t=require('./release/catalog-trust.json'); if(!Object.hasOwn(t.keys, process.env.KEY_ID)) { console.error('keyId ' + process.env.KEY_ID + ' is not pinned in release/catalog-trust.json'); process.exit(1) }"
+
+      # Catalog facts come from the bytes users will download, not from the build job.
+      - name: Download the published asset
+        run: |
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ASSET"
+          mkdir -p served
+          curl -fsSL --proto '=https' -o "served/$ASSET" "$url"
+          test "$(sha256sum "served/$ASSET" | cut -d' ' -f1)" = "$SHA256"
+
+      - name: Check out the catalog branch
+        run: |
+          branch="$(node -p "require('./release/catalog-trust.json').catalogBranch")"
+          echo "CATALOG_BRANCH=$branch" >> "$GITHUB_ENV"
+          echo "CATALOG_PATH=$(node -p "require('./release/catalog-trust.json').catalogPath")" >> "$GITHUB_ENV"
+          if git fetch --no-tags origin "$branch"; then
+            git worktree add -B "$branch" catalog-worktree "origin/$branch"
+          else
+            echo "No $branch branch yet; issuing the first catalog revision"
+            git worktree add --detach catalog-worktree
+            git -C catalog-worktree switch --orphan "$branch"
+          fi
+
+      - name: Build, sign and verify the next catalog
+        env:
+          CLL_CATALOG_SIGNING_KEY: ${{ secrets.CLL_CATALOG_SIGNING_KEY }}
+        run: |
+          signer="$(node -p "require('./release/catalog-trust.json').releaseCertificateSha256")"
+          args=(--repo "$GITHUB_REPOSITORY" --source-commit "$GITHUB_SHA" --expected-signer "$signer"
+                --apk "$MODULE=served/$ASSET" --out "$RUNNER_TEMP/payload.json")
+          if [ -f "catalog-worktree/$CATALOG_PATH" ]; then
+            args+=(--previous "catalog-worktree/$CATALOG_PATH" --trust release/catalog-trust.json)
+          fi
+          notes="release/notes/$MODULE/$VERSION_NAME.md"
+          if [ -f "$notes" ]; then args+=(--notes "$MODULE=$notes"); fi
+          node scripts/catalog/build-catalog-payload.mjs "${args[@]}"
+          node scripts/catalog/sign-catalog.mjs --payload "$RUNNER_TEMP/payload.json" --key-id "$KEY_ID" --out "$RUNNER_TEMP/catalog.json"
+          node scripts/catalog/verify-catalog.mjs --envelope "$RUNNER_TEMP/catalog.json" --trust release/catalog-trust.json
+
+      - name: Promote (fast-forward only)
+        run: |
+          mkdir -p "catalog-worktree/$(dirname "$CATALOG_PATH")"
+          cp "$RUNNER_TEMP/catalog.json" "catalog-worktree/$CATALOG_PATH"
+          revision="$(node -p "JSON.parse(Buffer.from(require('./catalog-worktree/$CATALOG_PATH').payload,'base64')).catalogRevision")"
+          cd catalog-worktree
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$CATALOG_PATH"
+          git commit -m "Promote $GITHUB_REF_NAME as catalog revision $revision"
+          git push origin "HEAD:refs/heads/$CATALOG_BRANCH"

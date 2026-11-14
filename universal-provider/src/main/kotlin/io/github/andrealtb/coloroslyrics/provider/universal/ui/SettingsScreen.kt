@@ -41,7 +41,8 @@ private data class ProcessingSettings(
 fun SettingsScreen(
     cachedSongsCount: Int,
     onNavigateToPriority: () -> Unit,
-    onClearCache: () -> Unit
+    onClearCache: () -> Unit,
+    onOpenRuntimeDiagnostics: () -> Unit
 ) {
     val context = LocalContext.current
     var translationEnabled by remember { mutableStateOf(true) }
@@ -89,6 +90,8 @@ fun SettingsScreen(
                 .apply()
             appContext.sendBroadcast(Intent(UniversalSnapshotStore.ACTION_UPDATE_SOURCE_CONFIG).apply {
                 addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                putExtra(UniversalSnapshotStore.EXTRA_CONFIG_REVISION,
+                    io.github.andrealtb.coloroslyrics.provider.universal.UniversalDiagnosticRevision.next(appContext))
                 putExtra(UniversalSnapshotStore.EXTRA_SOURCE_PRIORITY, LyricsSourceConfigStore.encode(LyricsSourceConfigStore.read(appContext)))
                 putExtra(UniversalSnapshotStore.EXTRA_WORD_TIMING_ENABLED, settings.wordTiming)
                 putExtra(UniversalSnapshotStore.EXTRA_CLOCK_LINE_FALLBACK_ENABLED, settings.clockLineFallback)
@@ -134,6 +137,9 @@ fun SettingsScreen(
             )
         )
 
+        androidx.compose.material3.OutlinedButton(
+            onClick = onOpenRuntimeDiagnostics, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+        ) { Text("Provider 运行诊断（只读）") }
         Text(stringResource(R.string.section_source_priority), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
 
         ListItem(

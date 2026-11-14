@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Answers only callers signed like this module (checked in call()); see ModuleStatusProvider. -->
+        <provider
+            android:name="io.github.andrealtb.coloroslyrics.provider.modulestatus.ModuleStatusProvider"
+            android:authorities="${applicationId}.cll.module-status"
+            android:exported="true" />
+    </application>
+</manifest>

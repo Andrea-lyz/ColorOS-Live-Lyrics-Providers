@@ -513,6 +513,10 @@ public final class AmArtworkActivity extends Activity {
         footer.addView(AmUi.text(this, getString(R.string.footer_privacy), 12, color(R.color.am_text_tertiary), false));
         footer.addView(AmUi.text(this, getString(R.string.footer_version, versionName()), 12, color(R.color.am_text_tertiary), false),
                 AmUi.marginTop(this, 8));
+        TextView identity = AmUi.text(this, "buildId: " + BuildConfig.BUILD_ID,
+                10, color(R.color.am_text_tertiary), false);
+        identity.setTextIsSelectable(true);
+        footer.addView(identity, AmUi.marginTop(this, 8));
         return footer;
     }
 

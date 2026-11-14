@@ -76,6 +76,7 @@ dependencies {
     implementation(libs.okhttp)
     compileOnly(libs.libxposed.api)
     implementation(libs.libxposed.service)
+    implementation(project(":provider-module-status"))
 
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))

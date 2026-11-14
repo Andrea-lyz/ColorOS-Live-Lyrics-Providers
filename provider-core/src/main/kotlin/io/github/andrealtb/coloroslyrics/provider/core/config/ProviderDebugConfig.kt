@@ -32,6 +32,10 @@ fun interface ProviderDebugSource {
     fun read(provider: ProviderId): Boolean?
 }
 
+interface ProviderDebugRevisionSource {
+    fun observedRevision(): Long
+}
+
 data class ProviderDebugResolution(
     val enabled: Boolean,
     val reason: String
@@ -41,6 +45,7 @@ object ProviderDebugConfig {
 
     const val PREFS_NAME_SUFFIX = "_provider_debug_prefs"
     const val KEY_DEBUG_ENABLED = "provider_debug_logging_enabled"
+    const val KEY_REVISION = "provider_debug_config_revision"
 
     fun prefsName(provider: ProviderId): String = "${provider.configKey}$PREFS_NAME_SUFFIX"
 
@@ -89,6 +94,29 @@ object ProviderDebugConfig {
     ): ProviderDebugResolution {
         val resolution = resolveDetailed(mode, provider, rootSource)
         StructuredDiagnostics.configureForRuntime(mode, resolution.enabled, frameworkSink)
+        if (mode == RuntimeMode.ROOT_MODULE) {
+            val revision = runCatching { (rootSource as? ProviderDebugRevisionSource)?.observedRevision() ?: -1L }.getOrDefault(-1L)
+            val observed = resolution.reason == "enabled" || resolution.reason == "disabled"
+            // Players call this before installing business hooks; an optional runtime
+            // diagnostic write must never abort that installer or change the resolution.
+            try {
+                runtimeConfigRecorder(
+                    resolution.enabled, if (observed) revision else -1L,
+                    if (!observed) "UNAVAILABLE" else if (revision < 0L) "CONSUMED_NO_REVISION" else "CONSUMED")
+            } catch (_: RuntimeException) {
+            } catch (_: LinkageError) {
+            }
+        }
         return resolution
     }
+
+    // Declared before runtimeConfigRecorder: object properties initialize in source order.
+    internal val DEFAULT_RUNTIME_CONFIG_RECORDER: (Boolean, Long, String) -> Unit = { enabled, revision, observation ->
+        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.configConsumed(
+            enabled, revision, observation)
+    }
+
+    /** Test seam only; production always records into ProviderRuntimeDiagnostics. */
+    @Volatile
+    internal var runtimeConfigRecorder: (Boolean, Long, String) -> Unit = DEFAULT_RUNTIME_CONFIG_RECORDER
 }

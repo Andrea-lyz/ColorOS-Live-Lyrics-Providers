@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LSP Scope PoC · 非歌词插件</string>
+    <string name="probe_description">M0 原生作用域请求实验；独立测试包，无歌词 Hook，不属于正式 Provider 矩阵。</string>
+</resources>

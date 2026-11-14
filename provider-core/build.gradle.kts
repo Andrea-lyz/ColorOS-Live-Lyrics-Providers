@@ -41,6 +41,7 @@ configure<LibraryExtension> {
 
 dependencies {
     api(project(":parser-lrc"))
+    api(project(":provider-runtime-diagnostics"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.serialization.json)

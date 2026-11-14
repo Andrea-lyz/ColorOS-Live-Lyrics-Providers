@@ -38,6 +38,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":provider-runtime-diagnostics"))
+    implementation(project(":provider-module-status"))
     testImplementation(libs.junit)
     testImplementation(libs.libxposed.modern.api)
 }

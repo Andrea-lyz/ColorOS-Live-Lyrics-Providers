@@ -13,6 +13,8 @@ plugins {
     alias(libs.plugins.jetbrains.kotlin.jvm) apply false
 }
 
+apply(from = rootProject.file("gradle/build-identity.gradle.kts"))
+
 extra["compileSdkVersion"] = 37
 extra["targetSdkVersion"] = 37
 
@@ -128,8 +130,10 @@ tasks.register("testV5Matrix") {
     dependsOn(v5ProviderModules.map { "$it:testDebugUnitTest" })
     dependsOn(
         ":provider-core:testDebugUnitTest",
+        ":provider-runtime-diagnostics:testDebugUnitTest",
         ":provider-hook-api102:testDebugUnitTest",
         ":provider-settings-api102:testDebugUnitTest",
+        ":provider-module-status:testDebugUnitTest",
         ":reflection-core:testDebugUnitTest",
         ":share:extensions-android:testDebugUnitTest",
         ":share:extensions-kt:test",
