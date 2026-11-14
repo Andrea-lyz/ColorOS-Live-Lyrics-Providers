@@ -24,7 +24,7 @@
       "serviceAction": "io.github.andrealtb.artwork.action.BIND_PROVIDER",
       "settingsActivity": "io.github.andrealtb.artwork.am.AmArtworkActivity",
       "contractModule": "artwork-contract",
-      "distribution": "bridge-release",
+      "distribution": "provider-store",
       "evidence": "artwork-provider-am/src/main/java/io/github/andrealtb/artwork/am/AmArtworkService.java"
     }
   ],
