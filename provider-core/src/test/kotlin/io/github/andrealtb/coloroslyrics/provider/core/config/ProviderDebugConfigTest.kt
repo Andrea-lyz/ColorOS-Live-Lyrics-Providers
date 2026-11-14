@@ -19,6 +19,28 @@ class ProviderDebugConfigTest {
     @After
     fun tearDown() {
         StructuredDiagnostics.resetForTesting()
+        ProviderDebugConfig.runtimeConfigRecorder = ProviderDebugConfig.DEFAULT_RUNTIME_CONFIG_RECORDER
+    }
+
+    @Test
+    fun runtimeDiagnosticFailureDoesNotChangeResolutionOrEscape() {
+        listOf<Throwable>(
+            IllegalStateException("synthetic configConsumed failure"),
+            NoClassDefFoundError("synthetic configConsumed linkage")
+        ).forEach { failure ->
+            listOf(true, false).forEach { value ->
+                val source = ProviderDebugSource { value }
+                val expected = ProviderDebugConfig.resolveDetailed(RuntimeMode.ROOT_MODULE, ProviderId.SALT, source)
+                var calls = 0
+                ProviderDebugConfig.runtimeConfigRecorder = { _, _, _ -> calls++; throw failure }
+
+                val actual = ProviderDebugConfig.applyDiagnostics(RuntimeMode.ROOT_MODULE, ProviderId.SALT, source)
+
+                assertEquals(expected, actual)
+                assertEquals(1, calls)
+                assertEquals(value, StructuredDiagnostics.isDebugEnabled)
+            }
+        }
     }
 
     @Test

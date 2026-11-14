@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="${applicationId}.permission.READ_RUNTIME_DIAGNOSTICS" android:protectionLevel="signature" />
+    <uses-permission android:name="${applicationId}.permission.READ_RUNTIME_DIAGNOSTICS" />
+    <application>
+        <activity android:name="io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.RuntimeDiagnosticsActivity"
+            android:exported="false" android:label="Provider 运行诊断"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>

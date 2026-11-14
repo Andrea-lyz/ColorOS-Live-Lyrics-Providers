@@ -27,7 +27,13 @@ internal class ProviderApplicationBootstrap(
     private val providerId: ProviderId,
     private val diagnosticsComponent: String,
     private val frameworkSink: DiagnosticSink,
-    private val installer: ProviderHookInstaller
+    private val installer: ProviderHookInstaller,
+    private val registerDiagnostics: (Context) -> Unit = {
+        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.register(it)
+    },
+    private val recordInstallerReturned: (Boolean) -> Unit = {
+        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.installerReturned(it)
+    }
 ) {
     private val attachHookScheduled = AtomicBoolean(false)
     private val hostBootstrapped = AtomicBoolean(false)
@@ -79,6 +85,17 @@ internal class ProviderApplicationBootstrap(
         processName: String
     ) {
         if (!hostBootstrapped.compareAndSet(false, true)) return
+        // Optional observations may never stop business hook installation, including future
+        // diagnostic regressions outside the receiver's own defensive boundary.
+        runCatching { registerDiagnostics(hostContext) }.onFailure { error ->
+            StructuredDiagnostics.logWarning(
+                DiagnosticEvent(
+                    component = diagnosticsComponent, area = "bootstrap",
+                    event = "RUNTIME_DIAGNOSTIC_FAILED", process = processName,
+                    reason = error.javaClass.simpleName
+                )
+            )
+        }
         synchronized(lock) {
             val hostVersion = runCatching {
                 hostContext.packageManager.getPackageInfo(hostContext.packageName, 0).versionName
@@ -94,7 +111,7 @@ internal class ProviderApplicationBootstrap(
                 debugSource = RemotePreferencesDebugSource(entry),
                 frameworkSink = frameworkSink
             )
-            runCatching {
+            val installation = runCatching {
                 installer.install(hookContext)
             }.onFailure { error ->
                 StructuredDiagnostics.logError(
@@ -109,6 +126,14 @@ internal class ProviderApplicationBootstrap(
                     throwable = error
                 )
             }
+            // Optional observation only; it must not suppress the install summary below.
+            try {
+                recordInstallerReturned(installation.isSuccess)
+            } catch (error: RuntimeException) {
+                logRuntimeDiagnosticFailure(processName, error)
+            } catch (error: LinkageError) {
+                logRuntimeDiagnosticFailure(processName, error)
+            }
             StructuredDiagnostics.logInfo(
                 DiagnosticEvent(
                     component = diagnosticsComponent,
@@ -119,5 +144,15 @@ internal class ProviderApplicationBootstrap(
                 )
             )
         }
+    }
+
+    private fun logRuntimeDiagnosticFailure(processName: String, error: Throwable) {
+        StructuredDiagnostics.logWarning(
+            DiagnosticEvent(
+                component = diagnosticsComponent, area = "bootstrap",
+                event = "RUNTIME_DIAGNOSTIC_FAILED", process = processName,
+                reason = error.javaClass.simpleName
+            )
+        )
     }
 }

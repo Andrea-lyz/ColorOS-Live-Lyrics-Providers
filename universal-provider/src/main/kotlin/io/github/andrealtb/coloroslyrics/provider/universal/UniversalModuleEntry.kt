@@ -128,14 +128,23 @@ class UniversalModuleEntry : XposedModule() {
     private val artworkByPackage = java.util.concurrent.ConcurrentHashMap<String, ArtworkSnapshot>()
 
     override fun onModuleLoaded(param: XposedModuleInterface.ModuleLoadedParam) {
+        runCatching {
+            io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.initialize(
+                moduleApplicationInfo.packageName, param.processName,
+                io.github.andrealtb.coloroslyrics.provider.core.diagnostics.ProviderBuildIdentity.describe(javaClass),
+                "$frameworkName / $frameworkVersion ($frameworkVersionCode)", apiVersion, frameworkProperties)
+        }
         StructuredDiagnostics.configure(debugEnabled = debugEnabled)
+        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.configConsumed(
+            debugEnabled, -1L, "BOOTSTRAP_NO_REVISION")
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
                 component = UniversalDiagnostics.COMPONENT,
                 area = "bootstrap",
                 event = "MODULE_LOADED",
                 process = param.processName,
-                reason = "framework=${frameworkName} api=${apiVersion}"
+                reason = "framework=${frameworkName} api=${apiVersion} buildId=" +
+                    io.github.andrealtb.coloroslyrics.provider.core.diagnostics.ProviderBuildIdentity.describe(javaClass)
             )
         )
     }
@@ -618,6 +627,7 @@ class UniversalModuleEntry : XposedModule() {
 
 
     private fun ensureRequestReceiver(context: Context) {
+        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.register(context)
         if (receiverRegistered) return
         synchronized(this) {
             if (receiverRegistered) return
@@ -728,6 +738,8 @@ class UniversalModuleEntry : XposedModule() {
                                     if (debugChanged) persistDebugEnabled(debug)
                                     if (clockFallbackChanged) persistClockLineFallbackEnabled(clockFallback)
                                 }
+                                io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.configConsumed(
+                                    debugEnabled, runCatching { intent.getLongExtra(UniversalSnapshotStore.EXTRA_CONFIG_REVISION, -1L) }.getOrDefault(-1L), "CONSUMED")
                                 if (priorityChanged) retryMissedTracks()
                                 UniversalDiagnostics.sourceConfigUpdated(sourcePriority.map { it.name })
                                 // The home screen shows whether the current player is on the clock fallback.

@@ -51,6 +51,12 @@ abstract class ProviderModuleEntry : XposedModule() {
 
     final override fun onModuleLoaded(param: XposedModuleInterface.ModuleLoadedParam) {
         RuntimeModeResolver.notifyXposedHookActive()
+        runCatching {
+            io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.ProviderRuntimeDiagnostics.initialize(
+                moduleApplicationInfo.packageName, param.processName,
+                io.github.andrealtb.coloroslyrics.provider.core.diagnostics.ProviderBuildIdentity.describe(javaClass),
+                "$frameworkName / $frameworkVersion ($frameworkVersionCode)", apiVersion, frameworkProperties)
+        }
         StructuredDiagnostics.addSink(frameworkSink)
         StructuredDiagnostics.logInfo(
             DiagnosticEvent(
@@ -58,7 +64,8 @@ abstract class ProviderModuleEntry : XposedModule() {
                 area = "bootstrap",
                 event = "MODULE_LOADED",
                 process = param.processName,
-                reason = "framework=${frameworkName} api=${apiVersion}"
+                reason = "framework=${frameworkName} api=${apiVersion} buildId=" +
+                    io.github.andrealtb.coloroslyrics.provider.core.diagnostics.ProviderBuildIdentity.describe(javaClass)
             )
         )
     }

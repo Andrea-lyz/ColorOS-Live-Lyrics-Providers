@@ -18,10 +18,17 @@ import io.github.libxposed.api.XposedInterface
  */
 class RemotePreferencesDebugSource(
     private val module: XposedInterface
-) : ProviderDebugSource {
+) : ProviderDebugSource, io.github.andrealtb.coloroslyrics.provider.core.config.ProviderDebugRevisionSource {
 
-    override fun read(provider: ProviderId): Boolean? = runCatching {
-        module.getRemotePreferences(ProviderDebugConfig.prefsName(provider))
-            .getBoolean(ProviderDebugConfig.KEY_DEBUG_ENABLED, false)
-    }.getOrNull()
+    @Volatile private var revision = -1L
+    override fun observedRevision(): Long = revision
+    override fun read(provider: ProviderId): Boolean? {
+        revision = -1L
+        return runCatching {
+            val prefs = module.getRemotePreferences(ProviderDebugConfig.prefsName(provider))
+            val enabled = prefs.getBoolean(ProviderDebugConfig.KEY_DEBUG_ENABLED, false)
+            revision = runCatching { prefs.getLong(ProviderDebugConfig.KEY_REVISION, -1L) }.getOrDefault(-1L)
+            enabled
+        }.getOrNull()
+    }
 }

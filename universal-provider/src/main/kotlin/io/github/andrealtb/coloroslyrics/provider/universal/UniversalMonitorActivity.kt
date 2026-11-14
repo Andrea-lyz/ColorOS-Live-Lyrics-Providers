@@ -90,6 +90,10 @@ class UniversalMonitorActivity : ComponentActivity() {
         setContent {
             UniversalMainApp(
                 initialScreen = initialScreen,
+                onOpenRuntimeDiagnostics = {
+                    startActivity(Intent(this@UniversalMonitorActivity,
+                        io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.RuntimeDiagnosticsActivity::class.java))
+                },
                 snapshotMap = snapshotMap.value,
                 artworkBitmap = artworkState.value,
                 cachedSongsCount = cachedSongs.intValue,

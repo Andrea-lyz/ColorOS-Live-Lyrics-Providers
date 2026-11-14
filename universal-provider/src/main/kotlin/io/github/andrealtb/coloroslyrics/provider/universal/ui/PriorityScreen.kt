@@ -66,6 +66,8 @@ fun PriorityScreen(onBack: () -> Unit) {
             val prefs = appContext.getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, Context.MODE_PRIVATE)
             appContext.sendBroadcast(Intent(UniversalSnapshotStore.ACTION_UPDATE_SOURCE_CONFIG).apply {
                 addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
+                putExtra(UniversalSnapshotStore.EXTRA_CONFIG_REVISION,
+                    io.github.andrealtb.coloroslyrics.provider.universal.UniversalDiagnosticRevision.next(appContext))
                 putExtra(UniversalSnapshotStore.EXTRA_SOURCE_PRIORITY, LyricsSourceConfigStore.encode(selected))
                 putExtra(UniversalSnapshotStore.EXTRA_WORD_TIMING_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_WORD_TIMING, false))
                 putExtra(UniversalSnapshotStore.EXTRA_TRANSLATION_ENABLED, prefs.getBoolean(UniversalSettingsConstants.KEY_TRANSLATION, true))
