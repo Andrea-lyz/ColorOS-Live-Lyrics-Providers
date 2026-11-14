@@ -40,6 +40,7 @@ include(":provider-runtime-diagnostics")
 include(":provider-hook-api102")
 // v4.1 libxposed service shared layer: Provider module App and Debug config write side.
 include(":provider-settings-api102")
+include(":provider-module-status")
 
 // M0 feasibility probe: opt-in only, never part of the Provider release matrix.
 if (providers.gradleProperty("includeScopeProbe").orNull == "true") {

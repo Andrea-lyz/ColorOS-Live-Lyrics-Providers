@@ -3,6 +3,7 @@ package io.github.andrealtb.coloroslyrics.provider.universal
 import android.app.Application
 import android.content.Context
 import io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics
+import io.github.andrealtb.coloroslyrics.provider.modulestatus.ModuleStatus
 import io.github.andrealtb.coloroslyrics.provider.universal.engine.UniversalLyricEngine
 import io.github.andrealtb.coloroslyrics.provider.universal.session.SessionRepository
 
@@ -13,6 +14,8 @@ class UniversalProviderApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // Lets the Bridge store tell whether this module is enabled in the LSPosed manager.
+        ModuleStatus.register()
         UniversalAppIo.execute {
             StructuredDiagnostics.configure(
                 debugEnabled = getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, Context.MODE_PRIVATE)
