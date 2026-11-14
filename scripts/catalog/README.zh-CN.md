@@ -32,7 +32,7 @@ node scripts/catalog/generate-catalog-key.mjs --key-id <keyId> --out <仓库外�
 ```
 
 - 正式签名只在受保护的 GitHub Environment 中运行（D2），私钥通过 secret `CLL_CATALOG_SIGNING_KEY` 提供，不加 `--key`。工具不打印也不另存私钥；输出文件已存在时拒绝覆盖。
-- 正式密钥对尚未生成。Bridge 的生产信任集目前为空，任何目录都会被拒绝。
+- 正式密钥 `cll-catalog-2026a`（主用）和 `cll-catalog-2026b`（备用）的公钥已填入 `release/catalog-trust.json` 和 Bridge `CatalogTrust.PRODUCTION_CATALOG_KEYS`。
 
 ## 发布流程（`.github/workflows/provider-store-release.yml`）
 
@@ -44,11 +44,14 @@ node scripts/catalog/generate-catalog-key.mjs --key-id <keyId> --out <仓库外�
 
 任一步失败，已发布的目录都不变。可选的发布说明放在 `release/notes/<module>/<versionName>.md`，同时用于 Release 和目录。
 
-**启用前需要维护者在 GitHub 上完成（尚未完成）：**
+**启用前需要维护者在 GitHub 上完成**（2026-11-14 只读核对的状态）：
 
-- 在本机运行 `generate-catalog-key.mjs` 生成主用和备用两把密钥，私钥写在仓库外；把两把公钥填入 `release/catalog-trust.json` 的 `keys` 和 Bridge `CatalogTrust.PRODUCTION_CATALOG_KEYS`。
-- 新建 Environment `provider-catalog`，设置必需审核人；在其中添加 secret `CLL_CATALOG_SIGNING_KEY`（主用私钥 PEM 全文）和变量 `CLL_CATALOG_KEY_ID`。备用私钥离线保存，不放进 GitHub。
-- 确认 `GITHUB_TOKEN` 可以创建 Release 并推送 `store-catalog` 分支（若有分支保护需放行）。
+- [x] 生成两把密钥，公钥已填入两端；私钥在仓库外。
+- [x] Environment `provider-catalog` 已建，其中有 secret `CLL_CATALOG_SIGNING_KEY` 和变量 `CLL_CATALOG_KEY_ID`（`cll-catalog-2026a`）。
+- [ ] 给 `provider-catalog` 设置**必需审核人**。目前只有部署分支规则，没有审批，晋级会不经确认直接执行。
+- [ ] 在 `provider-catalog` 的部署规则中允许 **tag** `*-v*`。目前启用了自定义规则但一条也没有，所以由 tag 触发的晋级会被拒绝。
+- [ ] 添加仓库级 secret：`SIGNING_KEY`（release.jks 的 base64）、`KEY_STORE_PASSWORD`、`ALIAS`、`KEY_PASSWORD`。目前一个也没有，构建任务会在解码 keystore 时失败。证书指纹必须等于 `release/catalog-trust.json` 的 `releaseCertificateSha256`。
+- [x] `main` 没有分支保护；`store-catalog` 分支尚不存在，首次晋级会新建它（revision 1）。
 
 ## 测试夹具
 
