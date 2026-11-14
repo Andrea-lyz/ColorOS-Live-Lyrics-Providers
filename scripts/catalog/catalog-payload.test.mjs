@@ -107,4 +107,10 @@ test('aapt2 badging and apksigner output are parsed strictly', () => {
   assert.deepEqual(parseSigners(signer), [SIGNER]);
   assert.throws(() => parseSigners(`DOES NOT VERIFY\nSigner #1 certificate SHA-256 digest: ${SIGNER}\n`), /Verifies/);
   assert.throws(() => parseSigners('Verifies\n'), /no signer/);
+  // CRLF, indentation, colon-separated hex and an SDK-targeted v3.1 label.
+  const colons = SIGNER.match(/../g).join(':').toUpperCase();
+  assert.deepEqual(parseSigners(`Verifies\r\n  Signer #1 certificate SHA-256 digest: ${colons}\r\n`), [SIGNER]);
+  assert.deepEqual(parseSigners(`Verifies\nSigner (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ${SIGNER}\n`), [SIGNER]);
+  // A failure names the verification lines it saw.
+  assert.throws(() => parseSigners('Verifies\nNumber of signers: 1\nSigner #1 certificate SHA-256 digest: zz\n'), /Number of signers: 1/);
 });

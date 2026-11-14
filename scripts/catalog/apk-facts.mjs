@@ -18,12 +18,27 @@ export function parseBadging(text) {
   return { applicationId: pkg[1], versionCode: Number(pkg[2]), versionName: pkg[3], minSdk: Number(sdk[1]) };
 }
 
-/** All current signers; apksigner prints one "Signer #N certificate SHA-256 digest" per signer. */
+/**
+ * All current signers. apksigner prints one "Signer #N certificate SHA-256 digest: <hex>" per
+ * signer; tolerate CRLF, surrounding spaces, colon-separated hex and a "Signer (minSdkVersion=…)"
+ * label for SDK-targeted v3.1 signers.
+ */
 export function parseSigners(text) {
-  if (!/^Verifies$/m.test(text)) fail('apksigner did not report "Verifies"');
-  const signers = [...text.matchAll(/^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]{64})$/gm)].map((m) => m[1].toLowerCase());
-  if (signers.length === 0) fail('no signer certificate in apksigner output');
+  const out = String(text).replace(/\r/g, '');
+  if (!/^\s*Verifies\s*$/m.test(out)) fail(`apksigner did not report "Verifies"${summary(out)}`);
+  const signers = [...out.matchAll(/^[ \t]*Signer\b[^\n]*?certificate SHA-256 digest:[ \t]*([0-9a-fA-F:]+)[ \t]*$/gm)]
+    .map((m) => m[1].replace(/:/g, '').toLowerCase())
+    .filter((hex) => /^[0-9a-f]{64}$/.test(hex));
+  if (signers.length === 0) fail(`no signer certificate in apksigner output${summary(out)}`);
   return [...new Set(signers)];
+}
+
+// Only verification and certificate lines (public facts) go into an error, never the whole output.
+function summary(text) {
+  const lines = text.split('\n')
+    .filter((line) => /^\s*(Verif|Number of signers|Signer|DOES NOT|ERROR|WARNING)/.test(line))
+    .slice(0, 20);
+  return lines.length ? `:\n${lines.join('\n')}` : ' (no verification lines)';
 }
 
 export function findBuildTools(explicit) {
@@ -62,6 +77,14 @@ export function readApkFacts(apkPath, tools) {
     ...parseBadging(run(tools.aapt2, ['dump', 'badging', apkPath])),
     bytes: bytes.length,
     sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
-    signerSha256: parseSigners(run(tools.apksigner, ['verify', '--verbose', '--print-certs', apkPath])),
+    signerSha256: signersOf(tools.apksigner, apkPath),
   };
+}
+
+function signersOf(apksigner, apkPath) {
+  try {
+    return parseSigners(run(apksigner, ['verify', '--verbose', '--print-certs', apkPath]));
+  } catch (error) {
+    throw new Error(`${error.message}\n(apksigner: ${apksigner})`);
+  }
 }
