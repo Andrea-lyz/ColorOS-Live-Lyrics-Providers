@@ -100,6 +100,11 @@ jobs:
           (cd out && sha256sum "$ASSET" > "$ASSET.sha256")
           echo "sha256=$(cut -d' ' -f1 "out/$ASSET.sha256")" >> "$GITHUB_OUTPUT"
 
+      # build-tools 37.0.0's apksigner no longer prints the signer certificate line that
+      # apk-facts reads; keep a known-good apksigner installed as its fallback.
+      - name: Install fallback build-tools
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.1.0" > /dev/null
+
       # Same rules the catalog uses: package/version equal the matrix, signed only by the
       # release certificate. A debug or mis-versioned APK stops here, before any Release.
       - name: Check APK identity
@@ -199,6 +204,11 @@ jobs:
         run: |
           test -n "$KEY_ID" || { echo "Environment variable CLL_CATALOG_KEY_ID is not set" >&2; exit 1; }
           node -e "const t=require('./release/catalog-trust.json'); if(!Object.hasOwn(t.keys, process.env.KEY_ID)) { console.error('keyId ' + process.env.KEY_ID + ' is not pinned in release/catalog-trust.json'); process.exit(1) }"
+
+      # build-tools 37.0.0's apksigner no longer prints the signer certificate line that
+      # apk-facts reads; keep a known-good apksigner installed as its fallback.
+      - name: Install fallback build-tools
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;36.1.0" > /dev/null
 
       # Catalog facts come from the bytes users will download, not from the build job.
       - name: Download the published asset
