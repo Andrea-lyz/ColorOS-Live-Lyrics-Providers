@@ -45,6 +45,7 @@ dependencies {
     implementation(libs.libxposed.service)
     // Enable-state endpoint for the Bridge store; fed by ProviderModuleApplication.
     implementation(project(":provider-module-status"))
+    implementation(project(":provider-scope-request"))
     implementation(libs.androidx.core.ktx)
 
     testImplementation(libs.junit)

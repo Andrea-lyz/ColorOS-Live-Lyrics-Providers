@@ -134,6 +134,7 @@ tasks.register("testV5Matrix") {
         ":provider-hook-api102:testDebugUnitTest",
         ":provider-settings-api102:testDebugUnitTest",
         ":provider-module-status:testDebugUnitTest",
+        ":provider-scope-request:testDebugUnitTest",
         ":reflection-core:testDebugUnitTest",
         ":share:extensions-android:testDebugUnitTest",
         ":share:extensions-kt:test",

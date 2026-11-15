@@ -40,6 +40,7 @@ android {
 dependencies {
     implementation(project(":provider-runtime-diagnostics"))
     implementation(project(":provider-module-status"))
+    implementation(project(":provider-scope-request"))
     testImplementation(libs.junit)
     testImplementation(libs.libxposed.modern.api)
 }
