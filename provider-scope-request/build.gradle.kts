@@ -35,3 +35,10 @@ dependencies {
 
     testImplementation(libs.junit)
 }
+
+// ScopeRequestWiringTest reads the release matrix and every module's build file; declare them as
+// inputs so a matrix change re-runs the test instead of reusing a cached result.
+tasks.withType<Test>().configureEach {
+    inputs.file(rootProject.file("release/v5-provider-matrix.json"))
+    inputs.files(fileTree(rootProject.projectDir) { include("*/build.gradle.kts") })
+}
