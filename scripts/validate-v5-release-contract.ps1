@@ -58,7 +58,7 @@ $providers = @($contract.providers)
 Assert-Contract ($contract.schema -eq 4) 'unsupported schema'
 Assert-Contract ($contract.suiteVersion -eq '4.5.4') 'unexpected suiteVersion'
 Assert-Contract ($contract.sourceTag -eq 'main') 'unexpected sourceTag'
-Assert-Contract ($providers.Count -eq 14) 'matrix must contain exactly 14 Providers'
+Assert-Contract ($providers.Count -eq 13) 'matrix must contain exactly 13 Providers'
 Assert-Contract ($contract.minSdk -eq 27) 'matrix minSdk must be 27'
 Assert-Contract ($contract.compileSdk -eq 37) 'matrix compileSdk must be 37'
 Assert-Contract ($contract.targetSdk -eq 37) 'matrix targetSdk must be 37'
