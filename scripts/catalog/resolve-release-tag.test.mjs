@@ -20,7 +20,9 @@ test('every matrix module resolves from its own tag', () => {
     assert.match(r.assetName, /^[A-Za-z0-9][A-Za-z0-9._-]*\.apk$/);
     assert.equal(r.gradleAssemble, `:${m.module}:assembleRelease`);
   }
-  assert.equal(resolveReleaseTag('player-salt-v1.1.2', matrix).assetName, 'ColorOS-Live-Lyrics-Provider-Salt-v1.1.2.apk');
+  const salt = matrix.providers.find((p) => p.module === 'player-salt');
+  assert.equal(resolveReleaseTag(`player-salt-v${salt.versionName}`, matrix).assetName,
+    `ColorOS-Live-Lyrics-Provider-Salt-v${salt.versionName}.apk`);
   const artwork = matrix.artworkProviders[0];
   assert.equal(resolveReleaseTag(`${artwork.module}-v${artwork.versionName}`, matrix).assetName,
     `ColorOS-Live-Lyrics-Dynamic-Artwork-Provider-v${artwork.versionName}.apk`);

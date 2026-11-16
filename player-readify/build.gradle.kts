@@ -12,8 +12,8 @@ android {
         applicationId = "io.github.andrealtb.coloroslyrics.provider.readify"
         minSdk = 27
         targetSdk = rootProject.extra["targetSdkVersion"] as Int
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
     }
     signingConfigs {
         create("release") {
