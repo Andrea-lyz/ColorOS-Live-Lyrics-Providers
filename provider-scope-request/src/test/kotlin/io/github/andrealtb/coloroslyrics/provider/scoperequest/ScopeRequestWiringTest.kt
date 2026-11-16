@@ -33,7 +33,7 @@ class ScopeRequestWiringTest {
 
     @Test fun dedicatedProvidersCarryTheEntryAndUniversalDoesNot() {
         val all = providers()
-        assertEquals(14, all.size)
+        assertEquals(13, all.size)
         val (universal, dedicated) = all.partition { it.second == "system-server-bound-list" }
         assertEquals(listOf("universal-provider"), universal.map { it.first })
         val missing = dedicated.map { it.first }.filterNot(::wired)
