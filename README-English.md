@@ -5,7 +5,7 @@ module publishes standard `MediaMetadata["lyricInfo"]` that ColorOS SystemUI can
 Installing the optional `io.github.andrealtb.lockscreenlyrics` Bridge adds generic word rendering,
 AOD, translation controls, appearance settings, and compatibility enhancements.
 
-The v5 release matrix contains 14 installable Provider applications: 12 player-specific modules,
+The v5 release matrix contains 13 installable Provider applications: 11 player-specific modules,
 Universal Player Provider, and Readify TTS Provider. Every module uses a libxposed API 102 entry,
 static scope, and protective exception handling; the Universal Provider settings app runs separately
 while its module logic is limited to `system_server`.
@@ -31,7 +31,6 @@ Developer entry points:
 | KuWo | `:kuwo-music` | `io.github.andrealtb.coloroslyrics.provider.kuwo` | `cn.kuwo.player` | `12.2.0.0` |
 | LX / Walnut | `:player-lx` | `io.github.andrealtb.coloroslyrics.provider.lx` | `cn.toside.music.mobile` / `com.lxwalnut.music.mobile` | LX `1.8.4`; Walnut `26.07.16` |
 | Poweramp | `:player-poweramp` | `io.github.andrealtb.coloroslyrics.provider.poweramp` | `com.maxmpz.audioplayer` | `build-1025-bundle-play` |
-| Metrolist | `:player-metrolist` | `io.github.andrealtb.coloroslyrics.provider.metrolist` | `com.metrolist.music` | `13.6.1` |
 | KuGou / Lite | `:player-kugou` | `io.github.andrealtb.coloroslyrics.provider.kugou` | `com.kugou.android` / `com.kugou.android.lite` | Standard `20.8.0`; Lite `5.2.61` |
 | QQ Music | `:player-qq` | `io.github.andrealtb.coloroslyrics.provider.qq` | `com.tencent.qqmusic` | `20.7.5.8` |
 | NetEase / Honor | `:player-netease` | `io.github.andrealtb.coloroslyrics.provider.netease` | `com.netease.cloudmusic` / `com.hihonor.cloudmusic` | Official `9.5.70`; Honor `3.5.20`; modified lite build `9.0.40` |
@@ -45,8 +44,9 @@ The adaptation baseline is the host sample used for static reverse engineering, 
 and device closure. It does not mean that the Provider supports only that version; host updates
 that change obfuscation structures or internal lyric flows still require renewed verification.
 
-Metrolist and Spotify do not expose translations. Other modules use either the public action or
-the Bridge five-slot control according to player-specific evidence. QQ Music HD is out of scope.
+Spotify does not expose translations. Other modules use either the public action or
+the Bridge five-slot control according to player-specific evidence. QQ Music HD is out of scope. Metrolist is no longer in the release matrix as of 5.0
+(the `player-metrolist` source stays in the repository but is neither built nor released).
 
 ## Universal Player Provider
 

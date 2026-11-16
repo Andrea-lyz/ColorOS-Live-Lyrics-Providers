@@ -24,7 +24,6 @@ val v5ProviderModules = listOf(
     ":kuwo-music",
     ":player-lx",
     ":player-poweramp",
-    ":player-metrolist",
     ":player-kugou",
     ":player-qq",
     ":player-netease",

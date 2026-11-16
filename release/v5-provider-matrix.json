@@ -150,28 +150,6 @@
       ]
     },
     {
-      "module": "player-metrolist",
-      "displayName": "Metrolist",
-      "applicationId": "io.github.andrealtb.coloroslyrics.provider.metrolist",
-      "versionName": "1.2.1",
-      "versionCode": 4,
-      "asset": "ColorOS-Live-Lyrics-Provider-Metrolist-v4.5.4.apk",
-      "entryClass": "io.github.andrealtb.coloroslyrics.provider.metrolist.MetrolistModuleEntry",
-      "scopes": [
-        "com.metrolist.music"
-      ],
-      "processPolicy": {
-        "kind": "scope-only",
-        "evidence": "player-metrolist/src/main/kotlin/io/github/andrealtb/coloroslyrics/provider/metrolist/MetrolistPlayerHooker.kt"
-      },
-      "validatedHosts": [
-        {
-          "package": "com.metrolist.music",
-          "version": "13.6.1"
-        }
-      ]
-    },
-    {
       "module": "player-kugou",
       "displayName": "KuGou",
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.kugou",
