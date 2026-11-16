@@ -10,6 +10,10 @@ Universal Player Provider, and Readify TTS Provider. Every module uses a libxpos
 static scope, and protective exception handling; the Universal Provider settings app runs separately
 while its module logic is limited to `system_server`.
 
+Since 5.0 each Provider is released on its own at its own version (tag `<module>-v<versionName>`) and distributed
+through the Bridge store's signed catalog: users install and update from the Bridge **Store**, and a dedicated
+Provider can request its LSPosed scope from its card. The Bridge Release no longer carries Provider APKs or a ZIP.
+
 An optional, independently installed [Dynamic Artwork Provider](#dynamic-artwork-provider-optional)
 (`:artwork-provider-am`) is also part of this repository. It is not a lyric Provider and is built,
 installed, and released on its own.
@@ -20,7 +24,7 @@ Developer entry points:
 
 - [Provider adaptation guide](docs/4.0/PROVIDER-ADAPTATION-GUIDE.md)
 - [Provider 适配技术指南（中文）](docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md)
-- [Player-owned `lyricInfo` protocol](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.1/docs/PLAYER_INTEGRATION.md)
+- [Player-owned `lyricInfo` protocol](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/main/docs/PLAYER_INTEGRATION.md)
 
 ## v5 Provider matrix
 
@@ -37,7 +41,7 @@ Developer entry points:
 | Apple Music | `:player-apple` | `io.github.andrealtb.coloroslyrics.provider.apple` | `com.apple.android.music` | `6.5.2` |
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | QiShui | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
-| Universal Player | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system` (select target packages in its app) | ColorOS 16 / Android 16 |
+| Universal Player | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system` (select target packages in its app) | ColorOS 16 / 17 |
 | Readify AI | `:player-readify` | `io.github.andrealtb.coloroslyrics.provider.readify` | `com.readin.app` | `3.1.0` |
 
 The adaptation baseline is the host sample used for static reverse engineering, implementation,
@@ -50,7 +54,7 @@ the Bridge five-slot control according to player-specific evidence. QQ Music HD 
 
 ## Universal Player Provider
 
-Universal Player Provider (`Provider-Universal 1.1.2 (4)`) is for players without a dedicated
+Universal Player Provider (`Provider-Universal 1.1.4 (6)`) is for players without a dedicated
 adapter that still create a standard Android `MediaSession`. It has static scope only in
 `system_server` and receives an explicit target-package list from its settings app; unselected music,
 video, and other media apps are never observed, queried for lyrics, or written with `lyricInfo`.
@@ -65,7 +69,10 @@ KuGou and KuGou Lite, NetEase Cloud Music and its Honor build) for manual select
 page; only KuWo stays unavailable. **Enable only one Provider per player**: use either its dedicated
 Provider or the Universal Provider. With both on, each writes `lyricInfo` and they overwrite each other.
 
-After installing the APK, open **Universal Player Provider**: select target apps on the Players page,
+1.1.4 is the first release distributed through the Bridge store and adds a status endpoint, so the Bridge can show
+whether it is enabled in LSPosed without root.
+
+After installing it from the Bridge store, open **Universal Player Provider**: select target apps on the Players page,
 set lyric-source priority on Sources, and enable word timing, translations, raw lyrics, or sanitized
 diagnostics as needed. The module preserves existing host metadata and appends standard
 `MediaMetadata["lyricInfo"]` only to a selected active MediaSession. ColorOS SystemUI can consume it
@@ -124,6 +131,17 @@ Single-module example:
 Release signing uses `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`,
 `RELEASE_KEY_ALIAS` and `RELEASE_KEY_PASSWORD`.
 
+## Releasing to the store
+
+1. Raise versionName/versionCode in both `release/v5-provider-matrix.json` and the module's `build.gradle.kts`, write
+   bilingual notes in `release/notes/<module>/<versionName>.md`, and merge into `main`.
+2. Tag that commit `<module>-v<versionName>` and push it. GitHub does not trigger workflows when more than three tags
+   are pushed at once, so push a batch in groups of three or fewer.
+3. `provider-store-release.yml` builds, signs and publishes an immutable Release, re-checks the downloaded hash, and,
+   after approval of the protected `provider-catalog` environment, signs the next catalog and advances `store-catalog`.
+   A failure at any step leaves the published catalog unchanged.
+4. After changing the matrix, run local checks with `--rerun-tasks` so tests that read the matrix do not reuse cached results.
+
 ## Documentation and provenance
 
 - Provider adaptation guide: `docs/4.0/PROVIDER-ADAPTATION-GUIDE.md`
@@ -140,7 +158,7 @@ source headers, `NOTICE` and the migration reports.
 
 `:player-readify` (`io.github.andrealtb.coloroslyrics.provider.readify`) is an API 102 TTS adapter
 for Readify 3.1.0. It requires the companion Bridge `sentence-window-v1` support and is included in
-the formal 14-app v5 release matrix and Provider bundle.
+the formal 13-app v5 release matrix and distributed through the Bridge store.
 
 See [player-readify/README.md](player-readify/README.md) for the protocol, host scope, and current
 device-validation limits.
@@ -154,13 +172,12 @@ prefers the AM download, verifies the square video, and hands it to an authorize
 part of the v5 lyric matrix above. Without it the lock screen keeps the official static cover.
 
 - First run: turn the source on inside the app (off by default, unmetered networks by default),
-  then pick and authorize it in the Bridge under "Settings → Dynamic artwork".
+  then pick and authorize it in the Bridge under "Appearance → Dynamic artwork".
 - Fully independent of the lyric Providers: install, update, or remove it on its own; the lyric
   path is unaffected.
-- Source version 1.0.6 (versionCode 10), signed with the same release key as the lyric Providers. From
-  Bridge 4.5.0 it ships with the formal release as its own asset and does not enter the Provider bundle.
-  Bridge 4.5.4 does not change this Provider. Among the lyric Providers only NetEase moves to 1.2.2;
-  every other module keeps its code and internal version, and suite asset file names move to 4.5.4.
+- Source version 1.0.6 (versionCode 10), signed with the same release key as the lyric Providers. During 4.5.x it
+  shipped with the formal Bridge release as its own asset; since 5.0 it is distributed through the Bridge store
+  (tag `artwork-provider-am-v1.0.6`) with the same 1.0.6 code.
 - 1.0.6 (with Bridge 4.5.1): the manual binding page can import your own video as a local album's motion
   cover, keeping a square 1080 SDR H.264 picture as is and centre-cropping and compressing anything else to
   1080; manual search reads the selected storefront's Apple Music album shelf; same-titled editions get a
