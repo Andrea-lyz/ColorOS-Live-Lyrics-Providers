@@ -41,6 +41,7 @@ include(":provider-hook-api102")
 // v4.1 libxposed service shared layer: Provider module App and Debug config write side.
 include(":provider-settings-api102")
 include(":provider-module-status")
+include(":provider-scope-request")
 
 // M0 feasibility probe: opt-in only, never part of the Provider release matrix.
 if (providers.gradleProperty("includeScopeProbe").orNull == "true") {
@@ -56,7 +57,6 @@ include(":player-salt")
 include(":player-cone")
 include(":player-lx")
 include(":player-poweramp")
-include(":player-metrolist")
 include(":player-kugou")
 include(":player-qq")
 include(":player-netease")

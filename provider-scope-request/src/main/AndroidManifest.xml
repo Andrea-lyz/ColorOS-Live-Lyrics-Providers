@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          Management protocol v1 (5.0 plan §7.2): asks THIS module's own LSPosed service to request
+          scope for compiled hosts. Exported for the same-signer Bridge store; the Activity itself
+          verifies the calling package's signature and the requested hosts.
+        -->
+        <activity
+            android:name="io.github.andrealtb.coloroslyrics.provider.scoperequest.ScopeRequestActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|locale|layoutDirection"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:label="LSPosed 作用域请求">
+            <intent-filter>
+                <action android:name="io.github.andrealtb.coloroslyrics.action.REQUEST_PROVIDER_SCOPE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

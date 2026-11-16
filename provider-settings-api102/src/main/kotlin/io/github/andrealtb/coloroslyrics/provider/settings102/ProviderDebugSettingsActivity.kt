@@ -78,6 +78,11 @@ abstract class ProviderDebugSettingsActivity : Activity() {
             setOnClickListener { startActivity(android.content.Intent(this@ProviderDebugSettingsActivity,
                 io.github.andrealtb.coloroslyrics.provider.runtimediagnostics.RuntimeDiagnosticsActivity::class.java)) }
         })
+        // Standalone front door for the same scope request the Bridge store uses (plan §7.3).
+        root.addView(android.widget.Button(this).apply {
+            text = "申请播放器作用域（LSPosed 原生请求）"
+            setOnClickListener { requestOwnScope() }
+        })
         root.addView(TextView(this).apply {
             text = "已安装模块 buildId：" +
                 io.github.andrealtb.coloroslyrics.provider.core.diagnostics.ProviderBuildIdentity.describe(javaClass) +
@@ -188,6 +193,45 @@ abstract class ProviderDebugSettingsActivity : Activity() {
     override fun onDestroy() {
         ProviderServiceState.removeListener(serviceListener)
         super.onDestroy()
+    }
+
+    private fun requestOwnScope() {
+        val hosts = javaClass.classLoader
+            ?.getResourceAsStream(io.github.andrealtb.coloroslyrics.provider.scoperequest.ScopeRequestProtocol.SCOPE_LIST_RESOURCE)
+            ?.use(io.github.andrealtb.coloroslyrics.provider.scoperequest.ScopeRequestProtocol::parseScopeList)
+            .orEmpty()
+        if (hosts.isEmpty()) {
+            Toast.makeText(this, "本模块没有可申请的播放器", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val p = io.github.andrealtb.coloroslyrics.provider.scoperequest.ScopeRequestProtocol
+        startActivityForResult(
+            android.content.Intent(this, io.github.andrealtb.coloroslyrics.provider.scoperequest.ScopeRequestActivity::class.java)
+                .putExtra(p.EXTRA_PROTOCOL, p.VERSION)
+                .putExtra(p.EXTRA_REQUEST_ID, "self-" + java.util.UUID.randomUUID().toString().replace("-", "").take(24))
+                .putExtra(p.EXTRA_HOSTS, hosts.toTypedArray()),
+            REQUEST_SCOPE,
+        )
+    }
+
+    @Deprecated("Platform Activity result API; this page has no AndroidX activity dependency.")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_SCOPE) return
+        val p = io.github.andrealtb.coloroslyrics.provider.scoperequest.ScopeRequestProtocol
+        val text = when (data?.getStringExtra(p.RESULT_STATUS)) {
+            "ALREADY_GRANTED", "GRANTED" -> "作用域已包含全部播放器。请完全结束并重新启动播放器。"
+            "PARTIAL" -> "只批准了部分播放器：" + data.getStringArrayExtra(p.RESULT_GRANTED).orEmpty().joinToString()
+            "NOT_GRANTED" -> "未获批准（拒绝或“不再询问”）。可在 LSPosed 管理器中手动勾选。"
+            "PENDING" -> "还没有收到 LSPosed 的结果。处理通知后可重新打开本页查看。"
+            "NO_SERVICE" -> "没有连接到 LSPosed 服务：请先在 LSPosed 中启用本模块。"
+            else -> "请求失败。可在 LSPosed 管理器中手动勾选。"
+        }
+        Toast.makeText(this, text, Toast.LENGTH_LONG).show()
+    }
+
+    private companion object {
+        const val REQUEST_SCOPE = 4102
     }
 
     private fun onServiceChanged(service: XposedService?) {

@@ -5,7 +5,7 @@
 `io.github.andrealtb.lockscreenlyrics` Bridge 后可获得通用逐字渲染、AOD、翻译按钮、
 样式与兼容增强。
 
-当前 v5 发布矩阵包含 14 个可安装 Provider：12 个播放器专属模块、通用播放器 Provider 与
+当前 v5 发布矩阵包含 13 个可安装 Provider：11 个播放器专属模块、通用播放器 Provider 与
 Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态作用域与保护性异常策略；
 通用 Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`。
 
@@ -29,7 +29,6 @@ Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态�
 | 酷我音乐 | `:kuwo-music` | `io.github.andrealtb.coloroslyrics.provider.kuwo` | `cn.kuwo.player` | `12.2.0.0` |
 | 落雪音乐(含Walnut fork) | `:player-lx` | `io.github.andrealtb.coloroslyrics.provider.lx` | `cn.toside.music.mobile` / `com.lxwalnut.music.mobile` | LX `1.8.4`；Walnut `26.07.16` |
 | Poweramp | `:player-poweramp` | `io.github.andrealtb.coloroslyrics.provider.poweramp` | `com.maxmpz.audioplayer` | `build-1025-bundle-play` |
-| Metrolist | `:player-metrolist` | `io.github.andrealtb.coloroslyrics.provider.metrolist` | `com.metrolist.music` | `13.6.1` |
 | 酷狗音乐（含概念版） | `:player-kugou` | `io.github.andrealtb.coloroslyrics.provider.kugou` | `com.kugou.android` / `com.kugou.android.lite` | 标准版 `20.8.0`；概念版 `5.2.61` |
 | QQ音乐 | `:player-qq` | `io.github.andrealtb.coloroslyrics.provider.qq` | `com.tencent.qqmusic` | `20.7.5.8` |
 | 网易云音乐(含荣耀版\9.0.40精简版) | `:player-netease` | `io.github.andrealtb.coloroslyrics.provider.netease` | `com.netease.cloudmusic` / `com.hihonor.cloudmusic` | 官方版 `9.5.70`；荣耀版 `3.5.20`；精简修改版 `9.0.40` |
@@ -42,8 +41,8 @@ Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态�
 “适配基线版本”是静态逆向、实现和设备收口所使用的宿主样本，不表示 Provider 仅支持
 该版本；宿主升级后如混淆结构或内部歌词链路发生变化，仍需重新验证。
 
-Metrolist 与 Spotify 不提供翻译；其余模块按各播放器证据使用公开 action 或 Bridge
-五槽按钮。QQ音乐 仅支持标准版，不包含 QQ音乐 HD。
+Spotify 不提供翻译；其余模块按各播放器证据使用公开 action 或 Bridge
+五槽按钮。QQ音乐 仅支持标准版，不包含 QQ音乐 HD。Metrolist 自 5.0 起不在发布矩阵内（`player-metrolist` 源码保留，不构建、不发布）。
 
 ## 通用播放器 Provider
 
