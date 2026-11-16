@@ -9,6 +9,9 @@
 Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态作用域与保护性异常策略；
 通用 Provider 的设置 App 独立运行，模块逻辑只驻留在 `system_server`。
 
+自 5.0 起，每个 Provider 按自己的版本单独发布（tag `<module>-v<versionName>`），通过 Bridge 商店的签名目录分发：
+用户在 Bridge 的“商店”中安装、更新，专属 Provider 还可在卡片上一键申请 LSPosed 作用域。Bridge Release 不再附带 Provider APK 或 ZIP。
+
 此外提供可选的独立应用[动态封面 Provider](#动态封面-provider可选)（`:artwork-provider-am`）：
 它不属于歌词矩阵，单独安装、单独发布。
 
@@ -18,7 +21,7 @@ Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态�
 
 - [Provider 适配技术指南](docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md)
 - [Provider adaptation guide (English)](docs/4.0/PROVIDER-ADAPTATION-GUIDE.md)
-- [播放器主动发布 `lyricInfo` 协议](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/4.1/docs/PLAYER_INTEGRATION.zh-CN.md)
+- [播放器主动发布 `lyricInfo` 协议](https://github.com/Andrea-lyz/ColorOS-Live-Lyrics-Bridge/blob/main/docs/PLAYER_INTEGRATION.zh-CN.md)
 
 ## v5 Provider 矩阵
 
@@ -35,7 +38,7 @@ Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态�
 | Apple Music | `:player-apple` | `io.github.andrealtb.coloroslyrics.provider.apple` | `com.apple.android.music` | `6.5.2` |
 | Spotify | `:player-spotify` | `io.github.andrealtb.coloroslyrics.provider.spotify` | `com.spotify.music` | `9.1.78.2208` |
 | 汽水音乐 | `:player-qishui` | `io.github.andrealtb.coloroslyrics.provider.qishui` | `com.luna.music` | `20.7.0` |
-| 通用播放器 | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system`（在设置 App 中选择目标包） | ColorOS 16 / Android 16 |
+| 通用播放器 | `:universal-provider` | `io.github.andrealtb.coloroslyrics.provider.universal` | `system`（在设置 App 中选择目标包） | ColorOS 16 / 17 |
 | Readify AI | `:player-readify` | `io.github.andrealtb.coloroslyrics.provider.readify` | `com.readin.app` | `3.1.0` |
 
 “适配基线版本”是静态逆向、实现和设备收口所使用的宿主样本，不表示 Provider 仅支持
@@ -46,7 +49,7 @@ Spotify 不提供翻译；其余模块按各播放器证据使用公开 action �
 
 ## 通用播放器 Provider
 
-通用播放器 Provider（`Provider-Universal 1.1.2 (4)`）面向没有专属适配、但会创建标准 Android
+通用播放器 Provider（`Provider-Universal 1.1.4 (6)`）面向没有专属适配、但会创建标准 Android
 `MediaSession` 的播放器。它以静态 scope 仅运行在 `system_server`，从设置 App 同步用户明确选择的
 目标包；没有被选择的音乐、视频和其他媒体 App 不会被观察、联网取词或写入 `lyricInfo`。
 
@@ -59,7 +62,9 @@ Spotify 不提供翻译；其余模块按各播放器证据使用公开 action �
 可在“播放器”页手动选择；目前仅酷我仍不可选。**同一播放器只开一个 Provider**：它的专属 Provider
 与通用 Provider 二选一，同时开启时两者都会写入 `lyricInfo` 而互相覆盖。
 
-安装 APK 后打开 **Universal Player Provider**：在“播放器”页选择目标 App，在“来源”页调整歌词源
+1.1.4 是首个通过 Bridge 商店分发的版本，新增状态接口，Bridge 在没有 Root 时也能显示它是否已在 LSPosed 中启用。
+
+在 Bridge 商店安装后打开 **Universal Player Provider**：在“播放器”页选择目标 App，在“来源”页调整歌词源
 优先级，并按需打开逐字、翻译、原始歌词和脱敏诊断。模块会保留宿主已有 metadata，仅向选中播放器
 当前活跃 MediaSession 附加标准 `MediaMetadata["lyricInfo"]`。它可单独供 ColorOS SystemUI 消费；
 安装 Bridge 后，Bridge 仍只负责 SystemUI 的渲染、AOD 和翻译控制增强。
@@ -113,6 +118,15 @@ Spotify 不提供翻译；其余模块按各播放器证据使用公开 action �
 Release 构建使用 `RELEASE_STORE_FILE`、`RELEASE_STORE_PASSWORD`、
 `RELEASE_KEY_ALIAS`、`RELEASE_KEY_PASSWORD` 环境变量。
 
+## 发布到商店
+
+1. 在 `release/v5-provider-matrix.json` 与模块的 `build.gradle.kts` 中同时提升 versionName/versionCode，并在
+   `release/notes/<module>/<versionName>.md` 写双语发布说明，合入 `main`。
+2. 在该 commit 上打 `<module>-v<versionName>` 并推送；GitHub 一次推送超过 3 个 tag 不会触发 workflow，批量发布需分批推送。
+3. `provider-store-release.yml` 构建、签名并发布不可变 Release，复核下载哈希后，在受保护的 `provider-catalog` 环境批准下签发
+   下一版目录并推进 `store-catalog`。任何一步失败都不改动已发布的目录。
+4. 改动矩阵后，本地验证请带 `--rerun-tasks`，避免读矩阵的测试复用缓存结果。
+
 ## 文档与来源
 
 - Provider 适配主线（中文）：`docs/4.0/PROVIDER-ADAPTATION-GUIDE.zh-CN.md`
@@ -139,7 +153,7 @@ v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了�
 
 `:player-readify`（`io.github.andrealtb.coloroslyrics.provider.readify`）是面向 Readify
 3.1.0 的 API 102 TTS 适配，需要配套 Bridge 的 `sentence-window-v1` 支持。它已纳入
-14 项正式 v5 发布矩阵与 Provider bundle。
+13 项正式 v5 发布矩阵，通过 Bridge 商店分发。
 
 协议、宿主范围与当前设备验证限制见
 [player-readify/README.md](player-readify/README.md)。
@@ -152,11 +166,10 @@ v5 `lyricInfo`、Root/LSPosed 架构及各播放器内部歌词链路进行了�
 也不属于上面的 v5 歌词矩阵；不安装它时锁屏保持官方静态封面。
 
 - 首次使用：在应用内打开来源（默认关闭，默认仅非计费网络），再到 Bridge 的
-  「设置 → 动态封面」中选择并授权它。
+  「外观 → 动态封面」中选择并授权它。
 - 与歌词 Provider 完全独立：可单独安装、更新、卸载，歌词链路不受影响。
-- 源码版本 1.0.6（versionCode 10），使用与歌词 Provider 相同的发布签名；自 Bridge 4.5.0 起
-  随正式版作为独立资产提供，不进入 Provider bundle。Bridge 4.5.4 不改变本 Provider 的代码；
-  歌词 Provider 中只有网易云音乐更新到 1.2.2，其余 Code 与内部版本不变，套件资产文件名改为 4.5.4。
+- 源码版本 1.0.6（versionCode 10），使用与歌词 Provider 相同的发布签名。4.5.x 期间随 Bridge 正式版作为独立资产提供；
+  自 5.0 起改为通过 Bridge 商店分发（tag `artwork-provider-am-v1.0.6`），代码与 1.0.6 相同。
 - 1.0.6（随 Bridge 4.5.1）：手动绑定页可导入自己的视频作为本地专辑的动态封面，方形 1080 SDR H.264 保留原画质，
   其余居中裁剪为方形并压缩到 1080；手动搜索改读所选市场的 Apple Music 网页专辑区；同名多版本有“多个版本”
   状态与宽松档自动选择；修复 `=`、`÷ (Deluxe)` 等符号名专辑无法绑定或互相串扰。
