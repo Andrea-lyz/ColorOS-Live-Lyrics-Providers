@@ -14,6 +14,7 @@ class UniversalProviderApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        UniversalFeaturePrefs.install(this)
         // Lets the Bridge store tell whether this module is enabled in the LSPosed manager.
         ModuleStatus.register()
         UniversalAppIo.execute {

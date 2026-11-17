@@ -32,6 +32,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".ui.AppleMusicLoginActivity"
+            android:exported="false"
+            android:label="Apple Music" />
         <receiver
             android:name=".SnapshotReceiver"
             android:exported="true">

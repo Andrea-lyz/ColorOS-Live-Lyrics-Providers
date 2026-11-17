@@ -4,7 +4,8 @@ package io.github.andrealtb.coloroslyrics.provider.universal
 internal object UniversalSnapshotUi {
     private val fields = setOf(
         "title", "artist", "album", "package", "generation",
-        "lyricSource", "lyricStatus", "lyricClockFallback", "cachedSongs"
+        "lyricSource", "lyricStatus", "lyricClockFallback", "cachedSongs",
+        UniversalFeatureConfig.SNAPSHOT_AM_STATUS
     ) + UniversalLyricHistory.snapshotKeys
 
     fun parse(text: String): Map<String, String> = buildMap {

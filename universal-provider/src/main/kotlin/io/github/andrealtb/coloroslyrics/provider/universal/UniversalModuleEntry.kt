@@ -98,7 +98,7 @@ class UniversalModuleEntry : XposedModule() {
     private val metadataReplayExecutor = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "UniversalLyricMetadataReplay").apply { isDaemon = true }
     }
-    private val aggregator by lazy { io.github.andrealtb.coloroslyrics.provider.universal.api.LyricsSourceAggregator() }
+    private val aggregator by lazy { UniversalFeatureConfig.ensureLoaded(); io.github.andrealtb.coloroslyrics.provider.universal.api.LyricsSourceAggregator() }
     @Volatile
     private var sourcePriority: List<io.github.andrealtb.coloroslyrics.provider.universal.api.LyricsSourceAggregator.SourceId> =
         io.github.andrealtb.coloroslyrics.provider.universal.LyricsSourceConfigStore.decode(loadSourceConfig()).mapNotNull {
@@ -638,11 +638,16 @@ class UniversalModuleEntry : XposedModule() {
                     addAction(UniversalSnapshotStore.ACTION_INJECT_REAL_LYRIC)
                     addAction(UniversalSnapshotStore.ACTION_UPDATE_SOURCE_CONFIG)
                     addAction(UniversalSnapshotStore.ACTION_CLEAR_CACHE)
+                    addAction(UniversalFeatureConfig.ACTION_UPDATE)
                 }
                 val receiver = object : BroadcastReceiver() {
                     override fun onReceive(c: Context?, intent: Intent?) {
                         when (intent?.action) {
                             UniversalSnapshotStore.ACTION_REQUEST_SNAPSHOT -> {
+                                publishSnapshot(context, force = true)
+                            }
+                            UniversalFeatureConfig.ACTION_UPDATE -> {
+                                if (UniversalFeatureConfig.consume(intent)) retryMissedTracks()
                                 publishSnapshot(context, force = true)
                             }
                             UniversalSnapshotStore.ACTION_UPDATE_PLAYER_BINDINGS -> {
@@ -959,8 +964,7 @@ class UniversalModuleEntry : XposedModule() {
         (realLyricsByPackage["$ownerPackage|$generation"] ?: realLyricsByPackage[ownerPackage])
             ?.let { runCatching { JSONObject(it) }.getOrNull() }
 
-    private fun lyricSourceOf(payload: JSONObject?): String =
-        payload?.optString("source").orEmpty().ifBlank { "none" }
+    private fun lyricSourceOf(payload: JSONObject?): String = UniversalLyricPayloadPolicy.sourceWithFormat(payload)
 
     private fun lyricStatusOf(payload: JSONObject?): String = when {
         payload == null -> "pending"
@@ -1003,6 +1007,7 @@ class UniversalModuleEntry : XposedModule() {
                 descriptor != null && wordTimingEnabled && rawLyricEnabled && clockLineFallbackActive(descriptor.ownerPackage)
             ).append('\n')
             append("cachedSongs=").append(UniversalLyricCache.getCacheCount()).append('\n')
+            append(UniversalFeatureConfig.snapshotLines())
             append(UniversalLyricHistory.snapshotLines(recentHistory))
         }
     }
@@ -1119,7 +1124,7 @@ class UniversalModuleEntry : XposedModule() {
                     durationMs = durationMs,
                     generation = generation
                 )
-                val report = aggregator.fetchFirst(query, sourcePriority, preferWordTiming = wordTimingEnabled)
+                val report = aggregator.fetchFirst(query, sourcePriority, preferWordTiming = wordTimingEnabled, preferTtml = UniversalFeatureConfig.ttmlFirst)
                 val result = report.result
                 val instrumental = result != null && io.github.andrealtb.coloroslyrics.provider.universal.api.SongMatchScorer.isInstrumentalOrCreditsOnly(result.lyric)
                 val usable = result != null && result.lyric.isNotBlank() && !instrumental
@@ -1152,6 +1157,7 @@ class UniversalModuleEntry : XposedModule() {
                         if (!result.rawLyric.isNullOrBlank()) {
                             put("rawLyric", result.rawLyric)
                         }
+                        UniversalLyricPayloadPolicy.putTtmlAndFormat(this, result)
                         if (!alignedTranslation.isNullOrBlank()) {
                             put("transLyric", alignedTranslation)
                             put("translationLyric", alignedTranslation)

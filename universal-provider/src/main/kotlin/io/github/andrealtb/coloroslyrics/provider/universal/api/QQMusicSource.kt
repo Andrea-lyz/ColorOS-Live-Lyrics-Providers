@@ -1,6 +1,7 @@
 package io.github.andrealtb.coloroslyrics.provider.universal.api
 
 import android.util.Base64
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,6 +22,9 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
         const val PROBE_SCORE_SLACK = 0.15
         /** The top candidates are probed in order, so one instrumental upload cannot deny the track. */
         const val PROBE_LIMIT = 3
+        const val MUSICU_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
+        const val MUSICU_DESKTOP_URL = "https://shu6.y.qq.com/cgi-bin/musicu.fcg"
+        const val WEB_SEARCH_URL = "https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp"
     }
 
     override fun fetchLyrics(query: TrackQuery): LyricResult? {
@@ -31,7 +35,11 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
             val songMid = QqSearchResponseParser.mid(song)
             if (songMid.isBlank()) continue
             val songId = QqSearchResponseParser.songId(song)
-            val result = fetch(songMid, songId, query) ?: continue
+            val match = query.copy(
+                album = query.album ?: QqSearchResponseParser.album(song).takeIf { it.isNotBlank() },
+                durationMs = query.durationMs ?: QqSearchResponseParser.durationMs(song).takeIf { it > 0L }
+            )
+            val result = fetch(songMid, songId, match) ?: continue
             if (result.lyric.isBlank()) continue
             if (SongMatchScorer.isInstrumentalOrCreditsOnly(result.lyric)) {
                 if (instrumental == null) instrumental = result
@@ -104,12 +112,16 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
      * QQ Music answers from several endpoints and only some of them survive every network path.
      * Each attempt is isolated, so a timeout on one payload still lets the next one run; before
      * this a single exception aborted the search and the combined list silently lost QQ rows.
+     * `u.y.qq.com` returns empty results (code 2001) in some regions outside the mainland; the
+     * `shu6` desktop host and the web search still answer there (Lyrico QQ plugin).
      */
     private fun searchSongs(generation: Long, keyword: String, mode: String): JSONArray? {
         val strategies = listOf<Pair<String, () -> JSONArray?>>(
-            "desktop" to { searchSongsDesktop(generation, keyword, mode) },
+            "desktop" to { searchSongsDesktop(generation, keyword, mode, MUSICU_URL) },
             "lite-post" to { searchSongsLitePost(generation, keyword, mode) },
-            "lite-get" to { searchSongsLiteGet(generation, keyword, mode) }
+            "desktop-shu6" to { searchSongsDesktop(generation, keyword, mode, MUSICU_DESKTOP_URL) },
+            "lite-get" to { searchSongsLiteGet(generation, keyword, mode) },
+            "web" to { searchSongsWeb(generation, keyword, mode) }
         )
         for ((label, call) in strategies) {
             val songs = runCatching { call() }.getOrNull()
@@ -133,7 +145,7 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
         return null
     }
 
-    private fun searchSongsDesktop(generation: Long, keyword: String, mode: String): JSONArray? {
+    private fun searchSongsDesktop(generation: Long, keyword: String, mode: String, url: String): JSONArray? {
         val payload = JSONObject().apply {
             put("comm", desktopComm())
             put("req", JSONObject().apply {
@@ -149,8 +161,43 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
                 })
             })
         }
-        val json = postJson(generation, "search-desktop-" + mode, payload) ?: return null
+        val op = if (url == MUSICU_URL) "search-desktop-" else "search-shu6-"
+        val json = postJson(generation, op + mode, payload, url) ?: return null
         return QqSearchResponseParser.songArray(json)
+    }
+
+    /** The web search stays silent without a Referer. */
+    private fun searchSongsWeb(generation: Long, keyword: String, mode: String): JSONArray? {
+        val url = WEB_SEARCH_URL.toHttpUrl().newBuilder()
+            .addQueryParameter("format", "json")
+            .addQueryParameter("aggr", "1")
+            .addQueryParameter("w", keyword)
+            .addQueryParameter("n", "10")
+            .addQueryParameter("p", "1")
+            .build()
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .addHeader("User-Agent", "Mozilla/5.0")
+            .addHeader("Referer", "https://y.qq.com/")
+            .build()
+        val started = System.currentTimeMillis()
+        client.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw IOException("qq web http=" + response.code)
+            val songs = if (body.isBlank()) JSONArray() else QqSearchResponseParser.webSongArray(JSONObject(body))
+            UniversalDiagnostics.networkCall(
+                source = name,
+                op = "search-web-" + mode,
+                generation = generation,
+                httpCode = response.code,
+                durationMs = System.currentTimeMillis() - started,
+                bodyChars = body.length,
+                parseOk = songs.length() > 0,
+                extra = "songs=" + songs.length()
+            )
+            return songs
+        }
     }
 
     private fun searchSongsLitePost(generation: Long, keyword: String, mode: String): JSONArray? {
@@ -236,7 +283,8 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
 
         val qrcText = decodeQqLyricPayload(data.optString("lyric").ifBlank { data.optString("qrc") })
         val transText = decodeQqLyricPayload(data.optString("trans"))
-        val original = StructuredLyrics.parseQrc(qrcText).ifEmpty { StructuredLyrics.parseLrc(qrcText) }
+        val qrc = StructuredLyrics.parseQrc(qrcText)
+        val original = qrc.ifEmpty { StructuredLyrics.parseLrc(qrcText) }
         if (original.isEmpty()) {
             UniversalDiagnostics.sourceEmpty(name, query.generation, 0L, "structuredEmpty qrcChars=" + qrcText.length)
             return null
@@ -265,7 +313,8 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
             rawLyric = raw,
             translationLyric = translation,
             source = "universal/qq",
-            sourceTrackId = songMid
+            sourceTrackId = songMid,
+            format = if (qrc.isNotEmpty()) LyricFormats.QRC else LyricFormats.LRC
         )
     }
 
@@ -284,6 +333,11 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
                     put("songMID", songMid)
                     put("songID", songId)
                     put("songName", Base64.encodeToString(query.title.toByteArray(), Base64.NO_WRAP))
+                    put("singerName", Base64.encodeToString(query.artist.toByteArray(), Base64.NO_WRAP))
+                    query.album?.takeIf { it.isNotBlank() }?.let {
+                        put("albumName", Base64.encodeToString(it.toByteArray(), Base64.NO_WRAP))
+                    }
+                    query.durationMs?.takeIf { it > 0L }?.let { put("interval", (it + 500L) / 1000L) }
                     put("crypt", 1)
                     put("qrc", 1)
                     put("roma", 0)
@@ -301,10 +355,15 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
         return runCatching { postJson(query.generation, "lyric", payload) }.getOrNull()
     }
 
-    private fun postJson(generation: Long, op: String, payload: JSONObject): JSONObject? {
+    private fun postJson(
+        generation: Long,
+        op: String,
+        payload: JSONObject,
+        url: String = MUSICU_URL
+    ): JSONObject? {
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val request = Request.Builder()
-            .url("https://u.y.qq.com/cgi-bin/musicu.fcg")
+            .url(url)
             .post(payload.toString().toRequestBody(mediaType))
             .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0")
             .addHeader("Referer", "https://y.qq.com/n/ryqq/search")
@@ -350,7 +409,7 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
 
     private fun desktopComm(): JSONObject = JSONObject().apply {
         put("ct", "19")
-        put("cv", "1859")
+        put("cv", "1873")
         put("uin", "0")
     }
 
@@ -381,7 +440,7 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
                 if (mid.isBlank()) continue
                 list.add(
                     SearchCandidate(
-                        id = mid,
+                        id = mid + "|" + QqSearchResponseParser.songId(item),
                         title = QqSearchResponseParser.title(item),
                         artist = QqSearchResponseParser.artist(item),
                         album = QqSearchResponseParser.album(item),
@@ -396,6 +455,12 @@ class QQMusicSource(private val client: OkHttpClient) : LyricsSource {
     }
 
     override fun fetchLyricByCandidate(candidate: SearchCandidate): LyricResult? {
-        return fetch(candidate.id, 0L, TrackQuery(candidate.title, candidate.artist, candidate.album))
+        val mid = candidate.id.substringBefore('|')
+        val songId = candidate.id.substringAfter('|', "").toLongOrNull() ?: 0L
+        return fetch(
+            mid,
+            songId,
+            TrackQuery(candidate.title, candidate.artist, candidate.album, candidate.durationMs.takeIf { it > 0L })
+        )
     }
 }

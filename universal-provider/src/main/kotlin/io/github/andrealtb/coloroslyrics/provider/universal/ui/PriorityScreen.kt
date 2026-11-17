@@ -38,13 +38,15 @@ import kotlinx.coroutines.withContext
 @Composable
 fun PriorityScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val labels = remember { mapOf("QQ" to "QQ 音乐", "NETEASE" to "网易云音乐", "APPLE_MUSIC" to "Apple Music") }
+    val labels = remember {
+        mapOf("QQ" to "QQ 音乐", "NETEASE" to "网易云音乐", "KUGOU" to "酷狗音乐", "APPLE_MUSIC" to "Apple Music")
+    }
     var sourceList by remember { mutableStateOf<List<String>>(emptyList()) }
     val enabledMap = remember { mutableStateMapOf<String, Boolean>() }
     var settingsLoaded by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         val configured = withContext(UniversalAppIo.dispatcher) { LyricsSourceConfigStore.read(context) }
-        val all = mutableListOf("QQ", "NETEASE", "APPLE_MUSIC")
+        val all = LyricsSourceConfigStore.ALL.toMutableList()
         all.sortBy { configured.indexOf(it).let { index -> if (index < 0) Int.MAX_VALUE else index } }
         all.forEach { enabledMap[it] = it in configured }
         sourceList = all
@@ -166,7 +168,7 @@ fun PriorityScreen(onBack: () -> Unit) {
                         },
                         supportingContent = {
                             Text(
-                                stringResource(if (id == "APPLE_MUSIC") R.string.priority_line else R.string.priority_word, index + 1),
+                                stringResource(R.string.priority_word, index + 1),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

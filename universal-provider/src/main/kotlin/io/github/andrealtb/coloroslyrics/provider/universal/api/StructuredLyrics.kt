@@ -34,10 +34,17 @@ internal object StructuredLyrics {
             val end = start + duration
             val body = match.groupValues[3]
             val words = mutableListOf<TimedWord>()
-            QRC_WORD.findAll(body).forEach { word ->
+            val matches = QRC_WORD.findAll(body).toList()
+            matches.forEachIndexed { index, word ->
                 val wordStart = word.groupValues[2].toLongOrNull() ?: start
                 val wordDur = word.groupValues[3].toLongOrNull() ?: 0L
-                words += TimedWord(wordStart, wordStart + wordDur, word.groupValues[1])
+                // A zero duration means "until the next word" (Lyrico QQ plugin), not an instant.
+                val wordEnd = if (wordDur > 0L) {
+                    wordStart + wordDur
+                } else {
+                    matches.getOrNull(index + 1)?.groupValues?.get(2)?.toLongOrNull() ?: end
+                }
+                words += TimedWord(wordStart, wordEnd.coerceAtLeast(wordStart), word.groupValues[1])
             }
             if (words.isEmpty() && body.isNotBlank()) {
                 words += TimedWord(start, end, body)
