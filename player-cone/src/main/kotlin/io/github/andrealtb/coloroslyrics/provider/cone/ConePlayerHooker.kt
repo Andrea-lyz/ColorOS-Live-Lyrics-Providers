@@ -160,7 +160,8 @@ class ConePlayerHooker(private val hookContext: ProviderHookContext) {
             source = candidate.source,
             rawLyric = candidate.rawLyric,
             lines = candidate.lines,
-            trackHint = candidate.trackHint
+            trackHint = candidate.trackHint,
+            ttml = candidate.ttml
         )
         handlePublication(publication, allowPending = true)
     }
@@ -210,7 +211,8 @@ class ConePlayerHooker(private val hookContext: ProviderHookContext) {
             source = candidate.source,
             rawLyric = candidate.rawLyric,
             lines = candidate.lines,
-            trackHint = candidate.trackHint
+            trackHint = candidate.trackHint,
+            ttml = candidate.ttml
         )
         handlePublication(publication, allowPending = true)
     }

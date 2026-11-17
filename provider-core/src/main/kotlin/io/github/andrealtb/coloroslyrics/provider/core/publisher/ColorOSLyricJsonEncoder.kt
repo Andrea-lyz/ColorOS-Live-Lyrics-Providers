@@ -29,7 +29,8 @@ object ColorOSLyricJsonEncoder {
         track: TrackIdentity,
         lines: List<RichLyricLine>,
         trackGeneration: Long,
-        playerPackage: String
+        playerPackage: String,
+        ttml: String? = null
     ): EncodedPayload? {
         val validLines = lines.filter { !it.text.isNullOrBlank() }.sortedBy { it.begin }
         if (validLines.isEmpty()) return null
@@ -55,6 +56,9 @@ object ColorOSLyricJsonEncoder {
 
         if (containsTimedLrc(rawLyric)) fields += jsonStringField("rawLyric", rawLyric)
         if (containsTimedLrc(translationLyric)) fields += jsonStringField("translationLyric", translationLyric)
+        // Optional lane: the Bridge reads duet sides and background vocals from it. Everything
+        // above stays complete without it, so older Bridges and SystemUI are unaffected.
+        if (!ttml.isNullOrBlank()) fields += jsonStringField("ttml", ttml)
 
         return EncodedPayload(
             jsonValue = fields.joinToString(prefix = "{", postfix = "}"),

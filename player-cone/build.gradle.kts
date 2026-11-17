@@ -70,6 +70,7 @@ dependencies {
     implementation(project(":provider-settings-api102"))
     implementation(project(":reflection-core"))
     implementation(project(":parser-lrc"))
+    implementation(project(":parser-ttml"))
 
     implementation(libs.dexkit)
     implementation(libs.kavaref.core)

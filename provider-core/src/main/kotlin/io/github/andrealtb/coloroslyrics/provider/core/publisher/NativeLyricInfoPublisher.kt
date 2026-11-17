@@ -50,7 +50,8 @@ object NativeLyricInfoPublisher {
         trackGeneration: Long,
         generationPolicy: TrackGenerationPolicy,
         playerPackage: String,
-        hostPackage: String
+        hostPackage: String,
+        ttml: String? = null
     ): Result = publishTransactional(
         builder = builder,
         originalMetadata = originalMetadata,
@@ -60,7 +61,8 @@ object NativeLyricInfoPublisher {
         generationPolicy = generationPolicy,
         playerPackage = playerPackage,
         hostPackage = hostPackage,
-        transaction = AndroidMetadataTransaction
+        transaction = AndroidMetadataTransaction,
+        ttml = ttml
     )
 
     /**
@@ -95,7 +97,35 @@ object NativeLyricInfoPublisher {
         generationPolicy: TrackGenerationPolicy,
         playerPackage: String,
         hostPackage: String,
-        transaction: MetadataTransaction<M, B>
+        transaction: MetadataTransaction<M, B>,
+        ttml: String? = null
+    ): Result {
+        if (!ttml.isNullOrBlank()) {
+            // The TTML lane is optional. When it alone pushes the payload over a size gate,
+            // publish the lyric without it rather than losing the lyric.
+            val withTtml = publishOnce(
+                builder, originalMetadata, track, lines, trackGeneration, generationPolicy,
+                playerPackage, hostPackage, transaction, ttml
+            )
+            if (withTtml != Result.PAYLOAD_TOO_LARGE) return withTtml
+        }
+        return publishOnce(
+            builder, originalMetadata, track, lines, trackGeneration, generationPolicy,
+            playerPackage, hostPackage, transaction, null
+        )
+    }
+
+    private fun <M, B> publishOnce(
+        builder: B,
+        originalMetadata: M?,
+        track: TrackIdentity,
+        lines: List<RichLyricLine>,
+        trackGeneration: Long,
+        generationPolicy: TrackGenerationPolicy,
+        playerPackage: String,
+        hostPackage: String,
+        transaction: MetadataTransaction<M, B>,
+        ttml: String?
     ): Result {
         val encoded = when (
             val gate = encodeIfCurrent(
@@ -105,7 +135,8 @@ object NativeLyricInfoPublisher {
                 trackGeneration = trackGeneration,
                 generationPolicy = generationPolicy,
                 playerPackage = playerPackage,
-                hostPackage = hostPackage
+                hostPackage = hostPackage,
+                ttml = ttml
             )
         ) {
             is Gate.Rejected -> return gate.result
@@ -188,7 +219,8 @@ object NativeLyricInfoPublisher {
         trackGeneration: Long,
         generationPolicy: TrackGenerationPolicy,
         playerPackage: String,
-        hostPackage: String
+        hostPackage: String,
+        ttml: String? = null
     ): Gate {
         if (!hasMetadata || track.isBlank || lines.isEmpty()) return Gate.Rejected(Result.INVALID_INPUT)
         if (playerPackage.isBlank() || playerPackage != hostPackage) {
@@ -201,7 +233,7 @@ object NativeLyricInfoPublisher {
         }
 
         val encoded = runCatching {
-            ColorOSLyricJsonEncoder.encode(track, lines, trackGeneration, playerPackage)
+            ColorOSLyricJsonEncoder.encode(track, lines, trackGeneration, playerPackage, ttml)
         }.getOrNull() ?: return Gate.Rejected(Result.ENCODE_FAILED)
         if (encoded.jsonValue.length > MAX_LYRIC_FIELD_CHARS) {
             return Gate.Rejected(Result.PAYLOAD_TOO_LARGE)

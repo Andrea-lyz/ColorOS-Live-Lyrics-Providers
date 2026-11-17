@@ -18,7 +18,8 @@ data class ConePublication(
     val title: String = "",
     val artist: String = "",
     val album: String = "",
-    val durationMs: Long = 0L
+    val durationMs: Long = 0L,
+    val ttml: String? = null
 ) {
     fun trackIdentity(): TrackIdentity = TrackIdentity(
         id = songId.takeIf(String::isNotBlank) ?: trackHint?.id,

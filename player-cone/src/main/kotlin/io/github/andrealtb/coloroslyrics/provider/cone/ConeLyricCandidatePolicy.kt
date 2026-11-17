@@ -9,7 +9,9 @@ package io.github.andrealtb.coloroslyrics.provider.cone
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.EnhanceLrcParser
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.TtmlPayloadNormalizer
 import io.github.andrealtb.coloroslyrics.provider.parser.lrc.model.RichLyricLine
+import io.github.andrealtb.coloroslyrics.provider.parser.ttml.TtmlParser
 
 enum class ConeLyricSource(val priority: Int) {
     BROADCAST(100),
@@ -23,7 +25,9 @@ data class ConeLyricCandidate(
     val rawLyric: String,
     val lines: List<RichLyricLine>,
     val trackHint: TrackIdentity? = null,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    /** The normalized document when the source was TTML and is fit for the `ttml` lane. */
+    val ttml: String? = null
 )
 
 class ConeLyricCandidatePolicy {
@@ -36,7 +40,8 @@ class ConeLyricCandidatePolicy {
         rawLyric: String,
         trackHint: TrackIdentity? = null
     ): ConeLyricCandidate? {
-        if (!ConeLyricFilter.isUsableTimedLyric(rawLyric)) {
+        val isTtml = ConeLyricFilter.isTtml(rawLyric)
+        if (!isTtml && !ConeLyricFilter.isUsableTimedLyric(rawLyric)) {
             return null
         }
 
@@ -56,16 +61,21 @@ class ConeLyricCandidatePolicy {
             return null
         }
 
-        val doc = EnhanceLrcParser.parse(rawLyric)
-        if (doc.lines.isEmpty() || doc.lines.none { !it.text.isNullOrBlank() }) {
+        val lines = if (isTtml) {
+            TtmlParser.parse(rawLyric)?.lines.orEmpty()
+        } else {
+            EnhanceLrcParser.parse(rawLyric).lines
+        }
+        if (lines.isEmpty() || lines.none { !it.text.isNullOrBlank() }) {
             return null
         }
 
         val candidate = ConeLyricCandidate(
             source = source,
             rawLyric = rawLyric,
-            lines = doc.lines,
-            trackHint = trackHint
+            lines = lines,
+            trackHint = trackHint,
+            ttml = if (isTtml) TtmlPayloadNormalizer.normalize(rawLyric) else null
         )
         bestCandidate = candidate
         return candidate
