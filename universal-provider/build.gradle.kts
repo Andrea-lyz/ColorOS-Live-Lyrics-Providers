@@ -17,8 +17,8 @@ configure<ApplicationExtension> {
         applicationId = "io.github.andrealtb.coloroslyrics.provider.universal"
         minSdk = 27
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
-        versionCode = 6
-        versionName = "1.1.4"
+        versionCode = 7
+        versionName = "1.1.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

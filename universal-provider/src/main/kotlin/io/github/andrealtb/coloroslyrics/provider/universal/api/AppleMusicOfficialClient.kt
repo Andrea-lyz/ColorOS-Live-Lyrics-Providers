@@ -10,7 +10,7 @@ import org.json.JSONObject
 /**
  * The official Apple Music web catalogue (`amp-api.music.apple.com`), as the music.apple.com
  * player calls it. Follows the "official" mode of the Lyrico Apple Music plugin
- * (Replica0110/Lyrico-Plugins, Apache-2.0).
+ * (Replica0110/Lyrico-Plugins).
  *
  * The developer token is the public WebPlay JWT embedded in the site's script bundle; lyrics also
  * need the subscriber's `media-user-token`. Tokens are never written to diagnostics.
