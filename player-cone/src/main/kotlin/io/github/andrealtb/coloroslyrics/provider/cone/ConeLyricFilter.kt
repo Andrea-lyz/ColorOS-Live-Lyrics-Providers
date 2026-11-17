@@ -6,6 +6,8 @@
 
 package io.github.andrealtb.coloroslyrics.provider.cone
 
+import io.github.andrealtb.coloroslyrics.provider.core.publisher.TtmlPayloadNormalizer
+
 import java.util.Locale
 import java.util.regex.Pattern
 
@@ -45,6 +47,11 @@ object ConeLyricFilter {
         val normalized = text.lowercase(Locale.ROOT)
         return ConePlayerConstants.EMPTY_LYRIC_TEXTS.contains(normalized)
     }
+
+    fun isTtml(lyric: String?): Boolean = TtmlPayloadNormalizer.looksLikeTtml(lyric)
+
+    /** A timed LRC lyric, or a TTML document whose usability is decided when it is parsed. */
+    fun isUsableLyricSource(lyric: String?): Boolean = isTtml(lyric) || isUsableTimedLyric(lyric)
 
     fun isUsableTimedLyric(lyric: String?): Boolean {
         if (!isTimedLrc(lyric)) return false

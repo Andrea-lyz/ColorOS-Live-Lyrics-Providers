@@ -16,14 +16,15 @@ class ConePlayerConstantsTest {
     fun constants_haveExpectedValues() {
         assertEquals("ink.trantor.coneplayer", ConePlayerConstants.CONE_PACKAGE)
         assertEquals("ink.trantor.coneplayer.gp", ConePlayerConstants.CONE_GP_PACKAGE)
+        assertEquals("ink.trantor.coneplayer.go", ConePlayerConstants.CONE_GO_PACKAGE)
         assertEquals("ink.trantor.android.mediaplayer.action.CURRENT_LYRIC_CHANGED", ConePlayerConstants.ACTION_CURRENT_LYRIC_CHANGED)
         assertEquals("extra_lyric_text", ConePlayerConstants.EXTRA_LYRIC_TEXT)
         assertEquals("ink.trantor.android.mediaplayer.MediaPlayerService", ConePlayerConstants.MEDIA_PLAYER_SERVICE_CLASS)
         assertEquals(
-            listOf("ink.trantor.coneplayer", "ink.trantor.coneplayer.gp"),
+            listOf("ink.trantor.coneplayer", "ink.trantor.coneplayer.gp", "ink.trantor.coneplayer.go"),
             ConePlayerConstants.QUALIFIED_HOST_PACKAGES.toList()
         )
-        assertEquals(2, ConePlayerConstants.KNOWN_PACKAGES.size)
+        assertEquals(3, ConePlayerConstants.KNOWN_PACKAGES.size)
         assertTrue(ConePlayerConstants.EMPTY_LYRIC_TEXTS.contains("暂无歌词"))
         assertTrue(ConePlayerConstants.LYRIC_METADATA_KEYS.contains("LYRICS"))
     }

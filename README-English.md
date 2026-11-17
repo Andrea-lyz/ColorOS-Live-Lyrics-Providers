@@ -31,7 +31,7 @@ Developer entry points:
 | Player | Gradle module | applicationId | Host package | Adaptation baseline |
 |---|---|---|---|---|
 | Salt | `:player-salt` | `io.github.andrealtb.coloroslyrics.provider.salt` | `com.salt.music` | `12.3.0-alpha03` |
-| Cone / GP | `:player-cone` | `io.github.andrealtb.coloroslyrics.provider.cone` | `ink.trantor.coneplayer` / `ink.trantor.coneplayer.gp` | Formal build `v1.2.0(c77a1ea49)`; GP shares the same profile |
+| Cone / GP / GO | `:player-cone` | `io.github.andrealtb.coloroslyrics.provider.cone` | `ink.trantor.coneplayer` / `ink.trantor.coneplayer.gp` / `ink.trantor.coneplayer.go` | Formal build `v1.2.0(c77a1ea49)`; GP shares the same profile; GO `v1.3.0(0ea0fd837)` |
 | KuWo | `:kuwo-music` | `io.github.andrealtb.coloroslyrics.provider.kuwo` | `cn.kuwo.player` | `12.2.0.0` |
 | LX / Walnut | `:player-lx` | `io.github.andrealtb.coloroslyrics.provider.lx` | `cn.toside.music.mobile` / `com.lxwalnut.music.mobile` | LX `1.8.4`; Walnut `26.07.16` |
 | Poweramp | `:player-poweramp` | `io.github.andrealtb.coloroslyrics.provider.poweramp` | `com.maxmpz.audioplayer` | `build-1025-bundle-play` |

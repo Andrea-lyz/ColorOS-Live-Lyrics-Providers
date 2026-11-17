@@ -13,5 +13,5 @@ class ConeDebugSettingsActivity : ProviderDebugSettingsActivity() {
     override val providerId: ProviderId = ProviderId.CONE
     override val providerDisplayName: String = "ConePlayer 歌词 Provider"
     override val targetPackageDescription: String =
-        "目标播放器：ink.trantor.coneplayer、ink.trantor.coneplayer.gp"
+        "目标播放器：ink.trantor.coneplayer、ink.trantor.coneplayer.gp、ink.trantor.coneplayer.go"
 }

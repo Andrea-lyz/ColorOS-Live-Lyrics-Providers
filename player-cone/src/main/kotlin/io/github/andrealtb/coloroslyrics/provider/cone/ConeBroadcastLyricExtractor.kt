@@ -19,6 +19,7 @@ object ConeBroadcastLyricExtractor {
         if (action != ConePlayerConstants.ACTION_CURRENT_LYRIC_CHANGED) return null
         if (rawLyric.isNullOrBlank()) return null
         val trimmed = rawLyric.trim()
-        return if (ConeLyricFilter.isUsableTimedLyric(trimmed)) trimmed else null
+        // Cone broadcasts the lyric source as-is, which for a TTML lyric is the whole document.
+        return if (ConeLyricFilter.isUsableLyricSource(trimmed)) trimmed else null
     }
 }

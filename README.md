@@ -28,7 +28,7 @@ Readify TTS Provider。所有模块均使用 libxposed API 102 入口、静态�
 | 播放器 | Gradle module | applicationId | 宿主包 | 适配基线版本 |
 |---|---|---|---|---|
 | Salt Player(椒盐音乐) | `:player-salt` | `io.github.andrealtb.coloroslyrics.provider.salt` | `com.salt.music` | `12.3.0-alpha03` |
-| 光锥音乐(含Play商店版) | `:player-cone` | `io.github.andrealtb.coloroslyrics.provider.cone` | `ink.trantor.coneplayer` / `ink.trantor.coneplayer.gp` | 正式版 `v1.2.0(c77a1ea49)`；GP 共用适配轮廓 |
+| 光锥音乐(含Play商店版、GO) | `:player-cone` | `io.github.andrealtb.coloroslyrics.provider.cone` | `ink.trantor.coneplayer` / `ink.trantor.coneplayer.gp` / `ink.trantor.coneplayer.go` | 正式版 `v1.2.0(c77a1ea49)`；GP 共用适配轮廓；GO `v1.3.0(0ea0fd837)` |
 | 酷我音乐 | `:kuwo-music` | `io.github.andrealtb.coloroslyrics.provider.kuwo` | `cn.kuwo.player` | `12.2.0.0` |
 | 落雪音乐(含Walnut fork) | `:player-lx` | `io.github.andrealtb.coloroslyrics.provider.lx` | `cn.toside.music.mobile` / `com.lxwalnut.music.mobile` | LX `1.8.4`；Walnut `26.07.16` |
 | Poweramp | `:player-poweramp` | `io.github.andrealtb.coloroslyrics.provider.poweramp` | `com.maxmpz.audioplayer` | `build-1025-bundle-play` |

@@ -57,7 +57,8 @@ object ConeNativePublisher {
             trackGeneration = trackGeneration,
             generationPolicy = generationPolicy,
             playerPackage = hostPackage,
-            hostPackage = hostPackage
+            hostPackage = hostPackage,
+            ttml = publication.ttml
         )
         if (result.isPublished) {
             val patched = builder.build()
@@ -106,7 +107,8 @@ object ConeNativePublisher {
             trackGeneration = snapshot.generation,
             generationPolicy = generationPolicy,
             playerPackage = hostPackage,
-            hostPackage = hostPackage
+            hostPackage = hostPackage,
+            ttml = snapshot.publication.ttml
         )
         return result to if (result.isPublished) builder.build() else null
     }
