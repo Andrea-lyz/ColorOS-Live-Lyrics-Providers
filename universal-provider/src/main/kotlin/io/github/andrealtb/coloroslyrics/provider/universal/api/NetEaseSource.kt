@@ -227,7 +227,8 @@ class NetEaseSource(private val client: OkHttpClient) : LyricsSource {
             rawLyric = raw,
             translationLyric = translation,
             source = "universal/netease",
-            sourceTrackId = songId.toString()
+            sourceTrackId = songId.toString(),
+            format = if (StructuredLyrics.hasWordTiming(original) && yrc.isNotBlank()) LyricFormats.YRC else LyricFormats.LRC
         )
     }
 

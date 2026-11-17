@@ -33,6 +33,7 @@ import io.github.andrealtb.coloroslyrics.provider.universal.UniversalAppNetwork
 import io.github.andrealtb.coloroslyrics.provider.universal.api.LyricsSourceAggregator
 import io.github.andrealtb.coloroslyrics.provider.universal.api.SearchCandidate
 import io.github.andrealtb.coloroslyrics.provider.universal.LyricsSourceConfigStore
+import io.github.andrealtb.coloroslyrics.provider.universal.UniversalLyricPayloadPolicy
 import io.github.andrealtb.coloroslyrics.provider.universal.api.SongMatchScorer
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -67,6 +68,15 @@ fun SearchScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val ttmlFirstLoaded by produceState<Boolean?>(null, context) {
+        value = withContext(Dispatchers.IO) {
+            io.github.andrealtb.coloroslyrics.provider.universal.UniversalFeaturePrefs.ttmlFirst(context)
+        }
+    }
+    // Rows fetch their lyric once to show its real format; a tap reuses the fetched result.
+    val probes = remember { androidx.compose.runtime.mutableStateMapOf<String, CandidateProbe>() }
+    val probeGate = remember { kotlinx.coroutines.sync.Semaphore(3) }
+    val ttmlFirst = ttmlFirstLoaded == true
 
     val filterSources by produceState(
         initialValue = LyricsSourceAggregator.SourceId.values().toList(),
@@ -269,10 +279,12 @@ fun SearchScreen(
             val qqLabel = stringResource(R.string.source_qq)
             val netEaseLabel = stringResource(R.string.source_netease)
             val appleLabel = stringResource(R.string.source_apple)
+            val kugouLabel = stringResource(R.string.source_kugou)
             val chips = listOf<Pair<String, String?>>(allLabel to null) + filterSources.map { id ->
                 val label = when (id) {
                     LyricsSourceAggregator.SourceId.QQ -> qqLabel
                     LyricsSourceAggregator.SourceId.NETEASE -> netEaseLabel
+                    LyricsSourceAggregator.SourceId.KUGOU -> kugouLabel
                     LyricsSourceAggregator.SourceId.APPLE_MUSIC -> appleLabel
                 }
                 label to id.label
@@ -337,8 +349,9 @@ fun SearchScreen(
                         .clickable {
                             scope.launch(Dispatchers.IO) {
                                 UniversalAppNetwork.initialize(context)
-                                val aggregator = LyricsSourceAggregator.shared
-                                val result = LyricsSourceAggregator.shared.fetchByCandidate(item)
+                                val probed = probes[item.source + item.id] as? CandidateProbe.Done
+                                val result = probed?.result
+                                    ?: LyricsSourceAggregator.shared.fetchByCandidate(item, preferTtml = ttmlFirst)
                                 if (result != null && result.lyric.isNotBlank()) {
                                     val json = JSONObject().apply {
                                         put("songName", currentTitle.ifBlank { result.title })
@@ -350,6 +363,7 @@ fun SearchScreen(
                                         put("noLyric", false)
                                         put("lyric", result.lyric)
                                         put("rawLyric", result.rawLyric ?: result.lyric)
+                                        UniversalLyricPayloadPolicy.putTtmlAndFormat(this, result)
                                         if (!result.translationLyric.isNullOrBlank()) {
                                             put("transLyric", result.translationLyric)
                                             put("translationLyric", result.translationLyric)
@@ -412,7 +426,7 @@ fun SearchScreen(
                                 .fillMaxHeight(),
                             verticalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f, fill = false)) {
                                 Text(
                                     text = item.title,
                                     style = MaterialTheme.typography.titleMedium,
@@ -421,13 +435,16 @@ fun SearchScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.secondaryContainer)
-                                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                                ) {
-                                    Text(item.source, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.secondaryContainer)
+                                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(item.source, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer, maxLines = 1)
+                                    }
+                                    CandidateFormatTag(item, probes, probeGate, ttmlFirstLoaded)
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
@@ -492,4 +509,75 @@ private fun formatDuration(durationMs: Long): String {
     if (durationMs <= 0L) return "--:--"
     val totalSec = durationMs / 1000L
     return "%d:%02d".format(totalSec / 60L, totalSec % 60L)
+}
+
+
+/** What a row's lyric turned out to be once fetched. */
+internal sealed interface CandidateProbe {
+    object Running : CandidateProbe
+    data class Done(val result: io.github.andrealtb.coloroslyrics.provider.universal.api.LyricResult?) : CandidateProbe
+}
+
+/**
+ * The row's real lyric format (`QRC`, `KRC→TTML`, ...), found by fetching the lyric the first
+ * time the row is shown. Free Apple Music rows are not fetched: Better Lyrics allows only a few
+ * lookups per IP, so they show the format they deliver when cached.
+ */
+@Composable
+private fun CandidateFormatTag(
+    item: SearchCandidate,
+    probes: MutableMap<String, CandidateProbe>,
+    gate: kotlinx.coroutines.sync.Semaphore,
+    ttmlFirst: Boolean?
+) {
+    val context = LocalContext.current
+    val key = item.source + item.id
+    val appleFree = item.source == LyricsSourceAggregator.SourceId.APPLE_MUSIC.label && item.formatHint.isBlank()
+    LaunchedEffect(key, ttmlFirst) {
+        if (ttmlFirst == null || appleFree || probes[key] is CandidateProbe.Done) return@LaunchedEffect
+        probes[key] = CandidateProbe.Running
+        var finished = false
+        try {
+            val result = withContext(Dispatchers.IO) {
+                gate.acquire()
+                try {
+                    UniversalAppNetwork.initialize(context)
+                    LyricsSourceAggregator.shared.fetchByCandidate(item, preferTtml = ttmlFirst)
+                } finally {
+                    gate.release()
+                }
+            }
+            probes[key] = CandidateProbe.Done(result?.takeIf { it.lyric.isNotBlank() })
+            finished = true
+        } finally {
+            // Scrolled away or restarted: forget the attempt so the row probes again when shown.
+            if (!finished && probes[key] == CandidateProbe.Running) probes.remove(key)
+        }
+    }
+    val text = when (val probe = probes[key]) {
+        is CandidateProbe.Done -> probe.result?.let {
+            io.github.andrealtb.coloroslyrics.provider.universal.api.LyricFormats.label(it.format, it.ttmlConverted)
+                .ifBlank { null }
+        } ?: when {
+            probe.result != null -> "—"
+            // Apple Music falls back to free sources that only carry what they cached, so a miss
+            // there says nothing about whether the song has lyrics.
+            item.source == LyricsSourceAggregator.SourceId.APPLE_MUSIC.label -> stringResource(R.string.format_apple_uncached)
+            else -> stringResource(R.string.format_none)
+        }
+        CandidateProbe.Running -> stringResource(R.string.format_probing)
+        null -> if (appleFree) {
+            stringResource(R.string.format_usually, io.github.andrealtb.coloroslyrics.provider.universal.api.LyricFormats.TTML)
+        } else {
+            item.formatHint.ifBlank { stringResource(R.string.format_probing) }
+        }
+    }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.tertiaryContainer)
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+    ) {
+        Text(text, fontSize = 11.sp, color = MaterialTheme.colorScheme.onTertiaryContainer)
+    }
 }

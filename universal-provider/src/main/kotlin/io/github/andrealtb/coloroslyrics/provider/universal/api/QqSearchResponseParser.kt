@@ -12,11 +12,55 @@ internal object QqSearchResponseParser {
         )
         for (body in bodies) {
             val list = body.optJSONObject("song")?.optJSONArray("list")
-            if (list != null && list.length() > 0) return list
+            if (list != null && list.length() > 0) return expandVersions(list)
             val items = body.optJSONArray("item_song")
-            if (items != null && items.length() > 0) return items
+            if (items != null && items.length() > 0) return expandVersions(items)
         }
         return JSONArray()
+    }
+
+    /**
+     * Rows of the web search (`c.y.qq.com/soso/fcgi-bin/search_for_qq_cp`), rewritten to the
+     * musicu row shape so scoring and lyric lookup read one format.
+     */
+    fun webSongArray(root: JSONObject): JSONArray {
+        val list = root.optJSONObject("data")?.optJSONObject("song")?.optJSONArray("list") ?: return JSONArray()
+        val rows = JSONArray()
+        for (i in 0 until list.length()) {
+            val item = list.optJSONObject(i) ?: continue
+            rows.put(JSONObject().apply {
+                put("id", item.optLong("songid"))
+                put("mid", item.optString("songmid"))
+                put("title", item.optString("songname"))
+                put("singer", item.optJSONArray("singer") ?: JSONArray())
+                put("album", JSONObject().apply {
+                    put("name", item.optString("albumname"))
+                    put("mid", item.optString("albummid"))
+                })
+                put("interval", item.optLong("interval"))
+            })
+        }
+        return rows
+    }
+
+    /**
+     * Other versions of a song (live, remaster, another album) sit under `grp` of the first row.
+     * They are listed after it so scoring can pick the edition that matches the player.
+     */
+    fun expandVersions(rows: JSONArray): JSONArray {
+        val expanded = JSONArray()
+        val seen = HashSet<String>()
+        fun add(row: JSONObject) {
+            val key = mid(row).ifBlank { songId(row).toString() }
+            if (key.isNotBlank() && key != "0" && seen.add(key)) expanded.put(row)
+        }
+        for (i in 0 until rows.length()) {
+            val row = rows.optJSONObject(i) ?: continue
+            add(row)
+            val group = row.optJSONArray("grp") ?: continue
+            for (j in 0 until group.length()) group.optJSONObject(j)?.let(::add)
+        }
+        return expanded
     }
 
     fun title(item: JSONObject): String =

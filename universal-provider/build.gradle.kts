@@ -71,6 +71,8 @@ dependencies {
     implementation(project(":parser-lrc"))
     implementation(project(":parser-qrc"))
     implementation(project(":parser-yrc"))
+    implementation(project(":parser-krc"))
+    implementation(project(":parser-ttml"))
     compileOnly(project(":provider-hook-api102"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.okhttp)

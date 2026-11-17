@@ -5,6 +5,7 @@ import android.content.Intent
 import io.github.andrealtb.coloroslyrics.provider.universal.UniversalSnapshotStore
 import io.github.andrealtb.coloroslyrics.provider.universal.UniversalAppNetwork
 import io.github.andrealtb.coloroslyrics.provider.universal.LyricsSourceConfigStore
+import io.github.andrealtb.coloroslyrics.provider.universal.UniversalLyricPayloadPolicy
 import io.github.andrealtb.coloroslyrics.provider.universal.UniversalSettingsConstants
 import io.github.andrealtb.coloroslyrics.provider.universal.api.LyricsSourceAggregator
 import io.github.andrealtb.coloroslyrics.provider.universal.api.TrackQuery
@@ -54,7 +55,8 @@ class UniversalLyricEngine(
             val report = aggregator.fetchFirst(
                 query.copy(generation = generation),
                 priority.ifEmpty { LyricsSourceAggregator.SourceId.values().toList() },
-                preferWordTiming
+                preferWordTiming,
+                preferTtml = io.github.andrealtb.coloroslyrics.provider.universal.UniversalFeaturePrefs.ttmlFirst(context)
             )
             val result = report.result
             if (result != null && result.lyric.isNotBlank() &&
@@ -70,6 +72,7 @@ class UniversalLyricEngine(
                     put("noLyric", false)
                     put("lyric", result.lyric)
                     put("rawLyric", result.rawLyric ?: result.lyric)
+                    UniversalLyricPayloadPolicy.putTtmlAndFormat(this, result)
                     val translationOn = context.getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, android.content.Context.MODE_PRIVATE)
                         .getBoolean(UniversalSettingsConstants.KEY_TRANSLATION, true)
                     if (translationOn && !result.translationLyric.isNullOrBlank()) {

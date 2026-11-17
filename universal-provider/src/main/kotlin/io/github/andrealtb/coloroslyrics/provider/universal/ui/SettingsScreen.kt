@@ -243,6 +243,8 @@ fun SettingsScreen(
             )
         }
 
+        LyricFeatureSettings()
+
         Text(stringResource(R.string.section_local_data), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
 
         ListItem(

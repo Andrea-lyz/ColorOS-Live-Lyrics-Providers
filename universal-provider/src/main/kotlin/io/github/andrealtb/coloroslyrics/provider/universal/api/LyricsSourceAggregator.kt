@@ -13,7 +13,8 @@ class LyricsSourceAggregator(
         .build(),
     val qqSource: LyricsSource = QQMusicSource(client),
     val netEaseSource: LyricsSource = NetEaseSource(client),
-    val appleMusicSource: LyricsSource = AppleMusicLyricSource(client)
+    val appleMusicSource: LyricsSource = AppleMusicLyricSource(client),
+    val kugouSource: LyricsSource = KugouSource(client)
 ) {
     companion object {
         // Accessed by app IO jobs, so entering a screen never initializes the network stack.
@@ -23,12 +24,14 @@ class LyricsSourceAggregator(
     enum class SourceId(val label: String) {
         QQ("QQ音乐"),
         NETEASE("网易云音乐"),
+        KUGOU("酷狗音乐"),
         APPLE_MUSIC("Apple Music")
     }
 
     fun source(id: SourceId): LyricsSource = when (id) {
         SourceId.QQ -> qqSource
         SourceId.NETEASE -> netEaseSource
+        SourceId.KUGOU -> kugouSource
         SourceId.APPLE_MUSIC -> appleMusicSource
     }
 
@@ -40,10 +43,10 @@ class LyricsSourceAggregator(
         runCatching { source(id).searchCandidates(query) }.getOrDefault(emptyList()).distinctBy { it.source + it.id }
 
     /** Manual binding for one user-picked row; the row's own label selects the source. */
-    fun fetchByCandidate(candidate: SearchCandidate): LyricResult? =
+    fun fetchByCandidate(candidate: SearchCandidate, preferTtml: Boolean = false): LyricResult? =
         sourceOf(candidate.source)?.let { source ->
             runCatching { source.fetchLyricByCandidate(candidate) }.getOrNull()
-        }
+        }?.let { if (preferTtml) TtmlLyricWriter.withConvertedTtml(it) else it }
 
     /**
      * Fetches the best lyric for [query] under the user's source order.
@@ -55,13 +58,32 @@ class LyricsSourceAggregator(
      *
      * A pure-music/credits-only payload never short-circuits the walk, so an "instrumental" entry
      * in one catalogue cannot block a real lyric in the next one.
+     *
+     * With [preferTtml] the enabled sources that deliver TTML are asked first (keeping their
+     * relative order) and a delivered TTML wins outright; when none has one, the usual winner is
+     * converted to TTML. Sources the user disabled stay disabled.
      */
     fun fetchFirst(
         query: TrackQuery,
         priority: List<SourceId> = SourceId.values().toList(),
-        preferWordTiming: Boolean = false
+        preferWordTiming: Boolean = false,
+        preferTtml: Boolean = false
     ): FetchReport {
-        val ordered = priority.distinct()
+        val report = fetchInOrder(query, priority, preferWordTiming, preferTtml)
+        val result = report.result ?: return report
+        if (!preferTtml || SongMatchScorer.isInstrumentalOrCreditsOnly(result.lyric)) return report
+        return report.copy(result = TtmlLyricWriter.withConvertedTtml(result))
+    }
+
+    private fun fetchInOrder(
+        query: TrackQuery,
+        priority: List<SourceId>,
+        preferWordTiming: Boolean,
+        preferTtml: Boolean
+    ): FetchReport {
+        val ordered = priority.distinct().let { ids ->
+            if (preferTtml) ids.sortedBy { if (source(it).deliversTtml) 0 else 1 } else ids
+        }
         if (ordered.isEmpty()) {
             return FetchReport(result = null, transientFailure = false, attemptCount = 0, reason = "priorityEmpty")
         }
@@ -74,13 +96,7 @@ class LyricsSourceAggregator(
         for (id in ordered) {
             val started = System.currentTimeMillis()
             UniversalDiagnostics.sourceAttempt(id.name, query.generation, priorityText)
-            val attempt = runCatching {
-                when (id) {
-                    SourceId.QQ -> qqSource.fetchLyrics(query)
-                    SourceId.NETEASE -> netEaseSource.fetchLyrics(query)
-                    SourceId.APPLE_MUSIC -> appleMusicSource.fetchLyrics(query)
-                }
-            }
+            val attempt = runCatching { source(id).fetchLyrics(query) }
             val elapsed = System.currentTimeMillis() - started
             val result = attempt.getOrNull()
             if (attempt.isFailure) {
@@ -106,6 +122,14 @@ class LyricsSourceAggregator(
             val score = qualityScore(result)
             reasons += id.name + ":hit:" + score
             val wordTimed = WordTimedLyricConverter.hasRealWordTiming(result.rawLyric ?: result.lyric)
+            if (preferTtml && result.format == LyricFormats.TTML) {
+                return FetchReport(
+                    result = result,
+                    transientFailure = false,
+                    attemptCount = reasons.size,
+                    reason = "hit:" + id.name + ":ttml"
+                )
+            }
             if (!preferWordTiming || wordTimed) {
                 return FetchReport(
                     result = result,

@@ -67,6 +67,14 @@ fun HomeScreen(
     }
 
     var historyList by remember { mutableStateOf<List<UniversalLyricHistory.Entry>>(emptyList()) }
+    // system_server reports a refused Apple Music token; the saved web session can renew it.
+    val appleMusicStatus = snapshotMap[io.github.andrealtb.coloroslyrics.provider.universal.UniversalFeatureConfig.SNAPSHOT_AM_STATUS]
+    LaunchedEffect(appleMusicStatus) {
+        withContext(UniversalAppIo.dispatcher) {
+            io.github.andrealtb.coloroslyrics.provider.universal.UniversalFeaturePrefs.onSnapshotStatus(appleMusicStatus)
+        }
+        AppleMusicTokenRefresher.refreshIfNeeded(context)
+    }
     val coverImage = remember(artworkBitmap) { artworkBitmap?.asImageBitmap() }
 
     // system_server's rows also change when a skipped track's fetch finishes.
@@ -431,14 +439,22 @@ private fun historyStatusLabel(status: String): String {
 }
 
 // Older history rows stored the label localized at record time; map those back as well.
+/**
+ * Source label plus the lyric's real format: the source value carries the format after `|`
+ * (`qq|QRC`, `manual|KRC→TTML`); older rows without it show the source alone.
+ */
 private fun formatSourceName(context: Context, raw: String): String {
-    val clean = raw.trim().lowercase()
-    return when {
+    val name = raw.substringBefore('|')
+    val format = raw.substringAfter('|', "").trim()
+    val clean = name.trim().lowercase()
+    val label = when {
         clean.contains("manual") || clean.contains("手动") -> context.getString(R.string.source_manual)
         clean.contains("qq") -> context.getString(R.string.source_qq)
         clean.contains("netease") || clean.contains("网易") -> context.getString(R.string.source_netease)
+        clean.contains("kugou") || clean.contains("酷狗") -> context.getString(R.string.source_kugou)
         clean.contains("apple") -> context.getString(R.string.source_apple)
         clean == "none" || clean == "—" -> "—"
-        else -> raw.ifBlank { "—" }
+        else -> name.ifBlank { "—" }
     }
+    return if (format.isEmpty() || label == "—") label else "$label · $format"
 }

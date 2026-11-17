@@ -6,9 +6,9 @@ import org.json.JSONArray
 internal object LyricsSourceConfigStore {
     private const val PREFS = "lyrics_sources"
     private const val KEY = "priority"
-    private val defaults = listOf(
-        "QQ", "NETEASE", "APPLE_MUSIC"
-    )
+    /** Every source in its default order; a stored order keeps only the ones the user enabled. */
+    val ALL = listOf("QQ", "NETEASE", "KUGOU", "APPLE_MUSIC")
+    private val defaults = ALL
 
     fun read(context: Context): List<String> = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         .getString(KEY, null)?.let(::decode) ?: defaults
