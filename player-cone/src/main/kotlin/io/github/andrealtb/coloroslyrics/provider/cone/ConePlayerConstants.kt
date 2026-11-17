@@ -9,9 +9,15 @@ package io.github.andrealtb.coloroslyrics.provider.cone
 object ConePlayerConstants {
     const val CONE_PACKAGE = "ink.trantor.coneplayer"
     const val CONE_GP_PACKAGE = "ink.trantor.coneplayer.gp"
+    /**
+     * 光锥 GO. Checked against v1.3.0(0ea0fd837): the same MediaPlayerService#onTracksChanged,
+     * media3 Tracks/Format/Metadata members and lyric broadcast as the formal v1.2.0 build, and
+     * a single process.
+     */
+    const val CONE_GO_PACKAGE = "ink.trantor.coneplayer.go"
 
-    val KNOWN_PACKAGES = arrayOf(CONE_PACKAGE, CONE_GP_PACKAGE)
-    val QUALIFIED_HOST_PACKAGES = arrayOf(CONE_PACKAGE, CONE_GP_PACKAGE)
+    val KNOWN_PACKAGES = arrayOf(CONE_PACKAGE, CONE_GP_PACKAGE, CONE_GO_PACKAGE)
+    val QUALIFIED_HOST_PACKAGES = arrayOf(CONE_PACKAGE, CONE_GP_PACKAGE, CONE_GO_PACKAGE)
 
     const val ACTION_CURRENT_LYRIC_CHANGED = "ink.trantor.android.mediaplayer.action.CURRENT_LYRIC_CHANGED"
     const val EXTRA_LYRIC_TEXT = "extra_lyric_text"

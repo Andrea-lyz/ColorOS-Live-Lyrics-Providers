@@ -61,7 +61,8 @@
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.cone.ConeModuleEntry",
       "scopes": [
         "ink.trantor.coneplayer",
-        "ink.trantor.coneplayer.gp"
+        "ink.trantor.coneplayer.gp",
+        "ink.trantor.coneplayer.go"
       ],
       "processPolicy": {
         "kind": "scope-only",
@@ -75,6 +76,10 @@
         {
           "package": "ink.trantor.coneplayer.gp",
           "version": "shared-profile"
+        },
+        {
+          "package": "ink.trantor.coneplayer.go",
+          "version": "1.3.0-0ea0fd837"
         }
       ]
     },
