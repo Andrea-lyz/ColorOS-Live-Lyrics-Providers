@@ -40,7 +40,7 @@ node scripts/catalog/generate-catalog-key.mjs --key-id <keyId> --out <仓库外�
 
 1. **build**：按矩阵解析 tag（`resolve-release-tag.mjs`），要求 tag 指向的提交在 `main` 上；跑目录工具测试和整份矩阵测试（共享代码可能影响所有模块）；动态封面另跑自身测试和协议镜像校验；正式签名构建该模块，只收集到一个 APK，按目录规则核对包名、版本和证书。
 2. **publish**：创建该 tag 的 Release，只附这一个 APK 和它的 `.sha256`；Release 已存在则失败，不覆盖。随后从公开下载地址重新下载，核对 SHA-256。
-3. **promote**：在受保护的 Environment `provider-catalog` 中运行，需要审批。再次下载已发布的 APK 作为目录数据来源；用 `release/catalog-trust.json` 验签 `store-catalog` 分支上的当前目录，在其上生成、签名、验签下一版；以普通 push（不强推）提交到 `store-catalog` 分支的 `catalog/stable.json`。所有晋级串行执行。
+3. **promote**：在受保护的 Environment `provider-catalog` 中运行，需要审批。再次下载已发布的 APK 作为目录数据来源；用 `release/catalog-trust.json` 验签 `store-catalog` 分支上的当前目录，在其上生成、签名、验签下一版；以普通 push（不强推）提交到 `store-catalog` 分支的 `catalog/stable.json`。所有晋级串行执行。push 后清除 jsDelivr 上该文件的缓存，并确认 `cdn.jsdelivr.net` 与 `fastly.jsdelivr.net` 返回新 revision：Bridge 优先读 jsDelivr，分支链接不清缓存最长会滞留 12 小时（raw GitHub 约 5 分钟自行过期）。CDN 仍未更新只记警告，不影响已完成的晋级；可手动执行 `curl https://purge.jsdelivr.net/gh/Andrea-lyz/ColorOS-Live-Lyrics-Providers@store-catalog/catalog/stable.json` 补清。
 
 任一步失败，已发布的目录都不变。可选的发布说明放在 `release/notes/<module>/<versionName>.md`，同时用于 Release 和目录。
 
