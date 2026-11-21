@@ -22,6 +22,12 @@ object SaltPlayerConstants {
     const val SCROLL_MARKER_CAN_SCROLL = "CAN_SCROLL"
     const val SCROLL_MARKER_NOT_SCROLL = "NOT_SCROLL"
 
+    /** Salt 12.7.0+ MEDIA_ID fallback form: "song:" + Song.id. */
+    const val MEDIA_ID_SONG_PREFIX = "song:"
+    /** Salt 12.7.0+ MEDIA_ID queue form: queueIndex - Int.MIN_VALUE. */
+    const val QUEUE_MEDIA_ID_MIN = 2_147_483_648L
+    const val QUEUE_MEDIA_ID_END = 4_294_967_296L
+
     const val MEDIA_BUTTON_DEBOUNCE_MS = 1_200L
     const val PLAY_AFTER_SERVICE_START_DELAY_MS = 600L
 }

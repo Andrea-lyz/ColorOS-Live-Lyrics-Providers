@@ -80,7 +80,7 @@ internal object SaltBluetoothLyricRelayPolicy {
         }
 
         val track = TrackIdentity(
-            id = mediaId?.trim()?.takeIf { it.isNotEmpty() },
+            id = normalizeMediaId(mediaId),
             title = resolvedTitle.takeIf { it.isNotEmpty() },
             artist = resolvedArtist.takeIf { it.isNotEmpty() },
             album = album?.trim()?.takeIf { it.isNotEmpty() },
@@ -88,6 +88,35 @@ internal object SaltBluetoothLyricRelayPolicy {
         )
         if (track.isBlank) return null
         return ResolvedIdentity(track, relay, source)
+    }
+
+    /**
+     * Maps Salt's MediaSession MEDIA_ID back to the raw `Song.id` used by the
+     * lyric publisher.
+     *
+     * Salt 12.7.0 (`MusicController` media-id builder) publishes either the
+     * active queue item id (`queueIndex + 2^31`) or `"song:" + Song.id`.
+     * The prefixed form is unwrapped; the queue form is position-based and
+     * changes on queue edits, so it is not a stable identity and is dropped,
+     * letting identity fall back to title/artist/duration. Older builds that
+     * publish the raw `Song.id` are unchanged.
+     */
+    internal fun normalizeMediaId(mediaId: String?): String? {
+        val value = mediaId?.trim().orEmpty()
+        if (value.isEmpty()) return null
+        if (value.startsWith(SaltPlayerConstants.MEDIA_ID_SONG_PREFIX)) {
+            return value.substring(SaltPlayerConstants.MEDIA_ID_SONG_PREFIX.length)
+                .trim()
+                .takeIf { it.isNotEmpty() }
+        }
+        if (isQueueItemMediaId(value)) return null
+        return value
+    }
+
+    private fun isQueueItemMediaId(value: String): Boolean {
+        if (value.isEmpty() || value.length > 10 || !value.all { it in '0'..'9' }) return false
+        val number = value.toLongOrNull() ?: return false
+        return number in SaltPlayerConstants.QUEUE_MEDIA_ID_MIN until SaltPlayerConstants.QUEUE_MEDIA_ID_END
     }
 
     fun parseRelayIdentity(compositeArtist: String?): RelayIdentity? {

@@ -6,6 +6,7 @@
 
 package io.github.andrealtb.coloroslyrics.provider.salt
 
+import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 import io.github.andrealtb.coloroslyrics.provider.core.policy.TrackIdentityPolicy
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -118,6 +119,57 @@ class SaltBluetoothLyricRelayPolicyTest {
         assertFalse(resolved.relay)
         assertEquals("standard", resolved.source)
     }
+
+    @Test
+    fun salt127PrefixedMediaIdMatchesPublisherSongId() {
+        val host = resolveStandard(mediaId = "song:abc123")
+        val publication = TrackIdentity(
+            id = "abc123", title = "Broken", artist = "William Black/Fairlane",
+            album = "Album", durationMs = 180000L
+        )
+
+        assertEquals("abc123", host.track.id)
+        assertTrue(TrackIdentityPolicy.isSameTrack(host.track, publication))
+    }
+
+    @Test
+    fun salt127QueueMediaIdFallsBackToTitleArtistDuration() {
+        val host = resolveStandard(mediaId = "2147483653")
+        val publication = TrackIdentity(
+            id = "abc123", title = "Broken", artist = "William Black/Fairlane",
+            album = "Album", durationMs = 180500L
+        )
+
+        assertNull(host.track.id)
+        assertTrue(TrackIdentityPolicy.isSameTrack(host.track, publication))
+        assertFalse(
+            TrackIdentityPolicy.isSameTrack(
+                host.track,
+                publication.copy(title = "All I Ask", artist = "Adele")
+            )
+        )
+    }
+
+    @Test
+    fun legacyRawMediaIdIsKept() {
+        assertEquals("12345", SaltBluetoothLyricRelayPolicy.normalizeMediaId("12345"))
+        assertEquals("song-1", SaltBluetoothLyricRelayPolicy.normalizeMediaId(" song-1 "))
+        assertEquals("4294967296", SaltBluetoothLyricRelayPolicy.normalizeMediaId("4294967296"))
+        assertNull(SaltBluetoothLyricRelayPolicy.normalizeMediaId("song:"))
+        assertNull(SaltBluetoothLyricRelayPolicy.normalizeMediaId("2147483648"))
+        assertNull(SaltBluetoothLyricRelayPolicy.normalizeMediaId(""))
+    }
+
+    private fun resolveStandard(mediaId: String) =
+        SaltBluetoothLyricRelayPolicy.resolveFields(
+            mediaId = mediaId,
+            title = "Broken",
+            artist = "William Black/Fairlane",
+            displayTitle = null,
+            displaySubtitle = null,
+            album = "Album",
+            durationMs = 180000L
+        )!!
 
     private fun resolveRelay(line: String) =
         SaltBluetoothLyricRelayPolicy.resolveFields(
