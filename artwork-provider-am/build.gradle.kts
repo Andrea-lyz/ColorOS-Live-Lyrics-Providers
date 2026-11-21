@@ -26,8 +26,8 @@ configure<ApplicationExtension> {
         minSdk = 30
         targetSdk = rootProject.extra.get("targetSdkVersion") as Int
         // versionCode stays monotonic over the 0.2.x integration builds.
-        versionCode = 10
-        versionName = "1.0.6"
+        versionCode = 11
+        versionName = "1.0.7"
     }
 
     signingConfigs {

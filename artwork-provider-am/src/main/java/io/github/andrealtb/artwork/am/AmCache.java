@@ -65,14 +65,20 @@ final class AmCache {
             if (!map.isFile() || map.length() > 4096) return null;
             JSONObject value = new JSONObject(new String(java.nio.file.Files.readAllBytes(map.toPath()), StandardCharsets.UTF_8));
             long remaining = value.getLong("expires") - System.currentTimeMillis();
-            if (remaining <= 0 || remaining > 86_400_000) { map.delete(); return null; }
+            // An expired verified-file mapping is kept for staleFile(): the video itself is immutable and
+            // was verified for this exact key; only re-verification needs the network.
+            if (remaining > 86_400_000 || remaining <= 0 && !value.has("file")) { map.delete(); return null; }
+            if (remaining <= 0) return null;
             if (value.has("file")) {
                 String name = value.getString("file");
                 if (!name.matches("[a-f0-9]{64}\\.mp4")) return null;
                 File file = new File(root, name);
                 if (!file.isFile()) { map.delete(); return null; }
                 pin(file);
-                file.setLastModified(System.currentTimeMillis());
+                long now = System.currentTimeMillis();
+                file.setLastModified(now);
+                // Index eviction is by modification time too: a hit keeps a hot song's mapping.
+                map.setLastModified(now);
                 return new Hit(file, null);
             }
             ArtworkResult.Status status = ArtworkResult.Status.valueOf(value.getString("status"));
@@ -85,6 +91,30 @@ final class AmCache {
             }
             return new Hit(null, new ArtworkResult(status, null, status == ArtworkResult.Status.RETRY_LATER ? remaining : 0, value.getString("reason")));
         } catch (Exception ignored) { map.delete(); return null; }
+    }
+    /** How long past its expiry a verified mapping may still answer while the network is not allowed. */
+    static final long STALE_FILE_MS = 30L * 86_400_000;
+
+    /**
+     * A verified mapping that has expired, for use only when the download policy or connectivity forbids
+     * re-verification. Device logs: on a metered Wi-Fi, a song whose video was on disk stayed static once
+     * its 24 h mapping expired, because the next lookup required the catalog.
+     */
+    Hit staleFile(String key) {
+        File map = new File(root, key + ".json");
+        try {
+            if (!map.isFile() || map.length() > 4096) return null;
+            JSONObject value = new JSONObject(new String(java.nio.file.Files.readAllBytes(map.toPath()), StandardCharsets.UTF_8));
+            if (!value.has("file")) return null;
+            long expiredFor = System.currentTimeMillis() - value.getLong("expires");
+            if (expiredFor < 0 || expiredFor > STALE_FILE_MS) return null;
+            String name = value.getString("file");
+            if (!name.matches("[a-f0-9]{64}\\.mp4")) return null;
+            File file = new File(root, name);
+            if (!file.isFile()) return null;
+            pin(file);
+            return new Hit(file, null);
+        } catch (Exception ignored) { return null; }
     }
     /**
      * The shared snapshot answers every level. A loose edition choice is that level's decision about

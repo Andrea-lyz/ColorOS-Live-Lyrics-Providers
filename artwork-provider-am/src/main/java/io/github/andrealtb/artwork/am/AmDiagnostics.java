@@ -79,7 +79,19 @@ final class AmDiagnostics {
                 + " sdk=" + Build.VERSION.SDK_INT + " release=" + safe(Build.VERSION.RELEASE)
                 + " manufacturer=" + safe(Build.MANUFACTURER) + " model=" + safe(Build.MODEL)
                 + " enabled=" + AmSettings.enabled(context) + " debug=" + AmSettings.prefs(context).getBoolean("debug", false)
-                + " market=" + AmSettings.country(context);
+                + " market=" + AmSettings.country(context) + " " + network(context);
+    }
+
+    /** The inputs of the automatic download policy: a blocked lookup names which one stopped it. */
+    static String network(Context context) {
+        try {
+            android.net.ConnectivityManager manager = context.getSystemService(android.net.ConnectivityManager.class);
+            boolean validated = AmSettings.connected(context);
+            boolean metered = manager != null && manager.isActiveNetworkMetered();
+            return "validated=" + validated + " metered=" + metered
+                    + " meteredAllowed=" + AmSettings.prefs(context).getBoolean("metered", false)
+                    + " online=" + AmSettings.online(context);
+        } catch (RuntimeException error) { return "network=unknown"; }
     }
 
     /** Only call with code-controlled fields, never a throwable message, query or server response. */

@@ -54,6 +54,16 @@ final class AmBindings {
         return anyArtist;
     }
 
+    /** Reason code only, never album or artist text: why {@link #find} returned no binding. */
+    static String missReason(List<Binding> bindings, ArtworkQuery query) {
+        String album = AmIdentity.normalize(query.album);
+        if (album.isEmpty()) return "query_album_missing count=" + bindings.size();
+        for (Binding binding : bindings) {
+            if (album.equals(AmIdentity.normalize(binding.localAlbum()))) return "artist_not_bound count=" + bindings.size();
+        }
+        return "album_not_bound count=" + bindings.size();
+    }
+
     /** Newest first; a binding for the same local album and artist is replaced. */
     static List<Binding> put(List<Binding> bindings, Binding binding) {
         List<Binding> next = new ArrayList<>();

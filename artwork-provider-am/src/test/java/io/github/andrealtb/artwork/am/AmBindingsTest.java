@@ -178,4 +178,10 @@ public class AmBindingsTest {
         assertEquals("taylor swift", AmIdentity.primaryArtist("Taylor Swift feat. Future"));
         assertEquals("", AmIdentity.leadCredit(" / "));
     }
+    @Test public void missReasonNamesWhyNoBindingMatchedWithoutText() {
+        var bindings = List.of(binding("Greatest Hits", "Queen", "20"));
+        assertEquals("query_album_missing count=1", AmBindings.missReason(bindings, query("Song", "Queen", "")));
+        assertEquals("artist_not_bound count=1", AmBindings.missReason(bindings, query("Song", "ABBA", "greatest hits")));
+        assertEquals("album_not_bound count=1", AmBindings.missReason(bindings, query("Song", "Queen", "Greatest Hits II")));
+    }
 }
