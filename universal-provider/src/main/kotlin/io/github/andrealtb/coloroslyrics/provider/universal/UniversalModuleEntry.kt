@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Binder
 import android.os.Build
 import android.os.UserHandle
 import android.os.SystemClock
@@ -879,10 +880,18 @@ class UniversalModuleEntry : XposedModule() {
             val allUser = runCatching {
                 Class.forName("android.os.UserHandle").getDeclaredField("ALL").get(null) as? UserHandle
             }.getOrNull()
-            if (allUser != null) {
-                context.sendBroadcastAsUser(intent, allUser)
-            } else {
-                context.sendBroadcast(intent)
+            // Snapshots are usually built inside a hooked binder call from the player
+            // (setMetadata/setPlaybackState), so the calling identity is the player's uid and a
+            // broadcast to UserHandle.ALL is rejected with SecurityException. Send as system_server.
+            val identity = Binder.clearCallingIdentity()
+            try {
+                if (allUser != null) {
+                    context.sendBroadcastAsUser(intent, allUser)
+                } else {
+                    context.sendBroadcast(intent)
+                }
+            } finally {
+                Binder.restoreCallingIdentity(identity)
             }
             lastBroadcastSnapshotText = text
             lastBroadcastArtworkRevision = artworkRevision
