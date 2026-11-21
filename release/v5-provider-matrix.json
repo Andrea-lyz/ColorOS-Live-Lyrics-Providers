@@ -328,8 +328,8 @@
       "displayName": "Universal",
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.universal",
       "applicationClass": "UniversalProviderApplication",
-      "versionName": "1.1.5",
-      "versionCode": 7,
+      "versionName": "1.1.6",
+      "versionCode": 8,
       "asset": "ColorOS-Live-Lyrics-Provider-Universal-v4.5.4.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.universal.UniversalModuleEntry",
       "scopes": [

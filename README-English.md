@@ -54,7 +54,7 @@ the Bridge five-slot control according to player-specific evidence. QQ Music HD 
 
 ## Universal Player Provider
 
-Universal Player Provider (`Provider-Universal 1.1.5 (7)`) is for players without a dedicated
+Universal Player Provider (`Provider-Universal 1.1.6 (8)`) is for players without a dedicated
 adapter that still create a standard Android `MediaSession`. It has static scope only in
 `system_server` and receives an explicit target-package list from its settings app; unselected music,
 video, and other media apps are never observed, queried for lyrics, or written with `lyricInfo`.
@@ -76,6 +76,10 @@ whether it is enabled in LSPosed without root.
 cache, and can optionally read official lyrics with an Apple Music subscription signed in inside the app. It adds a
 KuGou source and a "TTML first" switch, extra QQ Music search fallbacks, and shows each lyric's real format on Home,
 in recent history and in search results.
+
+1.1.6 fixes songs that open on a lyric line (for example Sonify with status-bar lyrics) having no title for the
+whole song: the title is filled in once the real one can be recovered. Home shows the title the lyric lookup used,
+and the home-screen snapshot gains sanitized diagnostic logs.
 
 After installing it from the Bridge store, open **Universal Player Provider**: select target apps on the Players page,
 set lyric-source priority on Sources, and enable word timing, translations, raw lyrics, or sanitized
