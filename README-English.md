@@ -184,9 +184,13 @@ part of the v5 lyric matrix above. Without it the lock screen keeps the official
   then pick and authorize it in the Bridge under "Appearance → Dynamic artwork".
 - Fully independent of the lyric Providers: install, update, or remove it on its own; the lyric
   path is unaffected.
-- Source version 1.0.6 (versionCode 10), signed with the same release key as the lyric Providers. During 4.5.x it
+- Source version 1.0.7 (versionCode 11), signed with the same release key as the lyric Providers. During 4.5.x it
   shipped with the formal Bridge release as its own asset; since 5.0 it is distributed through the Bridge store
-  (tag `artwork-provider-am-v1.0.6`) with the same 1.0.6 code.
+  (current tag `artwork-provider-am-v1.0.7`).
+- 1.0.7: on a metered network or offline, a motion cover that was already downloaded and verified keeps showing
+  after its cache mapping expires (within 30 days) instead of falling back to the static cover after 24 hours; the
+  cache index of frequently played songs is no longer evicted first; diagnostics name why a binding did not match
+  and record the network policy state.
 - 1.0.6 (with Bridge 4.5.1): the manual binding page can import your own video as a local album's motion
   cover, keeping a square 1080 SDR H.264 picture as is and centre-cropping and compressing anything else to
   1080; manual search reads the selected storefront's Apple Music album shelf; same-titled editions get a

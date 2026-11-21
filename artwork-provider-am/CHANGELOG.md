@@ -1,3 +1,21 @@
+# 1.0.7
+
+通过 Bridge 商店分发（versionCode 11）。Distributed through the Bridge store (versionCode 11).
+
+## 简体中文
+
+- 修复计费网络或离线时已下载的动态封面失效：已核验的“歌曲→视频”映射原本 24 小时到期即删除，到期后必须联网重新核验，网络策略不允许（计费网络未开启“允许计费网络下载”）或离线时返回 `network_policy`，即使视频仍在磁盘上也退回静态封面。现在到期的已核验映射保留，仅在网络不允许时作为兜底使用（到期后 30 天内、文件仍存在且重新通过文件校验），诊断记为 `stale_file_network_blocked`；网络允许时照旧重新核验。失败结果不会被当作兜底。
+- 命中缓存时同时刷新索引文件时间，索引按修改时间淘汰时常听歌曲不再先被挤掉。
+- 诊断：有已保存绑定但未命中当前歌曲时记录 `ARTWORK_BINDING_MISS`（`query_album_missing` / `album_not_bound` / `artist_not_bound` 与绑定数量，不含专辑或歌手文字），此前这类情况只表现为自动匹配的网络结果；`ARTWORK_AM_ENVIRONMENT` 补充 `validated`、`metered`、`meteredAllowed`、`online`。
+- 验证（2026-11-21）：`:artwork-provider-am:testDebugUnitTest :artwork-provider-am:assembleDebug` 通过，新增缓存兜底、索引刷新与绑定未命中原因的单测。用户已在设备上安装本地 debug 包；兜底路径尚无专门的设备复现。
+
+## English
+
+- Fix downloaded motion covers lost on a metered network or offline: a verified song-to-video mapping used to be deleted when its 24 h lifetime ended, so the next lookup needed the network; when the download policy forbade it (metered network without "Allow metered downloads") or the device was offline, the result was `network_policy` and the static cover, although the video was still on disk. Expired verified mappings are now kept and used only when the network is not allowed (within 30 days of expiry, the file still present and passing the file check again), recorded as `stale_file_network_blocked`; with the network allowed they are re-verified as before. Failure results never serve as a fallback.
+- A cache hit also refreshes the index file's time, so frequently played songs are not evicted first when indexes are trimmed by modification time.
+- Diagnostics: when saved bindings exist but none matches the playing song, `ARTWORK_BINDING_MISS` records `query_album_missing` / `album_not_bound` / `artist_not_bound` with the binding count and no album or artist text; previously this only surfaced as the automatic lookup's network result. `ARTWORK_AM_ENVIRONMENT` adds `validated`, `metered`, `meteredAllowed` and `online`.
+- Verification (2026-11-21): `:artwork-provider-am:testDebugUnitTest :artwork-provider-am:assembleDebug` passed with new tests for the cache fallback, index refresh and binding miss reasons. A local debug build is installed on the user's device; the fallback path has not been reproduced on a device specifically.
+
 # 1.0.6
 
 随 Bridge v4.5.1 发布（versionCode 10）。Ships with Bridge v4.5.1 (versionCode 10).

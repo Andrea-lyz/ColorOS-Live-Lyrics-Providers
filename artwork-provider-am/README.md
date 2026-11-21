@@ -1,13 +1,13 @@
 # 动态封面 Provider（Dynamic Artwork Provider）
 
-v1.0.6（versionCode 10）。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
+v1.0.7（versionCode 11）。包名 `io.github.andrealtb.artwork.am`。普通 Android APK（API 30+），不是 Xposed 模块，
 不注入 Apple Music 或 SystemUI，不进入任何播放器进程。通过 `artwork-contract` v1 向已授权的
 Bridge 返回 `localTestOnly=false` 与完整本地 MP4 的只读 FD。
 
 它是**可选**的独立应用：不安装它时，锁屏仍然是官方静态封面；安装并启用后才会联网匹配动态封面。
 界面默认英文，中文系统显示中文，语言跟随系统。
 
-自 Bridge 5.0 起，本应用通过 Bridge 商店分发（tag `artwork-provider-am-v1.0.6`，代码与 1.0.6 相同），在 Bridge「外观 → 动态封面」中选择并授权。1.0.6 随 Bridge v4.5.1 发布：手动绑定页新增本地视频导入（方形 1080 SDR H.264 保留原画质，其余居中裁剪并压缩到 1080，
+自 Bridge 5.0 起，本应用通过 Bridge 商店分发（当前 tag `artwork-provider-am-v1.0.7`），在 Bridge「外观 → 动态封面」中选择并授权。1.0.7 修复计费网络或离线时已下载的动态封面在 24 小时后失效，并补充绑定未命中与网络策略诊断，见 [CHANGELOG](CHANGELOG.md)。1.0.6 随 Bridge v4.5.1 发布：手动绑定页新增本地视频导入（方形 1080 SDR H.264 保留原画质，其余居中裁剪并压缩到 1080，
 按内容哈希私有保存），手动搜索改读所选市场的 Apple Music 网页专辑区，同名多版本新增“多个版本”状态与宽松档自动选择，
 符号名专辑可绑定且互不串扰，匹配身份重构为具名折叠与单一取舍入口。1.0.5 随 v4.5.0 首次进入正式版。
 

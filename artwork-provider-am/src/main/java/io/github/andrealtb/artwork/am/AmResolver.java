@@ -35,7 +35,11 @@ final class AmResolver {
     }
     Resolved resolve(ArtworkQuery query, AmNetwork.Task task) throws AmFailure {
         if (!AmSettings.enabled(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "provider_disabled");
-        AmBindings.Binding binding = query.appleMusicUrl.isEmpty() ? AmBindings.find(AmBindings.load(context), query) : null;
+        List<AmBindings.Binding> saved = query.appleMusicUrl.isEmpty() ? AmBindings.load(context) : List.of();
+        AmBindings.Binding binding = query.appleMusicUrl.isEmpty() ? AmBindings.find(saved, query) : null;
+        // A binding that does not match the player's album text otherwise surfaces as an automatic
+        // lookup result (for example network_policy) and looks like a network problem.
+        if (binding == null && !saved.isEmpty()) AmSettings.trace(context, "ARTWORK_BINDING_MISS", AmBindings.missReason(saved, query));
         boolean fallback = binding == null && query.appleMusicUrl.isEmpty()
                 && NcmSession.enabled(context) && NcmSession.read(context) != null;
         return ArtworkSources.resolve(binding != null, () -> {
@@ -150,7 +154,7 @@ final class AmResolver {
         long pausesAtStart = AmPauseDetector.pauses();
         try {
             AmSettings.trace(context, "ARTWORK_AM_CACHE", "miss");
-            if (!AmSettings.online(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "network_policy");
+            if (!AmSettings.online(context)) return staleOrBlocked(key, query);
             AmPage.Album album = AmPage.album(network.text(AmCatalog.pageUri(country, albumId), 3 * 1024 * 1024, task), albumId);
             task.check();
             AmSettings.trace(context, "ARTWORK_AM_MATCH", "user_bound_album");
@@ -217,7 +221,7 @@ final class AmResolver {
         }
         try {
             AmSettings.trace(context, "ARTWORK_AM_CACHE", "miss");
-            if (!AmSettings.online(context)) throw new AmFailure(Status.NETWORK_BLOCKED, "network_policy");
+            if (!AmSettings.online(context)) return staleOrBlocked(key, query);
             AmCatalog catalog = new AmCatalog((uri, limit) -> network.text(uri, limit, task),
                     (stage, tracks) -> AmSettings.matching(context, stage, tracks, query, profile),
                     detail -> AmSettings.trace(context, "ARTWORK_AM_CATALOG", detail),
@@ -388,6 +392,22 @@ final class AmResolver {
             cache.remember(key, null, failure.result(), networkEpoch);
         }
         throw failure;
+    }
+
+    /**
+     * The download policy or connectivity forbids re-verifying this key. A video verified for exactly this
+     * key before its mapping expired is still the right one; anything else stays network-blocked.
+     */
+    private Resolved staleOrBlocked(String key, ArtworkQuery query) throws AmFailure {
+        AmCache.Hit stale = cache.staleFile(key);
+        if (stale != null) {
+            try {
+                Resolved ready = inspect(stale.file(), query);
+                AmSettings.trace(context, "ARTWORK_AM_CACHE", "stale_file_network_blocked");
+                return ready;
+            } catch (Exception error) { cache.unpin(stale.file()); }
+        }
+        throw new AmFailure(Status.NETWORK_BLOCKED, "network_policy");
     }
 
     private Resolved inspect(File file, ArtworkQuery query) throws Exception {

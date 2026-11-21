@@ -146,4 +146,39 @@ public class AmCacheTest {
         try { AmIdentity.unique(known.tracks(),query,"","10",AmIdentity.MatchProfile.STRICT); fail(); }
         catch(AmFailure failure) { assertEquals("catalog_match_unconfirmed",failure.reason); }
     }
+    private static void expire(File root, String key, File file, long expiredMsAgo) throws Exception {
+        String json = new org.json.JSONObject().put("file", file.getName())
+                .put("expires", System.currentTimeMillis() - expiredMsAgo).toString();
+        Files.write(new File(root, key + ".json").toPath(), json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+    @Test public void expiredVerifiedMappingStaysAvailableOnlyAsStaleFallback() throws Exception {
+        File root = temporary.newFolder();
+        var cache = new AmCache(root);
+        String key = AmCache.hash("stale-query");
+        File temp = cache.temporary(); Files.write(temp.toPath(), new byte[]{1, 2, 3});
+        File file = cache.commit(temp); cache.unpin(file);
+        expire(root, key, file, 60_000);
+        assertNull("an expired mapping is not an ordinary hit", cache.lookup(key));
+        assertTrue("and is not deleted by that lookup", new File(root, key + ".json").isFile());
+        var stale = cache.staleFile(key);
+        assertEquals(file, stale.file());
+        cache.unpin(stale.file());
+        expire(root, key, file, AmCache.STALE_FILE_MS + 60_000);
+        assertNull("too old to trust", cache.staleFile(key));
+        cache.remember(key, null, ArtworkResult.failure(Status.NO_MATCH, "no_match"));
+        assertNull("a failure is never a stale video", cache.staleFile(key));
+    }
+    @Test public void unexpiredMappingIsNotStaleAndAHitRefreshesItsIndexAge() throws Exception {
+        File root = temporary.newFolder();
+        var cache = new AmCache(root);
+        String key = AmCache.hash("fresh-query");
+        File temp = cache.temporary(); Files.write(temp.toPath(), new byte[]{4, 5, 6});
+        File file = cache.commit(temp); cache.remember(key, file, null); cache.unpin(file);
+        assertNull(cache.staleFile(key));
+        File map = new File(root, key + ".json");
+        map.setLastModified(1_000_000L);
+        var hit = cache.lookup(key);
+        assertEquals(file, hit.file()); cache.unpin(hit.file());
+        assertTrue("the index survives write-order eviction while in use", map.lastModified() > 1_000_000L);
+    }
 }
