@@ -20,6 +20,7 @@ import io.github.andrealtb.coloroslyrics.provider.universal.session.RawSessionMe
 import io.github.andrealtb.coloroslyrics.provider.universal.session.ResolvedSession
 import io.github.andrealtb.coloroslyrics.provider.universal.session.SessionObservation
 import io.github.andrealtb.coloroslyrics.provider.universal.session.SessionRepository
+import io.github.andrealtb.coloroslyrics.provider.universal.session.TrackDescriptor
 import io.github.andrealtb.coloroslyrics.provider.universal.session.TrackIdentityResolver
 import io.github.andrealtb.coloroslyrics.provider.universal.session.UniversalMonitorSnapshot
 import io.github.andrealtb.coloroslyrics.provider.universal.cache.UniversalLyricCache
@@ -83,6 +84,11 @@ class UniversalModuleEntry : XposedModule() {
     @Volatile
     private var cachedPushMetadataUpdateMethod: Method? = null
     private val realLyricsByPackage = java.util.concurrent.ConcurrentHashMap<String, String>()
+    /**
+     * Title/artist the lyric lookup used when the resolved identity had no title yet
+     * (`package|generation`). The monitor snapshot shows the same identity the lyric matched.
+     */
+    private val lookupIdentityByKey = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String?>>()
     private val activeRecords = java.util.concurrent.ConcurrentHashMap<String, Any>()
     private val backgroundExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "UniversalLyricWorker").apply { isDaemon = true }
@@ -526,6 +532,11 @@ class UniversalModuleEntry : XposedModule() {
         val album = recordSession.descriptor.album
         val durationMs = recordSession.descriptor.durationMs
         val cacheKey = "$ownerPackage|$currentGen"
+        lookupIdentityByKey.keys.filter { it.startsWith("$ownerPackage|") && it != cacheKey }
+            .forEach(lookupIdentityByKey::remove)
+        if (recordSession.descriptor.title == null && !title.isNullOrBlank()) {
+            lookupIdentityByKey[cacheKey] = title to artist
+        }
 
         var realJson = realLyricsByPackage[cacheKey]
         val retryUpgradedMiss = shouldRetryMiss(realJson, artist, durationMs)
@@ -815,9 +826,10 @@ class UniversalModuleEntry : XposedModule() {
             val descriptor = snapshot.selected?.descriptor
             val lyricPayload = descriptor?.let { lyricPayloadFor(it.ownerPackage, it.trackGeneration) }
             if (descriptor != null && boundPackages.contains(descriptor.ownerPackage)) {
+                val (title, artist) = displayIdentity(descriptor)
                 UniversalLyricHistory.row(
-                    descriptor.title,
-                    descriptor.artist,
+                    title,
+                    artist,
                     lyricSourceOf(lyricPayload),
                     lyricStatusOf(lyricPayload)
                 )?.let { recentHistory = UniversalLyricHistory.moveToTop(recentHistory, it) }
@@ -833,7 +845,16 @@ class UniversalModuleEntry : XposedModule() {
             snapshot
         }
 
+    /** The resolved identity, falling back to the title/artist the lyric lookup actually used. */
+    private fun displayIdentity(descriptor: TrackDescriptor): Pair<String?, String?> {
+        if (descriptor.title != null) return descriptor.title to descriptor.artist
+        val lookup = lookupIdentityByKey["${descriptor.ownerPackage}|${descriptor.trackGeneration}"]
+            ?: return null to descriptor.artist
+        return lookup.first to (descriptor.artist ?: lookup.second)
+    }
+
     private fun sendSnapshotBroadcast(context: Context, text: String, cacheCleared: Int? = null, force: Boolean = false) {
+        var sent = false
         runCatching {
             val owner = text.lineSequence().firstOrNull { it.startsWith("package=") }?.substringAfter('=')
             val artwork = owner?.let(artworkByPackage::get)
@@ -865,7 +886,11 @@ class UniversalModuleEntry : XposedModule() {
             }
             lastBroadcastSnapshotText = text
             lastBroadcastArtworkRevision = artworkRevision
+            sent = true
+        }.onFailure { error ->
+            UniversalDiagnostics.snapshotSent(text, force, error)
         }
+        if (sent) UniversalDiagnostics.snapshotSent(text, force, null)
     }
 
     private fun rememberArtwork(ownerPackage: String, metadata: MediaMetadata) {
@@ -984,6 +1009,7 @@ class UniversalModuleEntry : XposedModule() {
     ): String {
         val descriptor = selected?.descriptor
         val isBound = boundPackages.contains(descriptor?.ownerPackage)
+        val (displayTitle, displayArtist) = descriptor?.let(::displayIdentity) ?: (null to null)
         return buildString {
             append("source=system_server\n")
             append("writeBack=true network=false\n")
@@ -992,8 +1018,16 @@ class UniversalModuleEntry : XposedModule() {
             append("selectionRevision=").append(selectionRevision).append('\n')
             append("sessions=").append(sessionCount).append('\n')
             append("package=").append(descriptor?.ownerPackage ?: "(none)").append('\n')
-            append("title=").append(descriptor?.title ?: "(missing)").append('\n')
-            append("artist=").append(descriptor?.artist ?: "(missing)").append('\n')
+            append("title=").append(displayTitle ?: "(missing)").append('\n')
+            append("artist=").append(displayArtist ?: "(missing)").append('\n')
+            // Diagnostic: "lookup" means the title came from the lyric lookup fallback.
+            append("titleSource=").append(
+                when {
+                    descriptor?.title != null -> "resolved"
+                    displayTitle != null -> "lookup"
+                    else -> "none"
+                }
+            ).append('\n')
             append("album=").append(descriptor?.album ?: "(missing)").append('\n')
             append("durationMs=").append(descriptor?.durationMs?.toString() ?: "unknown").append('\n')
             append("generation=").append(descriptor?.trackGeneration ?: 0).append('\n')

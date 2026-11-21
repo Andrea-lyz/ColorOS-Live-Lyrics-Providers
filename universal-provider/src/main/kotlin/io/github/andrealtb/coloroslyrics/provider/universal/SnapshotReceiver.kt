@@ -10,6 +10,9 @@ class SnapshotReceiver : BroadcastReceiver() {
         if (action != UniversalSnapshotStore.ACTION_SNAPSHOT_UPDATE &&
             action != UniversalSnapshotStore.ACTION_REQUEST_PLAYER_BINDINGS_SYNC) return
         val text = intent.getStringExtra(UniversalSnapshotStore.EXTRA_SNAPSHOT)
+        if (action == UniversalSnapshotStore.ACTION_SNAPSHOT_UPDATE && text != null) {
+            UniversalDiagnostics.snapshotReceived("manifest", text)
+        }
         val appContext = context.applicationContext
         val pending = goAsync()
         UniversalAppIo.execute {

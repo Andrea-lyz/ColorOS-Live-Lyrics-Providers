@@ -369,6 +369,81 @@ internal object UniversalDiagnostics {
         )
     }
 
+    /**
+     * Monitor snapshot delivery (system_server → app). Success is DEBUG-only; a failed send is a
+     * warning because the home screen otherwise has no trace of why it stays on "waiting".
+     * Only revision/flags are logged, never the song text.
+     */
+    fun snapshotSent(snapshotText: String, force: Boolean, error: Throwable?) {
+        val summary = snapshotSummary(snapshotText) + " force=" + force
+        if (error == null) {
+            StructuredDiagnostics.logDebug(
+                DiagnosticEvent(
+                    component = COMPONENT,
+                    area = "snapshot",
+                    event = "SNAPSHOT_SENT",
+                    session = "system_server",
+                    reason = summary
+                )
+            )
+        } else {
+            StructuredDiagnostics.logWarning(
+                DiagnosticEvent(
+                    component = COMPONENT,
+                    area = "snapshot",
+                    event = "SNAPSHOT_SEND_FAILED",
+                    session = "system_server",
+                    reason = summary + " error=" + error.javaClass.simpleName
+                )
+            )
+        }
+    }
+
+    /** App side: [receiver] is `manifest` (disk writer) or `activity` (live home screen). */
+    fun snapshotReceived(receiver: String, snapshotText: String) {
+        StructuredDiagnostics.logDebug(
+            DiagnosticEvent(
+                component = COMPONENT,
+                area = "snapshot",
+                event = "SNAPSHOT_RECEIVED",
+                session = receiver,
+                reason = snapshotSummary(snapshotText)
+            )
+        )
+    }
+
+    fun snapshotRequested(reason: String) {
+        StructuredDiagnostics.logDebug(
+            DiagnosticEvent(
+                component = COMPONENT,
+                area = "snapshot",
+                event = "SNAPSHOT_REQUESTED",
+                session = "app",
+                reason = "reason=$reason"
+            )
+        )
+    }
+
+    internal fun snapshotSummary(snapshotText: String): String {
+        val fields = snapshotText.lineSequence()
+            .mapNotNull { line ->
+                val separator = line.indexOf('=')
+                if (separator <= 0) null else line.substring(0, separator) to line.substring(separator + 1)
+            }
+            .toMap()
+        val titlePresent = fields["title"].let { !it.isNullOrBlank() && it != "(missing)" }
+        val ownerPresent = fields["package"].let { !it.isNullOrBlank() && it != "(none)" }
+        return "selectionRevision=" + (fields["selectionRevision"] ?: "?") +
+            " sessions=" + (fields["sessions"] ?: "?") +
+            " ownerPresent=" + ownerPresent +
+            " boundPlayer=" + (fields["boundPlayer"] ?: "?") +
+            " generation=" + (fields["generation"] ?: "?") +
+            " titlePresent=" + titlePresent +
+            " titleSource=" + (fields["titleSource"] ?: "?") +
+            " demux=" + (fields["demux"] ?: "?") +
+            " lyricStatus=" + (fields["lyricStatus"] ?: "?")
+    }
+
    private fun hashTrack(session: ResolvedSession): String {
         val descriptor = session.descriptor
         return DiagnosticHasher.sha256(

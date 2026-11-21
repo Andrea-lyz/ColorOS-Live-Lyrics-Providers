@@ -79,6 +79,8 @@ fun SettingsScreen(
             debugEnabled
         )
         val appContext = context.applicationContext
+        // The app process logs its own snapshot receipts; follow the switch without a restart.
+        io.github.andrealtb.coloroslyrics.provider.core.diagnostics.StructuredDiagnostics.isDebugEnabled = settings.debug
         UniversalAppIo.execute {
             appContext.getSharedPreferences(UniversalSettingsConstants.PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
