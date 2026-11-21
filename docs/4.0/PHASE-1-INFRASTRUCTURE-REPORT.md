@@ -6,7 +6,7 @@
 
 ## 1. 交付成果概览
 
-根据 `todo.md` 4.0 规划，已在独立 Provider 仓库中完成 Phase 1 基础设施搭建及纯词幕交付物剔除。旧播放器 module 继续作为 Phase 2–4 的只读迁移源保留；其 Lyricon 注册随对应新 player module 验收后删除，不再被误记为 Phase 1 已迁移源码。
+根据 `todo.md`（现归档于工作区 `_archive/docs/todo.md`）4.0 规划，已在独立 Provider 仓库中完成 Phase 1 基础设施搭建及纯词幕交付物剔除。旧播放器 module 继续作为 Phase 2–4 的只读迁移源保留；其 Lyricon 注册随对应新 player module 验收后删除，不再被误记为 Phase 1 已迁移源码。
 
 ### 1.1 核心与反射模块
 - **`provider-core`** (`io.github.andrealtb.coloroslyrics.provider.core`)：

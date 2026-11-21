@@ -35,6 +35,7 @@ class UniversalMonitorActivity : ComponentActivity() {
     private val snapshotReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val text = intent?.getStringExtra(UniversalSnapshotStore.EXTRA_SNAPSHOT) ?: return
+            UniversalDiagnostics.snapshotReceived("activity", text)
             // The manifest receiver is the sole disk writer, including while the UI is closed.
             snapshotRevision++
             val map = UniversalSnapshotUi.parse(text)
@@ -99,7 +100,7 @@ class UniversalMonitorActivity : ComponentActivity() {
                 cachedSongsCount = cachedSongs.intValue,
                 onRefreshSnapshot = {
                     applyLocalSnapshot()
-                    requestSnapshot()
+                    requestSnapshot("refresh")
                     Toast.makeText(this@UniversalMonitorActivity, getString(io.github.andrealtb.coloroslyrics.provider.universal.R.string.toast_session_refreshed), Toast.LENGTH_SHORT).show()
                 },
                 onClearCache = {
@@ -153,7 +154,7 @@ class UniversalMonitorActivity : ComponentActivity() {
         val appContext = applicationContext
         UniversalAppIo.execute {
             UniversalBindingStore.syncToSystem(appContext, UniversalBindingStore.getBoundPackages(appContext))
-            requestSnapshot()
+            requestSnapshot("resume")
         }
     }
 
@@ -180,7 +181,8 @@ class UniversalMonitorActivity : ComponentActivity() {
         receiverRegistered = false
     }
 
-    private fun requestSnapshot() {
+    private fun requestSnapshot(reason: String) {
+        UniversalDiagnostics.snapshotRequested(reason)
         sendBroadcast(Intent(UniversalSnapshotStore.ACTION_REQUEST_SNAPSHOT).apply {
             addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
             addFlags(0x01000000)

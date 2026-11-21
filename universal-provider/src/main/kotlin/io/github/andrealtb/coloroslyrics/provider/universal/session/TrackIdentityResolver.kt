@@ -126,6 +126,12 @@ class TrackIdentityResolver {
         } else if (gate == GATE_STANDARD) {
             if (!demuxed.titlePolluted && !demuxed.title.isNullOrBlank()) {
                 lock.title = demuxed.title
+            } else if (lock.title.isNullOrBlank() && demuxed.source != "polluted-unresolved" &&
+                !demuxed.title.isNullOrBlank()
+            ) {
+                // A track that opened on an unresolved lyric line keeps a null title; a later
+                // payload whose real title was recovered (display / relay-artist) fills it once.
+                lock.title = demuxed.title
             }
             lock.artist = firstFilled(lock.artist, demuxed.artist)
             lock.album = firstFilled(lock.album, demuxed.album)

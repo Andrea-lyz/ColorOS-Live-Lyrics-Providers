@@ -49,7 +49,7 @@ Spotify 不提供翻译；其余模块按各播放器证据使用公开 action �
 
 ## 通用播放器 Provider
 
-通用播放器 Provider（`Provider-Universal 1.1.5 (7)`）面向没有专属适配、但会创建标准 Android
+通用播放器 Provider（`Provider-Universal 1.1.6 (8)`）面向没有专属适配、但会创建标准 Android
 `MediaSession` 的播放器。它以静态 scope 仅运行在 `system_server`，从设置 App 同步用户明确选择的
 目标包；没有被选择的音乐、视频和其他媒体 App 不会被观察、联网取词或写入 `lyricInfo`。
 
@@ -67,6 +67,9 @@ Spotify 不提供翻译；其余模块按各播放器证据使用公开 action �
 1.1.5 支持 TTML 与对唱（需要 Bridge 5.1.0）：Apple Music 改为从 Better Lyrics 缓存读取逐字 TTML，并可选用
 App 内登录的 Apple Music 订阅账号读取官方歌词；新增酷狗音乐来源与“TTML 优先”开关，QQ 音乐增加备用搜索
 入口，首页、最近记录和搜索结果显示歌词的真实格式。
+
+1.1.6 修复以歌词行开头的歌曲（如 Sonify 开启状态栏歌词）整首都没有歌名：后续能还原真实歌名时补上；
+首页显示取词实际使用的歌名，并新增首页快照的脱敏诊断日志。
 
 在 Bridge 商店安装后打开 **Universal Player Provider**：在“播放器”页选择目标 App，在“来源”页调整歌词源
 优先级，并按需打开逐字、翻译、原始歌词和脱敏诊断。模块会保留宿主已有 metadata，仅向选中播放器

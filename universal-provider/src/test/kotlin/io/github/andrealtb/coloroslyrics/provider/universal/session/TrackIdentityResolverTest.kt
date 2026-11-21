@@ -193,6 +193,38 @@ class TrackIdentityResolverTest {
         assertEquals(TrackIdentityResolver.GATE_STANDARD, withDuration.identityGate)
     }
 
+    @Test
+    fun trackOpeningOnUnresolvedLyricLineGetsRecoveredTitleInSameGeneration() {
+        val opening = resolver.observe(
+            observation(title = "作词：刘德华", artist = "刘德华", album = "我年轻过", durationMs = 270_920L)
+        )
+        assertEquals(1L, opening.descriptor.trackGeneration)
+        assertNull(opening.descriptor.title)
+
+        val relayed = resolver.observe(
+            observation(title = "曾经我也年轻过", artist = "刘德华 - 我年轻过", album = "我年轻过", durationMs = 270_920L, at = 1_500L)
+        )
+        assertEquals(1L, relayed.descriptor.trackGeneration)
+        assertEquals("我年轻过", relayed.descriptor.title)
+        assertEquals("刘德华", relayed.descriptor.artist)
+
+        val nextLine = resolver.observe(
+            observation(title = "另一句歌词", artist = "刘德华 - 我年轻过", album = "我年轻过", durationMs = 270_920L, at = 2_000L)
+        )
+        assertEquals(1L, nextLine.descriptor.trackGeneration)
+        assertEquals("我年轻过", nextLine.descriptor.title)
+    }
+
+    @Test
+    fun unresolvedLyricLineDoesNotFillMissingTitle() {
+        resolver.observe(observation(title = "作词：刘德华", artist = "刘德华", album = "我年轻过", durationMs = 270_920L))
+        val stillUnresolved = resolver.observe(
+            observation(title = "作曲：陈耀川", artist = "刘德华", album = "我年轻过", durationMs = 270_920L, at = 1_500L)
+        )
+        assertEquals(1L, stillUnresolved.descriptor.trackGeneration)
+        assertNull(stillUnresolved.descriptor.title)
+    }
+
     private fun saltLine(title: String): SessionObservation = observation(
         title = title,
         artist = "Taylor Swift - Babe (Taylor's Version) (From The Vault)",
