@@ -3,7 +3,7 @@
 > 状态：Phase 0/1 与 Wave A–E 已完成；12/12 Provider 已完成 API 102 源码迁移、
 > 本地 Debug 全矩阵门禁与用户真机回归。Wave E 的 9.0.40 构造 profile 按特殊安装前提
 > 由用户暂时验收通过，具体证据限制见 §15。
-> 上游计划：工作区根目录 `todo.md`（ColorOS Live Lyrics Bridge v4.1.0 TODO）。
+> 上游计划：工作区 `_archive/docs/todo.md`（ColorOS Live Lyrics Bridge v4.1.0 TODO）。
 
 ## 1. 冻结基线（2026-08-31）
 

@@ -17,6 +17,15 @@
 
 该限制是当前版本的已知缺陷，不作为发布阻断项。
 
+### 与动态封面同时使用（Sonify 设备证据，2026-11-16，未修复）
+
+Sonify（`com.sonify.music`，Media3）开启“状态栏歌词”后，TITLE 为当前歌词行、ARTIST 为“歌手 - 歌名”。通用 Provider 能还原歌名（`demux=relay-artist`、`titlePolluted=true`），锁屏歌词正常；但动态封面始终不加载：
+
+- Bridge 首次关联 `identity_consistent`，随后 `ARTWORK_METADATA_CHECK reason=card_title_mismatch titleMatches=false artistMatches=false` → `ARTWORK_FALLBACK reason=metadata_unstable`，之后一直停在 `source_title_mismatch` / `source_card_transition`，沉浸式 gate 为 `binding_not_ready`；
+- 动态封面来源诊断 TXT 只有诊断开启与市场探测，没有任何解析请求，确认 Bridge 未发起请求。
+
+用户关闭 Sonify 状态栏歌词后动态封面恢复（用户设备确认）。根因在 Bridge 封面关联：卡片标题与会话原始 TITLE 不一致，且原始 TITLE 逐句变化。修复属于 Bridge 封面关联策略，需以上述 SystemUI 侧证据为依据并经设备验证；在此之前沿用上面的“关闭蓝牙/车载歌词”提示。
+
 ## 粗粒度进度与撕裂 metadata（UAPP 类播放器）
 
 部分播放器（例如 USB Audio Player PRO）没有 media ID / queue ID / media URI，以约 1 Hz 重发 PlaybackState，position 取自解码块计数（设备日志观察到 400 ms 量化），并在换曲后异步发布 metadata：TITLE 为换曲时刻的快照，ARTIST/ALBUM/DURATION 取发布时刻的当前曲目。静态证据见 `PlayerSource\UAPP\UAPP-METADATA-TIMING-INVESTIGATION.md`。

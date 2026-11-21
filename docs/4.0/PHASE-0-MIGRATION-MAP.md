@@ -109,7 +109,7 @@ QQ HD、MusicFree、Gramophone、Symfonium 不属于最终 v5 发布矩阵。
 | `source` / `senderKind` / Provider applicationId 白名单 | player profile、宿主 scope 和运行模式诊断 | 不迁入 Bridge；未改旧 Bridge |
 | `external-lyric-protocol` fixture/Parcel | provider 内部的有界 payload 与完整 metadata fail-open | 后续 Phase 1/5 再定义和删除 |
 
-v5 具体契约仍以 `todo.md` 第 3 节为准：只写播放器自己的 `lyricInfo`，保留其它 metadata，区分 WORD/LINE/UNTIMED/INVALID，并对 display/raw/translation 做有界单调对齐。
+v5 具体契约仍以 `_archive/docs/todo.md`（工作区根，已归档）第 3 节为准：只写播放器自己的 `lyricInfo`，保留其它 metadata，区分 WORD/LINE/UNTIMED/INVALID，并对 display/raw/translation 做有界单调对齐。
 
 ## 6. 4.0 新仓库边界
 
