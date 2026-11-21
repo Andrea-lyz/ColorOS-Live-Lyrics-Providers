@@ -79,7 +79,7 @@ in recent history and in search results.
 
 1.1.6 fixes songs that open on a lyric line (for example Sonify with status-bar lyrics) having no title for the
 whole song: the title is filled in once the real one can be recovered. Home shows the title the lyric lookup used,
-and the home-screen snapshot gains sanitized diagnostic logs.
+the home-screen snapshot is no longer rejected by the system (Home kept showing an old state), and it gains sanitized diagnostic logs.
 
 After installing it from the Bridge store, open **Universal Player Provider**: select target apps on the Players page,
 set lyric-source priority on Sources, and enable word timing, translations, raw lyrics, or sanitized
