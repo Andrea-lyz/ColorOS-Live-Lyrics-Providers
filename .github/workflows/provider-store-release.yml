@@ -264,9 +264,13 @@ jobs:
       # URLs for up to 12 h, so without a purge users can keep seeing the previous revision for
       # that long; raw.githubusercontent.com expires on its own within about 5 minutes. The
       # catalog is already promoted at this point, so a CDN that stays stale is a warning only.
+      # Only the jsDelivr host Bridge actually requests is checked: fastly.jsdelivr.net keeps a
+      # separate cache that the purge API does not clear, so checking it only produced false
+      # warnings (universal-provider-v1.1.6).
       - name: Purge the jsDelivr catalog cache
         run: |
           path="gh/$GITHUB_REPOSITORY@$CATALOG_BRANCH/$CATALOG_PATH"
+          url="https://cdn.jsdelivr.net/$path"
           served_revision() {
             curl -fsSL --proto '=https' "$1" 2>/dev/null |
               node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(Buffer.from(JSON.parse(s).payload,'base64')).catalogRevision)}catch{console.log(0)}})"
@@ -274,13 +278,9 @@ jobs:
           for attempt in 1 2 3 4 5 6; do
             curl -fsS --proto '=https' "https://purge.jsdelivr.net/$path" > /dev/null || true
             sleep 10
-            stale=0
-            for host in cdn.jsdelivr.net fastly.jsdelivr.net; do
-              got="$(served_revision "https://$host/$path")"
-              echo "$host serves revision ${got:-0} (expected $CATALOG_REVISION)"
-              [ "${got:-0}" -ge "$CATALOG_REVISION" ] || stale=1
-            done
-            [ "$stale" = 0 ] && exit 0
+            got="$(served_revision "$url")"
+            echo "cdn.jsdelivr.net serves revision ${got:-0} (expected $CATALOG_REVISION)"
+            [ "${got:-0}" -ge "$CATALOG_REVISION" ] && exit 0
             sleep 20
           done
           echo "::warning::jsDelivr still serves an older catalog than revision $CATALOG_REVISION; Bridge users behind jsDelivr may not see it for up to 12 h. Re-run: curl https://purge.jsdelivr.net/$path"
