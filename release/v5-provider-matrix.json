@@ -33,8 +33,8 @@
       "module": "player-salt",
       "displayName": "Salt",
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.salt",
-      "versionName": "1.1.3",
-      "versionCode": 9,
+      "versionName": "1.1.4",
+      "versionCode": 10,
       "asset": "ColorOS-Live-Lyrics-Provider-Salt-v4.5.4.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.salt.SaltModuleEntry",
       "scopes": [
@@ -47,7 +47,7 @@
       "validatedHosts": [
         {
           "package": "com.salt.music",
-          "version": "12.3.0-alpha03"
+          "version": "12.7.0-beta01"
         }
       ]
     },

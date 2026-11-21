@@ -8,7 +8,7 @@
 
 | 运行模式 | 结论 | 证据 |
 |---|---|---|
-| Root / LSPosed | 已通过 | Salt 12.3.0-alpha03 真机播放、锁屏歌词、车载 metadata 与方括号逐字 LRC |
+| Root / LSPosed | 已通过 | Salt 12.3.0-alpha03 真机播放、锁屏歌词、车载 metadata 与方括号逐字 LRC；12.7.0-beta01（Provider 1.1.4）真机锁屏歌词与切歌更新由用户确认 |
 | Bridge legacy hook | 已删除 | Root/LSPosed 等价与冲突评审由用户确认完成 |
 
 Salt 的 Root 实现是后续播放器适配的正向模板。4.0 全系列不适配 NPatch：历史失败链只在
@@ -111,6 +111,20 @@ TrackGenerationPolicy
 1. `DISPLAY_TITLE` / `DISPLAY_SUBTITLE`；
 2. 从 Salt 复合 ARTIST 中恢复 `<Artist> -|–|— <Title>`；
 3. 普通 TITLE / ARTIST。
+
+### 5.1 Salt 12.7.0 的 MEDIA_ID 形态
+
+Salt 12.7.0-beta01（`MusicController` media-id 构造，字符串经 `ms0.m5388` 解密确认）不再把
+`MEDIA_ID` 写成 `Song.id`，而是：
+
+- 能定位当前队列项时：`queueIndex - Int.MIN_VALUE`（十进制，范围 `[2^31, 2^32)`）；
+- 否则：`"song:" + Song.id`。
+
+发布端取的是 `Song.getId()`，而 `TrackIdentityPolicy` 在两侧 id 均非空时只比较 id，
+因此 1.1.3 每次发布都判为 STALE/PENDING。`SaltBluetoothLyricRelayPolicy.normalizeMediaId`
+剥离 `song:` 前缀；队列形态随队列编辑变化，丢弃后回落 title/artist/duration；旧版裸
+`Song.id` 不变。DexKit 结构锚点（来源/滚动枚举、结果模型、发布协程、Song getter）在
+12.7.0 中仍唯一，来源枚举新增 `SPL_FILE`，文本仍走 LRC 解析路径。
 
 通用原则：MediaSession metadata 是展示载体，不天然等于稳定歌曲身份。播放器专属复合字段
 解析只能放在该播放器 profile；在第二个真实播放器出现相同行为前，不抽成全局规则。
@@ -249,6 +263,9 @@ scope/adapter。构建成功、APK 可安装和单条 Hook 日志均不构成删
 
 - Root 日志：`logs/salt-phase2-root-01.txt` 至 `salt-phase2-root-03.txt`
 - Salt 静态逆向：`PlayerSource/SaltPlayer/12.3.0-decompiled/SALT-12.3.0-REVERSE-REPORT.md`
+- Salt 12.7.0-beta01：APK SHA-256 `958d45cf5befb13f2c52e9540739f6b50a55546ceb5ab826b2ff8b8287185b4a`，反编译
+  `PlayerSource/SaltPlayer/12.7.0-beta01-decompiled`；真机日志 `generation=3`
+  `NATIVE_LYRIC_INFO_COMMITTED` / `SALT_FINAL_PUBLISHED`（§5.1）
 - Phase 2 报告：`docs/4.0/PHASE-2-SALT-MIGRATION-REPORT.md`
 - 当前 Root APK：`build/all-apks/debug/player-salt-<version>-debug.apk`
 - 调试开关失败对照：`feelback/LSPosed_20260825_173746.zip`（Cone 旧包 `reason=disabled`）
