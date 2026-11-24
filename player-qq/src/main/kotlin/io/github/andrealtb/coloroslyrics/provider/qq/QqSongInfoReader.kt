@@ -8,10 +8,19 @@ package io.github.andrealtb.coloroslyrics.provider.qq
 
 import io.github.andrealtb.coloroslyrics.provider.core.model.TrackIdentity
 
+/**
+ * QQ obfuscated getter names shift between releases, so every candidate is
+ * type-checked: a name that now returns another type is skipped, not stringified.
+ *
+ * - songId (SongInfo field `b`, the value QQ writes as lyricInfo `songId`):
+ *   21.0.0.8 `I2()`; 20.7.5.8 `H2()` (21.0 `H2()` returns an ID3 object).
+ * - title: 21.0.0.8 `Y3()`; 20.7.5.8 `j3()` (21.0 `j3()` returns int, 20.7 `Y3()` a List).
+ * - artist: 21.0.0.8 `Z3()`; 20.7.5.8 `V3()` (20.7 `Z3()` returns a List).
+ */
 object QqSongInfoReader {
-    private val SONG_ID_METHODS = listOf("H2", "J2", "getSongId", "v2", "getId")
-    private val TITLE_METHODS = listOf("j3", "getTitle", "X2")
-    private val ARTIST_METHODS = listOf("V3", "getArtist", "C3")
+    private val SONG_ID_METHODS = listOf("I2", "H2", "getSongId", "getId")
+    private val TITLE_METHODS = listOf("Y3", "j3", "getTitle")
+    private val ARTIST_METHODS = listOf("Z3", "V3", "getArtist")
 
     fun read(songInfo: Any?): TrackIdentity {
         if (songInfo == null) return TrackIdentity()
@@ -31,19 +40,16 @@ object QqSongInfoReader {
         )
     }
 
+    /**
+     * `LyricLoadBean` keeps its field layout across 20.7.5.8 and 21.0.0.8
+     * (`a` songInfo, `b` lyric, `c` transLyric, `d` romaLyric), while its getters
+     * shifted: 21.0 `h()` returns SongInfo and `f()` multiStyleLyric. Read the
+     * fields; never resolve these by getter name.
+     */
     fun readFromLoadBean(bean: Any?): Pair<TrackIdentity, LyricModels> {
-        val songInfo = firstNonNull(
-            QqLyricModelDecoder.invokeNoArg(bean, "f"),
-            QqLyricModelDecoder.readField(bean, "a")
-        )
-        val primary = firstNonNull(
-            QqLyricModelDecoder.invokeNoArg(bean, "c"),
-            QqLyricModelDecoder.readField(bean, "b")
-        )
-        val translation = firstNonNull(
-            QqLyricModelDecoder.invokeNoArg(bean, "h"),
-            QqLyricModelDecoder.readField(bean, "c")
-        )
+        val songInfo = QqLyricModelDecoder.readField(bean, "a")
+        val primary = QqLyricModelDecoder.readField(bean, "b")
+        val translation = QqLyricModelDecoder.readField(bean, "c")
         return read(songInfo) to LyricModels(primary = primary, translation = translation)
     }
 
@@ -53,18 +59,17 @@ object QqSongInfoReader {
     )
 
     private fun stringifyId(value: Any?): String? = when (value) {
-        null -> null
-        is Number -> value.toLong().takeIf { it != 0L }?.toString()
-        else -> value.toString().trim().takeIf { it.isNotBlank() && it != "0" && it != "1" }
+        is Long, is Int -> (value as Number).toLong().takeIf { it > 0L }?.toString()
+        is CharSequence -> value.toString().trim()
+            .takeIf { it.isNotBlank() && it != "0" && it != "1" }
+        else -> null
     }
 
     private fun stringifyText(value: Any?): String? = when (value) {
-        null -> null
-        else -> value.toString().trim().takeIf(String::isNotBlank)
+        is CharSequence -> value.toString().trim().takeIf(String::isNotBlank)
+        else -> null
     }
 
     private fun firstNonPlaceholder(values: List<String?>): String? =
         values.firstOrNull { !it.isNullOrBlank() }
-
-    private fun firstNonNull(vararg values: Any?): Any? = values.firstOrNull { it != null }
 }

@@ -12,8 +12,8 @@ import kotlin.math.abs
 
 /**
  * Reads QQ `com.lyricengine.base.k` / `t` / `a` documents by the documented
- * field names. Translation comes only from `LyricLoadBean.h()`; romaji from
- * `e()` is ignored.
+ * field names. Translation comes only from the `LyricLoadBean.c` field (transLyric);
+ * romaji (`d` field) is ignored.
  */
 object QqLyricModelDecoder {
     /**
