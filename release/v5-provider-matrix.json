@@ -189,8 +189,8 @@
       "module": "player-qq",
       "displayName": "QQ",
       "applicationId": "io.github.andrealtb.coloroslyrics.provider.qq",
-      "versionName": "1.2.3",
-      "versionCode": 6,
+      "versionName": "1.2.4",
+      "versionCode": 7,
       "asset": "ColorOS-Live-Lyrics-Provider-QQ-v4.5.4.apk",
       "entryClass": "io.github.andrealtb.coloroslyrics.provider.qq.QqModuleEntry",
       "scopes": [
