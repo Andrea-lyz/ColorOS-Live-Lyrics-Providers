@@ -39,6 +39,42 @@ object QqLyricHookResolver {
                 parameterTypeNames[0].endsWith(".b"))
     }
 
+    fun matchesNotifyLoadSuc(parameterTypeNames: List<String>): Boolean {
+        if (parameterTypeNames.size != 2) return false
+        return parameterTypeNames[0] == QqPlayerConstants.LYRIC_LOAD_MODEL &&
+            parameterTypeNames[1] == "int"
+    }
+
+    /**
+     * Named lookup first (one reflection call); DexKit by the mismatch log string
+     * only when the name moved, since every DexKit session reopens the host APK.
+     */
+    fun resolveNotifyLoadSuc(classLoader: ClassLoader, apkPath: String): Method? {
+        val named = runCatching {
+            val manager = classLoader.loadClass(QqPlayerConstants.LYRIC_LOAD_MANAGER)
+            val model = classLoader.loadClass(QqPlayerConstants.LYRIC_LOAD_MODEL)
+            manager.getDeclaredMethod(
+                QqPlayerConstants.NOTIFY_LOAD_SUC_METHOD,
+                model,
+                Int::class.javaPrimitiveType
+            )
+        }.getOrNull()
+        if (named != null) return named
+        return DexKitBridge.withDexKit(apkPath) { bridge ->
+            val candidates = bridge.findMethod {
+                matcher {
+                    addUsingString(QqPlayerConstants.NOTIFY_TRANS_MISMATCH_LOG)
+                    paramCount = 2
+                }
+            }.mapNotNull { data ->
+                runCatching { data.getMethodInstance(classLoader) }.getOrNull()
+            }.filter { method ->
+                matchesNotifyLoadSuc(method.parameterTypes.map { it.name })
+            }
+            CandidateResolver.resolveUniqueMethod(candidates, "QQ CurrentLoadManager#notifyLoadSuc")
+        }
+    }
+
     fun resolveSeedlingMethod(apkPath: String, classLoader: ClassLoader): Method? {
         return DexKitBridge.withDexKit(apkPath) { bridge ->
             val methods = bridge.findMethod {
