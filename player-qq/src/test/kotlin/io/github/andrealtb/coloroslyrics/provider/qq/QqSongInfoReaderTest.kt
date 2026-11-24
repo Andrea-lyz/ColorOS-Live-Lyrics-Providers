@@ -21,10 +21,26 @@ class QqSongInfoReaderTest {
     }
 
     @Test
-    fun readsLoadBeanGettersWithoutUsingRoma() {
-        val bean = FakeLoadBean()
-        val (track, models) = QqSongInfoReader.readFromLoadBean(bean)
+    fun readsQq21SongInfoAndSkipsShiftedLegacyNames() {
+        val track = QqSongInfoReader.read(FakeSongInfo21())
         assertEquals("99", track.id)
+        assertEquals("Title", track.title)
+        assertEquals("Artist", track.artist)
+    }
+
+    @Test
+    fun readsLoadBeanFieldsWithoutUsingRoma() {
+        val (track, models) = QqSongInfoReader.readFromLoadBean(FakeLoadBean())
+        assertEquals("99", track.id)
+        assertEquals("main", models.primary)
+        assertEquals("trans", models.translation)
+    }
+
+    @Test
+    fun qq21ShiftedLoadBeanGettersDoNotHijackTranslation() {
+        val (track, models) = QqSongInfoReader.readFromLoadBean(FakeLoadBean21())
+        assertEquals("99", track.id)
+        assertEquals("Title", track.title)
         assertEquals("main", models.primary)
         assertEquals("trans", models.translation)
     }
@@ -45,11 +61,42 @@ class QqSongInfoReaderTest {
         fun v2(): String = "legacy-id"
     }
 
+    /** 21.0.0.8 shape: legacy names now return other types. */
+    class FakeSongInfo21 {
+        fun I2(): Long = 99L
+        fun H2(): Any = Any()
+        fun Y3(): String = "Title"
+        fun j3(): Int = 7
+        fun Z3(): String = "Artist"
+        fun V3(): String = "not-artist"
+    }
+
+    /** 20.7.5.8 LyricLoadBean: fields a/b/c/d with getters f/c/h/e. */
+    @Suppress("unused")
     class FakeLoadBean {
-        fun f(): FakeSongInfo = FakeSongInfo()
-        fun c(): String = "main"
-        fun h(): String = "trans"
-        fun e(): String = "roma"
+        private val a: Any = FakeSongInfo()
+        private val b: Any = "main"
+        private val c: Any = "trans"
+        private val d: Any = "roma"
+        fun f(): Any = a
+        fun c(): Any = b
+        fun h(): Any = c
+        fun e(): Any = d
+    }
+
+    /** 21.0.0.8 LyricLoadBean: same fields, getters shifted (h() = SongInfo). */
+    @Suppress("unused")
+    class FakeLoadBean21 {
+        private val a: Any = FakeSongInfo21()
+        private val b: Any = "main"
+        private val c: Any = "trans"
+        private val d: Any = "roma"
+        private val h: Any = "multi-style"
+        fun e(): Any = b
+        fun f(): Any = h
+        fun g(): Any = d
+        fun h(): Any = a
+        fun j(): Any = c
     }
 
     class NumericTitleSongInfo {
