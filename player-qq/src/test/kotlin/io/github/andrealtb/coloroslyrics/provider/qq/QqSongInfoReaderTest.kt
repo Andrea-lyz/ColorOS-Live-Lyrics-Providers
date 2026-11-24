@@ -7,6 +7,7 @@
 package io.github.andrealtb.coloroslyrics.provider.qq
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class QqSongInfoReaderTest {
@@ -43,6 +44,19 @@ class QqSongInfoReaderTest {
         assertEquals("Title", track.title)
         assertEquals("main", models.primary)
         assertEquals("trans", models.translation)
+    }
+
+    @Test
+    fun readsUngatedTranslationFromLoadModelSuperclassFields() {
+        val (track, translation) = QqSongInfoReader.readFromLoadModel(FakePlayingLoadModel())
+        assertEquals("99", track.id)
+        assertEquals("trans", translation)
+    }
+
+    @Test
+    fun loadModelWithoutTranslationReturnsNull() {
+        val (_, translation) = QqSongInfoReader.readFromLoadModel(FakeLoadModel(trans = null))
+        assertNull(translation)
     }
 
     @Test
@@ -98,6 +112,17 @@ class QqSongInfoReaderTest {
         fun h(): Any = a
         fun j(): Any = c
     }
+
+    /** `model.a` layout (20.7.5.8 and 21.0.0.8): c songInfo, g lyric, h transLyric. */
+    @Suppress("unused")
+    open class FakeLoadModel(trans: Any? = "trans") {
+        @JvmField val c: Any = FakeSongInfo21()
+        @JvmField val g: Any = "main"
+        @JvmField val h: Any? = trans
+    }
+
+    /** QQ notifies a subclass (the playing-lyric loader); fields live on the base. */
+    class FakePlayingLoadModel : FakeLoadModel()
 
     class NumericTitleSongInfo {
         fun H2(): Long = 99L

@@ -60,6 +60,23 @@ class QqLyricHookResolverTest {
     }
 
     @Test
+    fun matchesNotifyLoadSucSignatureOnly() {
+        assertTrue(
+            QqLyricHookResolver.matchesNotifyLoadSuc(
+                listOf(QqPlayerConstants.LYRIC_LOAD_MODEL, "int")
+            )
+        )
+        assertFalse(
+            QqLyricHookResolver.matchesNotifyLoadSuc(
+                listOf(QqPlayerConstants.LYRIC_LOAD_BEAN, "int")
+            )
+        )
+        assertFalse(
+            QqLyricHookResolver.matchesNotifyLoadSuc(listOf(QqPlayerConstants.LYRIC_LOAD_MODEL))
+        )
+    }
+
+    @Test
     fun acceptsDocumentedOnLoadSuc() {
         assertTrue(
             QqLyricHookResolver.matchesOnLoadSuc(

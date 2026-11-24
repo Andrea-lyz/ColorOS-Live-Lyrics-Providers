@@ -192,6 +192,26 @@ class QqLyricModelDecoderTest {
         assertNull(merged[0].secondary)
     }
 
+    /** QQ gates this shape out of `LyricLoadBean`; merge must still align by time. */
+    @Test
+    fun alignsTranslationWithFewerLinesThanUntranslatedCredits() {
+        val primary = listOf(
+            timedLine(text = "词：岩里祐穂", begin = 0L),
+            timedLine(text = "曲：ヒゲドライバー", begin = 1_500L),
+            timedLine(text = "どこから話せばいいんだろう", begin = 9_000L),
+            timedLine(text = "待ちくたびれても", begin = 13_000L)
+        )
+        val translation = listOf(
+            timedLine(text = "该从哪里说起呢", begin = 9_000L),
+            timedLine(text = "即使等得疲惫不堪", begin = 13_000L)
+        )
+        val merged = QqLyricModelDecoder.mergeTranslation(primary, translation)
+        assertNull(merged[0].secondary)
+        assertNull(merged[1].secondary)
+        assertEquals("该从哪里说起呢", merged[2].secondary)
+        assertEquals("即使等得疲惫不堪", merged[3].secondary)
+    }
+
     @Test
     fun decodeTranslationFallsBackToWordTextWhenLineTextIsBlank() {
         val translation = QqLyricModelDecoder.decodeTranslation(

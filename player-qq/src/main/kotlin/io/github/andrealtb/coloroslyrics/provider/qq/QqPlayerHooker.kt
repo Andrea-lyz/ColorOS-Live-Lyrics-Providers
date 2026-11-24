@@ -40,6 +40,9 @@ class QqPlayerHooker(private val hookContext: ProviderHookContext) {
     private var lastLyricReadyGeneration = 0L
     private var cachedTranslationBySongId = linkedMapOf<String, Any>()
 
+    /** Translation seen in `notifyLoadSuc` before QQ's line-count gate, by song id. */
+    private val ungatedTranslationBySongId = linkedMapOf<String, Any>()
+
     fun onHook() {
         // Process gating moved to the API 102 entry (detach before any hook is installed).
         if (!applyRuntimeAndDebug()) return
@@ -50,6 +53,7 @@ class QqPlayerHooker(private val hookContext: ProviderHookContext) {
             reason = hostPackage
         )
         hookMediaSession()
+        hookNotifyLoadSuc()
         hookOnLoadSuc()
         hookSeedlingLyricInfo()
     }
@@ -132,6 +136,63 @@ class QqPlayerHooker(private val hookContext: ProviderHookContext) {
         )
     }
 
+    /**
+     * QQ sets the translation to null before `onLoadSuc` when its line count
+     * differs from the lyric (credit lines such as "词：" / "曲：" are often not
+     * translated). Keep the ungated model so `onLoadSuc` can fall back to it;
+     * `mergeTranslation` aligns by timestamp, so unequal counts are safe.
+     * Optional: if this hook is missing, equal-count translations still work.
+     */
+    private fun hookNotifyLoadSuc() {
+        val method = runCatching {
+            QqLyricHookResolver.resolveNotifyLoadSuc(
+                hookContext.classLoader,
+                hookContext.application.applicationInfo.sourceDir
+            )
+        }.onFailure {
+            QqDiagnostics.warn(
+                area = "hook",
+                event = "NOTIFY_LOAD_SUC_RESOLVE_FAILED",
+                process = processName,
+                message = it.message
+            )
+        }.getOrNull()
+        if (method == null) {
+            QqDiagnostics.warn(
+                area = "hook",
+                event = "NOTIFY_LOAD_SUC_MISSING",
+                process = processName
+            )
+            return
+        }
+        hookRuntime.hook(method, "qq.lyric.${method.declaringClass.name}#${method.name}") {
+            before {
+                val (track, translation) = QqSongInfoReader.readFromLoadModel(args.getOrNull(0))
+                val songId = track.id ?: return@before
+                synchronized(stateLock) {
+                    ungatedTranslationBySongId.remove(songId)
+                    if (translation != null) {
+                        ungatedTranslationBySongId[songId] = translation
+                        while (ungatedTranslationBySongId.size > 8) {
+                            ungatedTranslationBySongId.remove(ungatedTranslationBySongId.keys.first())
+                        }
+                    }
+                }
+            }
+        }
+        QqDiagnostics.info(
+            area = "hook",
+            event = "NOTIFY_LOAD_SUC_HOOKED",
+            process = processName,
+            message = method.declaringClass.name + "#" + method.name
+        )
+    }
+
+    private fun ungatedTranslation(songId: String?): Any? {
+        if (songId.isNullOrBlank()) return null
+        return synchronized(stateLock) { ungatedTranslationBySongId[songId] }
+    }
+
     private fun hookOnLoadSuc() {
         val method = runCatching {
             QqLyricHookResolver.resolveOnLoadSuc(
@@ -160,11 +221,20 @@ class QqPlayerHooker(private val hookContext: ProviderHookContext) {
                 val bean = args.getOrNull(0) ?: return@after
                 val (track, models) = QqSongInfoReader.readFromLoadBean(bean)
                 bindTrack(track, "load-bean")
-                if (models.translation != null && !track.id.isNullOrBlank()) {
-                    rememberTranslation(track.id!!, models.translation)
+                val translationModel = models.translation
+                    ?: ungatedTranslation(track.id)?.also {
+                        QqDiagnostics.info(
+                            area = "lyric",
+                            event = "TRANSLATION_RECOVERED",
+                            generation = currentSnapshot().generation,
+                            reason = "line-count-gate"
+                        )
+                    }
+                if (translationModel != null && !track.id.isNullOrBlank()) {
+                    rememberTranslation(track.id!!, translationModel)
                 }
                 val primary = QqLyricModelDecoder.decodePrimary(models.primary)
-                val translation = QqLyricModelDecoder.decodeTranslation(models.translation)
+                val translation = QqLyricModelDecoder.decodeTranslation(translationModel)
                 emitLyrics(
                     QqLyricModelDecoder.mergeTranslation(primary, translation),
                     currentSnapshot().track ?: track,

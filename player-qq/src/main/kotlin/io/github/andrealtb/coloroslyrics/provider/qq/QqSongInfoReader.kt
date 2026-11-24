@@ -53,6 +53,16 @@ object QqSongInfoReader {
         return read(songInfo) to LyricModels(primary = primary, translation = translation)
     }
 
+    /**
+     * `model.a` passed to `notifyLoadSuc`, same layout in 20.7.5.8 and 21.0.0.8:
+     * `c` songInfo, `g` lyric, `h` transLyric (before QQ's line-count gate).
+     */
+    fun readFromLoadModel(model: Any?): Pair<TrackIdentity, Any?> {
+        val songInfo = QqLyricModelDecoder.readField(model, "c")
+        val translation = QqLyricModelDecoder.readField(model, "h")
+        return read(songInfo) to translation
+    }
+
     data class LyricModels(
         val primary: Any?,
         val translation: Any?
